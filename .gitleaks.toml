@@ -1,0 +1,16 @@
+# gitleaks configuration.
+#
+# The only findings in this repository are synthetic fixtures and one docstring
+# that reads like a key assignment ("execution_exit_code"). Allowing the test
+# file keeps a real leak elsewhere failing the scan.
+
+title = "credarr"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic test fixtures, never a live credential."
+paths = [
+  '''tests/server/test_api\.py''',
+]

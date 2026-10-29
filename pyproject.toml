@@ -1,0 +1,123 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "credarr"
+dynamic = ["version"]
+description = "Find out who holds your credentials, whether they still match, and what can be rotated."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["credentials", "secrets", "drift", "audit", "rotation", "homelab"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = [
+    "PyYAML>=6.0",
+    # zoneinfo reads the host's IANA database; a host install (not the Docker
+    # image, which installs tzdata via apt) needs this fallback package.
+    "tzdata>=2024.1",
+    # The BFF (DECISIONS: FastAPI + uvicorn, its OpenAPI output is the
+    # contract). One distribution, one image: the server is not an optional
+    # extra, it is the product's other half.
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    # The single admin's password: argon2id, from the reference library.
+    "argon2-cffi>=23.1",
+    # Backups are encrypted, and the encryption is the reference library's
+    # AES-256-GCM: the one thing this project must never hand-roll. Session
+    # cookies are opaque server-side tokens, not signed payloads.
+    "cryptography>=42",
+]
+
+[project.optional-dependencies]
+# httpx2 is what Starlette's TestClient imports from 1.9 on; the starlette pin
+# keeps a resolver that lands on an older one from failing at import.
+# setuptools is the build backend; having it in the dev env is what lets
+# the packaging test build a wheel with --no-build-isolation, no network.
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "httpx2>=2.14",
+    "starlette>=1.9",
+    "setuptools>=77",
+    # Generated-input tests for the strict parser and the planner. Dev only:
+    # nothing in the shipped app imports it.
+    "hypothesis>=6.100",
+    # Container-level black-box tests for the built image (tests/integration).
+    "testcontainers>=4.9",
+    # CI runs the suite across cores; the tests are independent (temp dirs,
+    # ephemeral ports) and the runner is much slower than a laptop.
+    "pytest-xdist>=3.6",
+]
+
+[project.scripts]
+credarr = "credarr.cli:main"
+credarr-server = "credarr_server.app:main"
+credarr-backup = "credarr_server.backup:main"
+
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["credarr*"]
+
+[tool.setuptools.package-data]
+# The SPA build ships as data: the wheel (and therefore the one image) carries
+# the console, and the BFF serves it from inside the package.
+credarr_server = ["web/index.html", "web/favicon.svg", "web/assets/*"]
+
+[tool.setuptools.dynamic]
+# The package version is the one source: the wheel metadata and
+# `credarr --version` both read `credarr.__version__`.
+version = {attr = "credarr.__version__"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Container tests boot the built image; keep the default run unit-fast and
+# Docker-free. `pytest -m integration` overrides the selector.
+addopts = "-q --strict-markers -m 'not integration'"
+markers = [
+    "integration: boots the built container; needs Docker and `make image`",
+]
+# tests/ is not a package (no __init__.py), and the live harness under it is
+# imported by name as `live.x`. pytest's prepend import mode puts the rootdir
+# on sys.path only when there is no conftest above it; tests/conftest.py exists,
+# so without this the live suites fail to import.
+pythonpath = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle, pyflakes
+    "I",             # isort
+    "B",             # bugbear
+    "UP",            # pyupgrade
+    "S",             # bandit
+    "C4",            # comprehensions
+    "SIM",           # simplify
+    "RUF",           # ruff-specific
+    "ANN",           # annotations
+    "PTH",           # pathlib
+]
+ignore = [
+    "S101",  # assert is how tests and internal invariants are checked
+    "ANN401",  # Any is correct at backend/protocol boundaries
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "ANN", "S105", "S106"]
+
+[tool.ruff.lint.flake8-annotations]
+suppress-dummy-args = true

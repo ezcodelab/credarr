@@ -1,0 +1,37 @@
+# The console is one process on one port; its state is one directory.
+# Do not add deploy.replicas or a second service sharing ./config: the server
+# holds /config/app.lock and refuses a second process. A healthcheck is not a
+# substitute for that lock.
+#
+# /config must be on a *local* filesystem. SQLite's WAL needs shared memory and
+# its exclusion is POSIX advisory locks; neither survives NFS, and an Unraid
+# user share (`/mnt/user/...`) is the same trap one layer down. The app refuses
+# at startup and names the mount. Put it on a cache/appdata dataset, and only
+# set CREDARR_ALLOW_NETWORK_CONFIG=1 after reading what it costs (the
+# limitations doc covers it).
+#
+# Local build: put `build: .` in a compose.override.yaml next to this file
+# (it is gitignored). Docker Compose loads the override automatically, so
+# `docker compose up --build` then uses your checkout instead of the image.
+services:
+  credarr:
+    # `latest` follows the newest release. Pin a version
+    # (ghcr.io/ezcodelab/credarr:1.0.0) when a deployment must not move.
+    image: ghcr.io/ezcodelab/credarr:latest
+    container_name: credarr
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Etc/UTC
+      # Initial seconds between audits. A value saved in Settings wins.
+      CREDARR_AUDIT_INTERVAL: "3600"
+      # Optional read-only Docker discovery. Point it at a socket proxy, never
+      # at the raw socket.
+      # CREDARR_DOCKER_URL: "http://socket-proxy:2375"
+    volumes:
+      # app.db, credarr.yaml and encrypted backups. May start empty: first boot
+      # writes a minimal config and an empty manifest.
+      - ./config:/config

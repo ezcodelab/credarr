@@ -1,0 +1,15 @@
+.git
+.gitignore
+.venv
+build
+dist
+src/*.egg-info
+.pytest_cache
+.ruff_cache
+# Both are built inside the image; a stale local copy must not leak in.
+src/credarr_server/web
+ui/node_modules
+ui/dist
+ui/test-results
+tests
+docs

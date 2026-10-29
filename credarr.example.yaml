@@ -1,0 +1,57 @@
+# This file is committed. It may never contain a secret.
+#
+# Every path here is a path, not a value. The age key or vault password lives
+# in the environment (SOPS_AGE_KEY, ANSIBLE_VAULT_PASSWORD_FILE) or in a file
+# this file points at by name.
+
+version: 1
+
+# Which host a consumer means when it does not say. Every credential in a
+# manifest is checked against exactly one host, and it is always the same one.
+default_host: media
+
+manifest: credentials.yaml
+
+# Rotation asks each service to restart itself over its own API. The Servarr
+# mint uses POST /api/<version>/system/restart and needs a supervisor that
+# starts the app again (for example the LinuxServer s6 image). A bare process
+# without one is not supported.
+
+# Only needed for the ansible-vault backend.
+# vault_password_file: ../../.vault_pass
+
+# Fingerprints are salted randomly per run by default, so a leaked report
+# cannot be used to test candidate passwords against it. Pinning the salt makes
+# fingerprints stable across runs and comparable in a CI diff, which is
+# sometimes worth having - and it gives up that protection, so credarr says so
+# in its output when it is set.
+#
+# Generate with: openssl rand -hex 32
+fingerprint:
+  pinned_salt: null
+
+hosts:
+  media:
+    # Container name per service, used only by read-only Docker discovery to
+    # observe the running image. No rotation acts on it. There is no fallback
+    # to the service name.
+    containers:
+      prowlarr: prowlarr
+      sonarr: sonarr
+      radarr: radarr
+      seerr: seerr
+      jellyfin: jellyfin
+      # A renamed or disposable stack names its real container:
+      # sonarr: sonarr-v2
+
+    # Base URLs, as reachable from the credarr container. Every holder read and
+    # write is API-only, so a declared service without a URL is reported as
+    # missing one before anything is revoked.
+    urls:
+      sonarr: http://sonarr:8989
+      radarr: http://radarr:7878
+      prowlarr: http://prowlarr:9696
+      seerr: http://seerr:5055
+      jellyfin: http://jellyfin:8096
+    # Jellyfin needs no minting key here: its rotation authenticates with the
+    # credential being rotated, which in Jellyfin is a global administrator.

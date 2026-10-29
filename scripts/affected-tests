@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Print the pytest arguments that cover a diff.
+
+The suite is integration-heavy: a change in one engine module usually exercises
+a handful of files, not all 59. This maps changed paths to the tests that can
+observe them, so a pull request gets an answer in a couple of minutes while
+`main` still runs everything.
+
+Two rules keep the shortcut honest:
+
+* anything shared - the fixture layer, packaging, the workflow, the transport
+  and journal seams - selects the whole suite;
+* an unmapped path selects the whole suite. A gap is never a silent skip.
+
+Usage:
+    scripts/affected-tests --base origin/main        # PR / branch
+    scripts/affected-tests --range HEAD^..HEAD       # a pushed commit
+    scripts/affected-tests --all                     # force the full suite
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+
+# Everything, when any of these change. Each one is a seam that every suite
+# leans on, so a partial run would be a guess.
+SHARED = (
+    "pyproject.toml",
+    "Makefile",
+    "tests/conftest.py",
+    "src/credarr/__init__.py",
+    "src/credarr/errors.py",
+    "src/credarr/transport.py",
+    "src/credarr/journal.py",
+    "src/credarr/model.py",
+    "src/credarr/targets.py",
+    "src/credarr/provenance.py",
+    "src/credarr/redact.py",
+    "src/credarr/secrets.py",
+    ".gitea/",
+    "Dockerfile",
+    "docker/",
+    "compose.yaml",
+)
+
+SERVER_TESTS = "tests/server"
+
+# Ordered: the first matching prefix wins. Paths are prefixes, not globs.
+RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("src/credarr/rotate.py", ("tests/test_rotate.py", "tests/test_exit_contract.py")),
+    ("src/credarr/writers.py", ("tests/test_writers.py", "tests/test_rotate.py")),
+    ("src/credarr/executor.py", ("tests/test_executor.py", "tests/test_wire_body.py")),
+    ("src/credarr/facade.py", ("tests/test_facade.py",)),
+    ("src/credarr/pending.py", ("tests/test_pending.py",)),
+    ("src/credarr/audit.py", ("tests/test_audit.py", "tests/test_properties.py")),
+    ("src/credarr/report.py", ("tests/test_audit.py", "tests/test_exit_contract.py")),
+    ("src/credarr/emitter.py", ("tests/test_emitter.py",)),
+    ("src/credarr/config.py", ("tests/test_config.py",)),
+    ("src/credarr/instance.py", ("tests/server/test_instance.py",)),
+    ("src/credarr/services.py", ("tests/test_services.py",)),
+    ("src/credarr/cli.py", ("tests/test_exit_contract.py",)),
+    ("src/credarr/fingerprint.py", ("tests/test_secrets.py",)),
+    ("src/credarr/names.py", ("tests/test_services.py",)),
+    ("src/credarr/docker_api.py", ("tests/server/test_discovery.py",)),
+    ("src/credarr/adapters/", ("tests/test_gitea.py", "tests/test_grafana_arcane.py",
+                               "tests/test_qbittorrent_qui.py", "tests/test_seerr_self.py")),
+    ("src/credarr_server/", (SERVER_TESTS,)),
+    # The README is the wheel's long description, so packaging observes it.
+    ("README.md", ("tests/packaging/test_wheel.py",)),
+    # Nothing in pytest reads these; the console has its own job.
+    ("ui/", ()),
+    ("docs/", ()),
+    (".github/", ()),
+    ("CHANGELOG.md", ()),
+)
+
+
+def changed_paths(base: str | None, revision_range: str | None) -> list[str]:
+    if revision_range:
+        spec = revision_range
+    else:
+        spec = f"{base}...HEAD"
+    result = subprocess.run(
+        ["git", "diff", "--name-only", spec],
+        cwd=REPO, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(f"git diff failed: {result.stderr.strip()}")
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def selection(paths: list[str]) -> list[str]:
+    """Test paths (or the literal 'all') that cover these files."""
+    picked: list[str] = []
+    for path in paths:
+        if any(path == shared or path.startswith(shared) for shared in SHARED):
+            return ["all"]
+        if path.startswith("tests/") and path.endswith(".py"):
+            if "conftest" in path:
+                return ["all"]
+            picked.append(path)
+            continue
+        for prefix, tests in RULES:
+            if path.startswith(prefix):
+                picked.extend(tests)
+                break
+        else:
+            # Unmapped source or config: never guess.
+            return ["all"]
+    # Docs-only diffs select nothing, which is correct and not a skip: there
+    # is nothing for pytest to observe.
+    return sorted({test for test in picked if test})
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base", help="git base ref (default: origin/main)")
+    parser.add_argument("--range", dest="revision_range", help="explicit git range")
+    parser.add_argument("--all", action="store_true", help="print 'all'")
+    parser.add_argument("--dry-run", action="store_true", help="print what changed")
+    args = parser.parse_args(argv)
+
+    if args.all:
+        print("all")
+        return 0
+
+    paths = changed_paths(args.base or "origin/main", args.revision_range)
+    if args.dry_run:
+        print("\n".join(paths) or "(no changes)")
+        return 0
+
+    chosen = selection(paths)
+    if chosen == ["all"]:
+        print("all")
+        return 0
+    if not chosen:
+        print("none")
+        return 0
+    print(" ".join(chosen))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

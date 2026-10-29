@@ -1,0 +1,56 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Never commit a real config. credarr.example.yaml is the committed template.
+# A real credarr.yaml names your hosts and where their secrets live, which is
+# reconnaissance even though it holds no secret value.
+credarr.yaml
+!credarr.example.yaml
+# A CLI checkout keeps its manifest next to the config, the same way /config
+# holds it in Docker. Both are operator files, not repository content.
+/credentials.yaml
+
+# Internal working files are excluded in .git/info/exclude, which is local to a
+# clone. Nothing in this repository names them, so the public tree cannot refer
+# to a file it does not ship.
+
+# The runtime directory the compose file mounts. First boot writes the
+# config, the manifest, app.db and backups here; all of it is local state.
+config/
+
+# A local build overlay for `docker compose up --build`. See compose.yaml.
+compose.override.yaml
+
+# Rotation state: locks and the journal. Committing a lock would block
+# rotations on every other machine that checks the repository out.
+state/
+app.lock
+*.db
+*.db-wal
+*.db-shm
+
+# The SPA's toolchain and build output. `make web` puts the build into the
+# package; what ships is the build, not a vendored node_modules.
+ui/node_modules/
+ui/dist/
+ui/test-results/
+ui/.npm-cache/
+src/credarr_server/web/
+
+# Encrypted backups are secrets too: the passphrase is the only thing between
+# the file and every stored value. The tool takes any --out name; this is the
+# one the README suggests.
+*.backup
+
+# pytest-testmon state (an experiment; not used by CI)
+.testmondata*
