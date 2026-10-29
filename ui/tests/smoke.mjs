@@ -697,16 +697,33 @@ async function main() {
     // than failing the harness with SQLITE_BUSY.
     const db = new DatabaseSync(path.join(work, "app.db"));
     db.exec("PRAGMA busy_timeout = 5000");
-    db.prepare(
+    const changed = db.prepare(
       "UPDATE auto_rotation SET paused = 1, last_outcome = 'interrupted', " +
         "last_detail = 'run did not finish' WHERE credential = ?",
     ).run("sonarr_api_key");
+    const stored = db.prepare(
+      "SELECT credential, enabled, paused FROM auto_rotation WHERE credential = ?",
+    ).get("sonarr_api_key");
     db.close();
+    console.log(
+      `DEBUG pause write: changed=${changed.changes} row=${JSON.stringify(stored)}`,
+    );
     await page.reload();
     await page.getByRole("button", { name: "Apps", exact: true }).click();
     await page
       .locator(".app-card h3", { hasText: "Sonarr API Key" }).click();
-    await page.getByText("Auto-rotation is paused.").waitFor();
+    try {
+      await page.getByText("Auto-rotation is paused.").waitFor({ timeout: 15000 });
+    } catch (failure) {
+      const card = await page.locator("section.auto-card").innerText().catch(() => "(no card)");
+      const api = await page.request
+        .get(`${BASE}/api/v1/credentials/sonarr_api_key`)
+        .then((r) => r.json())
+        .catch((e) => `(api failed: ${e})`);
+      console.log(`DEBUG auto card: ${card}`);
+      console.log(`DEBUG api auto_rotation: ${JSON.stringify(api?.auto_rotation ?? api)}`);
+      throw failure;
+    }
     check(
       "a paused auto-rotation is shown as paused, not enabled",
       await page.getByText("run did not finish").isVisible(),
