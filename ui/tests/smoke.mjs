@@ -1436,6 +1436,9 @@ async function main() {
     // --- Security: the session list, and a password change that rotates it ----
     await page.locator("aside .nav-sub button").filter({ hasText: /^Security$/ }).click();
     await page.locator("#settings-security").waitFor();
+    // The section renders before its session list does; a count taken now is a
+    // race the fast laptop wins and the CI runner loses.
+    await page.locator("#settings-security .session-row").first().waitFor();
     check("the Security section is reachable from the Settings menu", true);
     check(
       "the browser that signed in is listed as this session",
