@@ -257,7 +257,7 @@ async function main() {
   const sonarr = await startSonarr();
   const { config } = await writeConfig(work, seerr.base, sonarr.base);
   const booted = await boot(config, work);
-  const { server, kill } = booted;
+  let { server, kill } = booted;
   globalThis.__smokeServerLog = booted.log;
 
   const browser = await chromium.launch();
@@ -711,8 +711,13 @@ async function main() {
       (await autoDays.inputValue()) === "60",
     );
 
-    // The server's audit loop can hold SQLite's writer; wait for it rather
-    // than failing the harness with SQLITE_BUSY.
+    // A paused policy is deployment state that has to survive a restart. Write
+    // it with the server stopped: poking app.db under a running server is a
+    // race the product never promises to win, and it was the flake.
+    kill();
+    if (server.exitCode === null) {
+      await new Promise((resolve) => server.once("exit", resolve));
+    }
     const db = new DatabaseSync(path.join(work, "app.db"));
     db.exec("PRAGMA busy_timeout = 5000");
     const changed = db.prepare(
@@ -726,6 +731,10 @@ async function main() {
     console.log(
       `DEBUG pause write: changed=${changed.changes} row=${JSON.stringify(stored)}`,
     );
+    const restarted = await boot(config, work);
+    server = restarted.server;
+    kill = restarted.kill;
+    globalThis.__smokeServerLog = restarted.log;
     await page.reload();
     await page.getByRole("button", { name: "Apps", exact: true }).click();
     await page
