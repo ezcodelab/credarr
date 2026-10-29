@@ -49,6 +49,19 @@ function check(label, condition, detail = "") {
   console.log(`PASS: ${label}`);
 }
 
+// Poll a predicate until it holds. A boolean read (a count, isVisible) is a
+// snapshot of a page that may still be fetching; polling waits for the data
+// without weakening the assertion. This is the fix for the class of failure
+// where a slow runner renders the container before its contents.
+async function until(predicate, what, timeout = 30000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (await predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`FAILED: timed out waiting for ${what}`);
+}
+
 const MANIFEST = `version: 1
 credentials:
   sonarr_api_key:
@@ -1449,7 +1462,19 @@ async function main() {
     await page.getByLabel("new password", { exact: true }).fill(NEW_PASSWORD);
     await page.getByLabel("confirm new password").fill(NEW_PASSWORD);
     await page.getByRole("button", { name: "Change password" }).click();
-    await page.getByText("Password changed. Every other session is signed out.").waitFor();
+    try {
+      await page
+        .getByText("Password changed. Every other session is signed out.")
+        .waitFor({ timeout: 20000 });
+    } catch (failure) {
+      console.log(
+        `DEBUG security: ${await page.locator("#settings-security").innerText().catch(() => "(gone)")}`,
+      );
+      console.log(
+        `DEBUG banners: ${await page.locator(".banner").allInnerTexts().catch(() => [])}`,
+      );
+      throw failure;
+    }
     check("a password change keeps this session and says it signed the rest out", true);
     check(
       "and the new password satisfies the minimum while the fields are emptied",
