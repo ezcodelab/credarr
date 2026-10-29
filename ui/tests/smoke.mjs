@@ -284,11 +284,14 @@ async function main() {
   // A failed request or a 5xx is the common cause of "the state never
   // appeared": the UI is working, the answer never arrived. Printed where it
   // happens so a CI log names the cause instead of the symptom.
-  page.on("requestfailed", (request) =>
+  page.on("requestfailed", (request) => {
+    const why = request.failure()?.errorText ?? "";
+    // The harness stops the server on purpose to write the paused flag.
+    if (why.includes("ERR_CONNECTION_REFUSED")) return;
     console.log(
-      `DEBUG request failed: ${request.method()} ${request.url()} ${request.failure()?.errorText}`,
-    ),
-  );
+      `DEBUG request failed: ${request.method()} ${request.url()} ${why}`,
+    );
+  });
   page.on("response", (response) => {
     const status = response.status();
     if (status >= 500) {
@@ -741,9 +744,11 @@ async function main() {
       "SELECT credential, enabled, paused FROM auto_rotation WHERE credential = ?",
     ).get("sonarr_api_key");
     db.close();
-    console.log(
-      `DEBUG pause write: changed=${changed.changes} row=${JSON.stringify(stored)}`,
-    );
+    if (changed.changes !== 1 || stored?.paused !== 1) {
+      console.log(
+        `DEBUG pause write: changed=${changed.changes} row=${JSON.stringify(stored)}`,
+      );
+    }
     const restarted = await boot(config, work);
     server = restarted.server;
     kill = restarted.kill;
