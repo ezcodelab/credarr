@@ -1090,6 +1090,26 @@ async function main() {
       "the stored password is not in the DOM",
       !(await page.content()).includes(UI_PASSWORD),
     );
+    // The password was saved a moment ago; the plan runs preflight against it.
+    // Wait for the server to report a runnable plan instead of racing the save.
+    const planToken = await csrf();
+    await page.waitForFunction(
+      async (token) => {
+        const answer = await fetch(
+          "/api/v1/credentials/sonarr_api_key/plan",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json", "X-CSRF-Token": token },
+            body: "{}",
+          },
+        );
+        if (!answer.ok) return false;
+        const plan = await answer.json();
+        return plan.exit_code === 0;
+      },
+      planToken,
+      { timeout: 60000 },
+    );
     await page.getByRole("button", { name: "Plan", exact: true }).click();
     try {
       await page
