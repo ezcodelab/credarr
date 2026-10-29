@@ -227,7 +227,7 @@ async function boot(config, work) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (server.exitCode !== null) throw new Error(`the server exited ${server.exitCode}:\n${log}`);
     const answer = await fetch(`${BASE}/api/v1/health`).catch(() => null);
-    if (answer?.ok) return { server, kill: () => server.kill("SIGTERM") };
+    if (answer?.ok) return { server, kill: () => server.kill("SIGTERM"), log: () => log };
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`the server never answered on ${BASE}:\n${log}`);
@@ -256,7 +256,9 @@ async function main() {
   const seerr = await startSeerr();
   const sonarr = await startSonarr();
   const { config } = await writeConfig(work, seerr.base, sonarr.base);
-  const { server, kill } = await boot(config, work);
+  const booted = await boot(config, work);
+  const { kill } = booted;
+  globalThis.__smokeServerLog = booted.log;
 
   const browser = await chromium.launch();
   const page = await browser.newPage();
@@ -266,6 +268,22 @@ async function main() {
   page.setDefaultTimeout(Number(process.env.CREDARR_SMOKE_TIMEOUT ?? 90_000));
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(String(error)));
+  // A failed request or a 5xx is the common cause of "the state never
+  // appeared": the UI is working, the answer never arrived. Printed where it
+  // happens so a CI log names the cause instead of the symptom.
+  page.on("requestfailed", (request) =>
+    console.log(
+      `DEBUG request failed: ${request.method()} ${request.url()} ${request.failure()?.errorText}`,
+    ),
+  );
+  page.on("response", (response) => {
+    const status = response.status();
+    if (status >= 500) {
+      console.log(
+        `DEBUG http ${status}: ${response.request().method()} ${response.url()}`,
+      );
+    }
+  });
 
   // The sidebar's parents toggle, so a check that wants a menu's children asks
   // whether it is open instead of clicking blind.
@@ -1944,7 +1962,16 @@ async function main() {
   }
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   console.error(`\n${error.message}`);
+  // The server's own log is the other half of the story: a dead loop turns
+  // every later request into a timeout.
+  const serverLog =
+    typeof globalThis.__smokeServerLog === "function"
+      ? globalThis.__smokeServerLog()
+      : "";
+  if (serverLog) {
+    console.error("\n--- server log (tail) ---\n" + serverLog.slice(-4000));
+  }
   process.exit(1);
 });
