@@ -730,18 +730,7 @@ async function main() {
     await page.getByRole("button", { name: "Apps", exact: true }).click();
     await page
       .locator(".app-card h3", { hasText: "Sonarr API Key" }).click();
-    try {
-      await page.getByText("Auto-rotation is paused.").waitFor({ timeout: 15000 });
-    } catch (failure) {
-      const card = await page.locator("section.auto-card").innerText().catch(() => "(no card)");
-      const api = await page.request
-        .get(`${BASE}/api/v1/credentials/sonarr_api_key`)
-        .then((r) => r.json())
-        .catch((e) => `(api failed: ${e})`);
-      console.log(`DEBUG auto card: ${card}`);
-      console.log(`DEBUG api auto_rotation: ${JSON.stringify(api?.auto_rotation ?? api)}`);
-      throw failure;
-    }
+    await page.getByText("Auto-rotation is paused.").waitFor();
     check(
       "a paused auto-rotation is shown as paused, not enabled",
       await page.getByText("run did not finish").isVisible(),
@@ -1093,7 +1082,30 @@ async function main() {
       !(await page.content()).includes(UI_PASSWORD),
     );
     await page.getByRole("button", { name: "Plan", exact: true }).click();
-    await page.locator("#rotation-card").getByText(/Checks passed: sign-in works, the backup answers/).waitFor();
+    try {
+      await page
+        .locator("#rotation-card")
+        .getByText(/Checks passed: sign-in works, the backup answers/)
+        .waitFor({ timeout: 15000 });
+    } catch (failure) {
+      const plan = await page.request
+        .post(`${BASE}/api/v1/credentials/sonarr_api_key/plan`, {
+          data: {},
+          headers: { "X-CSRF-Token": await csrf() },
+        })
+        .then((r) => r.json())
+        .catch((e) => `(plan failed: ${e})`);
+      const options = await page.request
+        .get(`${BASE}/api/v1/credentials/sonarr_api_key/rotation-options`)
+        .then((r) => r.json())
+        .catch((e) => `(options failed: ${e})`);
+      console.log(`DEBUG plan: ${JSON.stringify(plan).slice(0, 800)}`);
+      console.log(`DEBUG options: ${JSON.stringify(options).slice(0, 800)}`);
+      console.log(
+        `DEBUG card: ${await page.locator("#rotation-card").innerText().catch(() => "(no card)")}`,
+      );
+      throw failure;
+    }
     check("the inferred backup path is the plan's method", true);
 
     // Cleanup: deleting the stored password makes the backup unavailable
