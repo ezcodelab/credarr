@@ -8,7 +8,9 @@ Everything else needs the admin session (opaque `HttpOnly`/`SameSite=Strict`
 cookie + CSRF token + Origin check; idle 30 min, absolute 12 h) or a Bearer
 API key (shown once, stored hashed, admin-equivalent, no scopes). Five failed
 sign-ins in fifteen minutes lock the single account for five minutes (`429` +
-`Retry-After`).
+`Retry-After`). Changing the password revokes every other session and rotates
+the caller's own in the same transaction, so the browser that made the change
+stays signed in.
 
 Groups: `/status`, `/services` (+ `/test`), `/credentials` (declare, holders,
 value write-only, plan, rotation-options, auto-rotation, rotate), `/audit`
