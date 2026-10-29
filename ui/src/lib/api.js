@@ -34,9 +34,11 @@ export class ApiError extends Error {
   }
 }
 
+const IDEMPOTENT = new Set(["GET", "HEAD"]);
+
 export async function api(
   path,
-  { method = "GET", body, type = "application/json", timeout } = {},
+  { method = "GET", body, type = "application/json", timeout, retried = false } = {},
 ) {
   const headers = body === undefined ? {} : { "content-type": type };
   if (!["GET", "HEAD", "OPTIONS"].includes(method) && csrfToken) {
@@ -52,7 +54,21 @@ export async function api(
     signal: timeout ? AbortSignal.timeout(timeout) : undefined,
   });
   const payload = await response.json().catch(() => null);
-  if (!response.ok) throw new ApiError(response.status, detailOf(payload));
+  if (!response.ok) {
+    // The password change rotates this session in one transaction, but a read
+    // that left before the new cookie arrived can still be refused. Re-check
+    // the session once and retry a read only: a write must never be replayed
+    // behind the operator's back.
+    if (response.status === 401 && !retried && IDEMPOTENT.has(method)) {
+      const me = await fetch("/api/v1/auth/me", { credentials: "same-origin" });
+      if (me.ok) {
+        const state = await me.json().catch(() => null);
+        setCsrfToken(state?.csrf ?? "");
+        return api(path, { method, body, type, timeout, retried: true });
+      }
+    }
+    throw new ApiError(response.status, detailOf(payload));
+  }
   return payload;
 }
 

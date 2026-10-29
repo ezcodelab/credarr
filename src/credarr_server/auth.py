@@ -286,18 +286,31 @@ class AdminAuth:
                 "DELETE FROM login_failures WHERE subject = 'admin'"
             )
 
-    def change_password(self, current: str, new: str) -> None:
-        """Replace the password and revoke every browser session.
+    def change_password(
+        self,
+        current: str,
+        new: str,
+        *,
+        session_id: int | None = None,
+        now: float | None = None,
+    ) -> IssuedSession | None:
+        """Replace the password, revoke the other sessions, rotate the caller's.
 
-        The caller creates a fresh session after this, so the operator who
-        changed it is not signed out; any other tab is.
+        One transaction: the digest, the revocations and the rotation commit
+        together. With `session_id` the caller's row keeps its id and receives a
+        fresh token and CSRF value, so there is no window in which its old
+        cookie has been revoked and no replacement exists. Every other session
+        is revoked. Without `session_id` (a CLI or unit call) every session goes.
         """
         if not self.verify_password(current):
             raise WrongPassword
         if len(new) < MIN_PASSWORD_LENGTH:
-            raise ValueError(f"the password must be at least {MIN_PASSWORD_LENGTH} characters")
+            raise ValueError(
+                f"the password must be at least {MIN_PASSWORD_LENGTH} characters"
+            )
         digest = self._hasher.hash(new.encode("utf-8"))
-        now = time.time()
+        at = time.time() if now is None else now
+        issued: IssuedSession | None = None
         with connect(self.path) as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -305,15 +318,42 @@ class AdminAuth:
                     "UPDATE settings SET value = ? WHERE key = ?",
                     (digest, PASSWORD_SETTING),
                 )
-                connection.execute(
+                statement = (
                     "UPDATE app_sessions SET revoked_at = ? "
-                    "WHERE subject = 'admin' AND revoked_at IS NULL",
-                    (now,),
+                    "WHERE subject = 'admin' AND revoked_at IS NULL"
                 )
+                values: list[float | int] = [at]
+                if session_id is not None:
+                    statement += " AND id != ?"
+                    values.append(session_id)
+                connection.execute(statement, values)
+                if session_id is not None:
+                    row = connection.execute(
+                        "SELECT * FROM app_sessions WHERE id = ?", (session_id,)
+                    ).fetchone()
+                    if row is None or row["revoked_at"] is not None:
+                        raise ValueError("the session being rotated is not live")
+                    token = secrets.token_urlsafe(32)
+                    csrf = secrets.token_urlsafe(32)
+                    idle_expires = min(
+                        at + SESSION_IDLE_SECONDS, row["absolute_expires_at"]
+                    )
+                    connection.execute(
+                        "UPDATE app_sessions SET token_hash = ?, csrf_token = ?, "
+                        "last_seen_at = ?, idle_expires_at = ? WHERE id = ?",
+                        (_session_hash(token), csrf, at, idle_expires, session_id),
+                    )
+                    updated = connection.execute(
+                        "SELECT * FROM app_sessions WHERE id = ?", (session_id,)
+                    ).fetchone()
+                    issued = IssuedSession(
+                        token=token, session=_session_from_row(updated)
+                    )
                 connection.execute("COMMIT")
             except BaseException:
                 connection.execute("ROLLBACK")
                 raise
+        return issued
 
     def create_session(self, device: str = "", *, now: float | None = None) -> IssuedSession:
         """Issue a new opaque session; the raw token is returned exactly once."""

@@ -405,3 +405,68 @@ test("a failed background audit surfaces the job sentence", async () => {
     restore();
   }
 });
+
+// A password change rotates the session in one transaction, but a read that
+// left before the new cookie arrived can still be refused. The retry is narrow
+// on purpose: reads only, once, and only when the session is still alive.
+test("a 401 on a read retries once after the rotated session checks out", async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  let attempts = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    const path = url.replace("/api/v1", "");
+    calls.push({ method: options.method ?? "GET", path });
+    if (path === "/status") {
+      attempts += 1;
+      if (attempts === 1) return jsonResponse(401, { detail: "authentication required" });
+      return jsonResponse(200, { jobs: [] });
+    }
+    if (path === "/auth/me") return jsonResponse(200, { csrf: "fresh-token" });
+    throw new Error(`unexpected path ${path}`);
+  };
+  try {
+    const result = await api("/status");
+    assert.equal(attempts, 2);
+    assert.deepEqual(result, { jobs: [] });
+    assert.deepEqual(
+      calls.map((call) => call.path),
+      ["/status", "/auth/me", "/status"],
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("a 401 on a write is never retried", async () => {
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return jsonResponse(401, { detail: "authentication required" });
+  };
+  try {
+    await assert.rejects(
+      api("/credentials", { method: "POST", body: { name: "x" } }),
+      (failure) => failure instanceof ApiError && failure.status === 401,
+    );
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("a 401 from a dead session still signs out", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url.endsWith("/auth/me")) return jsonResponse(401, { detail: "authentication required" });
+    return jsonResponse(401, { detail: "authentication required" });
+  };
+  try {
+    await assert.rejects(
+      api("/status"),
+      (failure) => failure instanceof ApiError && failure.status === 401,
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});

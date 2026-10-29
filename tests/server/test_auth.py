@@ -238,3 +238,67 @@ def test_too_many_failures_lock_the_one_account_temporarily(tmp_path: Path) -> N
         ).fetchone()[0]
     assert failures == 1
     auth.login(PASSWORD, now=now + LOGIN_LOCKOUT_SECONDS + 2)
+
+
+def test_changing_the_password_rotates_the_callers_session_in_place(
+    tmp_path: Path,
+) -> None:
+    """No revoke-then-create window for the browser that changed it.
+
+    The caller's row keeps its id and receives a new token and CSRF value in the
+    same transaction that revokes every other session. An in-flight request that
+    authenticated before the commit is unaffected; one that arrives afterwards
+    with the old cookie is refused, which is why the console also retries a read
+    once.
+    """
+    auth = AdminAuth(tmp_path / "app.db")
+    auth.set_password(PASSWORD)
+    mine = auth.create_session(now=0)
+    other = auth.create_session(now=1)
+
+    issued = auth.change_password(
+        PASSWORD,
+        "another-password-entirely",
+        session_id=mine.session.id,
+        now=2,
+    )
+
+    assert issued is not None
+    assert issued.session.id == mine.session.id, "the row is rotated, not replaced"
+    assert issued.token != mine.token
+    assert issued.session.csrf_token != mine.session.csrf_token
+    assert auth.authenticate_session(mine.token, now=3) is None
+    assert auth.authenticate_session(issued.token, now=3) is not None
+    assert auth.authenticate_session(other.token, now=3) is None
+    assert auth.verify_password("another-password-entirely") is True
+
+
+def test_a_failed_password_change_changes_nothing(tmp_path: Path) -> None:
+    auth = AdminAuth(tmp_path / "app.db")
+    auth.set_password(PASSWORD)
+    mine = auth.create_session(now=0)
+    other = auth.create_session(now=1)
+
+    with pytest.raises(WrongPassword):
+        auth.change_password(
+            "wrong", "another-password-entirely", session_id=mine.session.id
+        )
+
+    assert auth.authenticate_session(mine.token, now=2) is not None
+    assert auth.authenticate_session(other.token, now=2) is not None
+    assert auth.verify_password(PASSWORD) is True
+
+
+def test_rotating_a_session_that_is_already_revoked_is_refused(tmp_path: Path) -> None:
+    auth = AdminAuth(tmp_path / "app.db")
+    auth.set_password(PASSWORD)
+    mine = auth.create_session(now=0)
+    auth.revoke_session(mine.session.id)
+
+    with pytest.raises(ValueError):
+        auth.change_password(
+            PASSWORD, "another-password-entirely", session_id=mine.session.id
+        )
+
+    # The password change rolled back with the rotation.
+    assert auth.verify_password(PASSWORD) is True

@@ -1096,16 +1096,22 @@ def _mount(app: FastAPI) -> None:
         body: PasswordBody, request: Request, response: Response
     ) -> dict[str, bool]:
         """Change the password; a browser session is required, not a Bearer key."""
-        if request.state.session is None:
+        session = request.state.session
+        if session is None:
             raise HTTPException(
                 status_code=403,
                 detail="changing the password requires a signed-in browser session",
             )
         try:
-            auth.change_password(body.current_password, body.new_password)
+            issued = auth.change_password(
+                body.current_password,
+                body.new_password,
+                session_id=session.id,
+            )
         except WrongPassword:
             raise HTTPException(status_code=403, detail="current password is wrong") from None
-        issued = auth.create_session(request.headers.get("user-agent", ""))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
         _set_session_cookie(response, issued.token, settings)
         return {"ok": True}
 

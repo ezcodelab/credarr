@@ -18,13 +18,22 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import SONARR_KEY, make_server, poll_for, setup_admin, wait_for_audit
+from conftest import (
+    PASSWORD,
+    SONARR_KEY,
+    make_server,
+    poll_for,
+    setup_admin,
+    wait_for_audit,
+)
 from credarr import facade
 from credarr.errors import TransportError
 from credarr.executor import ExecutionResult, HolderOutcome
 from credarr.redact import Secret
 from credarr.services import HolderFacts, ServiceFacts, ServiceObservation, ServiceReport
 from credarr_server.audit_log import AuditLog
+
+NEW_PASSWORD = "another-smoke-password-1234"  # gitleaks:allow - a fixture
 
 # One credential with one API-only holder: the import must be what the console
 # knows afterwards, not the store the fixture seeded. The holder is unmanaged,
@@ -1654,3 +1663,39 @@ def test_a_manual_mint_plan_is_marked_and_rotate_needs_the_key(app, tmp_path) ->
         assert extra.status_code == 400
         assert "does not use a manual mint" in extra.json()["detail"]
         assert extra.json()["detail"].count("a-key-this-plan-does-not-use") == 0
+
+
+def test_changing_the_password_keeps_the_calling_browser_signed_in(server) -> None:
+    """The rotation is server-side: no window where the caller has no session.
+
+    The caller keeps its row id, the other browser is signed out, and a request
+    that still carries the old cookie is refused. The console retries one read
+    after that refusal (ui/tests/api.test.mjs); it never replays a write.
+    """
+    with TestClient(server) as client:
+        setup_admin(client)
+        before = client.cookies.get("credarr_session")
+        other = server.state.auth.create_session("other browser")
+
+        sessions = client.get("/api/v1/auth/sessions").json()["sessions"]
+        assert len(sessions) == 2
+        current_id = next(row["id"] for row in sessions if row["current"])
+
+        changed = client.post(
+            "/api/v1/auth/password",
+            json={"current_password": PASSWORD, "new_password": NEW_PASSWORD},
+        )
+        assert changed.status_code == 200, changed.text
+
+        after = client.cookies.get("credarr_session")
+        assert after and after != before
+
+        sessions = client.get("/api/v1/auth/sessions").json()["sessions"]
+        assert [row["id"] for row in sessions] == [current_id]
+        assert sessions[0]["current"] is True
+
+        assert server.state.auth.authenticate_session(other.token) is None
+
+        stale = TestClient(server)
+        stale.cookies.set("credarr_session", before)
+        assert stale.get("/api/v1/auth/me").status_code == 401
