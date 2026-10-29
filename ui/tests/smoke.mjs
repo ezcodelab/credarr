@@ -257,7 +257,7 @@ async function main() {
   const sonarr = await startSonarr();
   const { config } = await writeConfig(work, seerr.base, sonarr.base);
   const booted = await boot(config, work);
-  const { kill } = booted;
+  const { server, kill } = booted;
   globalThis.__smokeServerLog = booted.log;
 
   const browser = await chromium.launch();
