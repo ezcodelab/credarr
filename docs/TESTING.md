@@ -63,13 +63,9 @@ pytest -o addopts="" -m "not integration" -q   # explicit counts (the default ad
 
 ## Continuous integration
 
-`.gitea/workflows/ci.yaml` runs on Gitea Actions. It does **not** use
-`actions/setup-python` or `actions/setup-node`: on this runner those can only
-install from the local tool cache, so a version that is not baked into the image
-fails with "Version 3.12 was not found in the local cache". CI uses the runner's
-`python3` in a venv, and installs Node 24 into `/opt/node24` from nodejs.org
-with its published SHA256 checksum. Extracting over an existing `/usr/local`
-leaves a mixed npm tree that fails as `Class extends value undefined`.
+`.github/workflows/ci.yml` runs on GitHub Actions. GitHub's runners provide the toolchains and a browser, so the workflow uses the
+standard setup actions. The private Gitea remote no longer runs CI: its runner
+cannot use those actions, and the history is shared with GitHub.
 
 | Job | Runs | When |
 | --- | --- | --- |

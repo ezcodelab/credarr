@@ -9,7 +9,7 @@ VENV := .venv
 BIN  := $(VENV)/bin
 PORT ?= 8080
 
-.PHONY: help install test ui-test lint check ci worktree-setup serve ui-dev web ui-smoke wheel image snapshot publish release clean
+.PHONY: help install test ui-test lint check ci worktree-setup serve ui-dev web ui-smoke wheel image publish release clean
 
 GHCR := ghcr.io/ezcodelab/credarr
 
@@ -80,42 +80,21 @@ wheel: web  ## Build the wheel with the console inside (the image's input)
 image:  ## Build the one image (needs Docker; the console is built inside it)
 	docker build -t credarr:dev .
 
-snapshot:  ## Build the public snapshot branch (one commit, no push)
-	@if [ -n "$$(git status --porcelain)" ]; then echo "refusing: commit or stash first"; git status --short; exit 1; fi
-	@git branch -D public-snapshot >/dev/null 2>&1 || true
-	@git checkout -q --orphan public-snapshot
-	@git rm -rq --cached .
-	@git add -A
-	@git rm -rqf .gitea
-	@m=$$(mktemp); t=$$(mktemp); \
-	git ls-tree -r --name-only main | sort > $$m; \
-	git ls-files | sort > $$t; \
-	if comm -13 $$m $$t | grep -q .; then \
-		echo "REFUSED: the snapshot carries files main does not track:"; \
-		comm -13 $$m $$t; rm -f $$m $$t; \
-		git checkout -q main; git branch -D public-snapshot >/dev/null 2>&1 || true; exit 1; \
-	fi; rm -f $$m $$t
-	@git commit -q -m "credarr $$(date +%F)"
-	@echo "snapshot $$(git rev-parse --short HEAD): $$(git ls-files | wc -l | tr -d ' ') files, no .gitea"
+publish:  ## Push main to both remotes (Gitea and GitHub)
+	git push origin main
+	git push github main
 
-publish:  ## Push the code snapshot to GitHub (TAG=v1.2.3 tags it too)
-	@if [ "$$(git rev-parse --abbrev-ref HEAD)" != "public-snapshot" ]; then $(MAKE) snapshot; fi
-	@git fetch -q github
-	@git push --force-with-lease github HEAD:refs/heads/main
-	@if [ -n "$(TAG)" ]; then git push --force-with-lease github HEAD:refs/tags/$(TAG); fi
-	@git checkout -q main
-	@git branch -D public-snapshot >/dev/null 2>&1 || true
-	@echo "published to github: main$(if $(TAG), and $(TAG))"
-
-release:  ## Build and push the image, then publish the code (VERSION=x.y.z)
+release:  ## Build and push the image, then publish (VERSION=x.y.z)
 	@if [ -z "$(VERSION)" ]; then echo "usage: make release VERSION=1.2.3"; exit 2; fi
 	$(MAKE) image
 	docker tag credarr:dev $(GHCR):$(VERSION)
 	docker tag credarr:dev $(GHCR):latest
 	docker push $(GHCR):$(VERSION)
 	docker push $(GHCR):latest
-	$(MAKE) publish TAG=v$(VERSION)
-	@echo "released $(VERSION): $(GHCR):$(VERSION) and :latest"
+	git tag -a v$(VERSION) -m "credarr $(VERSION)"
+	$(MAKE) publish
+	git push origin refs/tags/v$(VERSION)
+	git push github refs/tags/v$(VERSION)
 
 clean:  ## Remove build and cache artefacts
 	rm -rf .pytest_cache .ruff_cache build dist src/*.egg-info src/credarr_server/web ui/dist ui/test-results

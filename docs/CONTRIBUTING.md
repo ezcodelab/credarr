@@ -19,44 +19,19 @@
 - Keep `docs/` truthful with the code in the same change. The engine and the
   server are authoritative over prose.
 
-## Publishing to GitHub
+## Publishing
 
-The public repository is a single-commit snapshot, not this history. The
-internal working files must never ship in it: they were committed here for
-months before they were untracked, so pushing this history would publish them
-in old commits. The Gitea-only CI in `.gitea/` stays out for the same reason;
-`.github/` is the public twin.
-
-One command for code only:
+Both remotes hold the same history: one root commit with the product tree.
+`make publish` pushes `main` to Gitea and GitHub, and `make release VERSION=x.y.z`
+builds and pushes the image first, then the code and the release tag.
 
 ```sh
-make publish                 # snapshot + push main
-make publish TAG=v1.0.1      # same, and tag the release
+make publish
+make release VERSION=1.2.3
 ```
 
-One command for code and a new image:
-
-```sh
-make release VERSION=1.0.1   # build, push ghcr :1.0.1 and :latest, publish
-```
-
-Both need a `github` remote and credentials already working, for example
-`docker login ghcr.io` once for the image and a PAT with `repo` and `workflow`
-scopes for the push.
-
-What `make snapshot` does, and why it is the mechanism rather than a
-convenience:
-
-```sh
-git checkout --orphan public-snapshot
-git rm -r --cached .            # re-add only what is not ignored locally
-git add -A
-git rm -r --cached .gitea       # Gitea-only CI
-git commit -m "credarr <date>"
-```
-
-It then refuses to continue if the snapshot holds any file that `main` does
-not track, which is how an internal file would appear. Confirm from the
-outside after pushing: a fresh clone must show `git rev-list --count HEAD` of
-1, and `gitleaks detect` must be clean. Public `main` is a generated artifact,
-so each publish replaces it.
+The internal working files (agent instructions, decision log, lessons, the live
+harness) are not in the repository and never enter it. They are ignored locally
+through `.git/info/exclude`, so no tracked file names them. Do not add them back:
+they were committed for months before the history was collapsed, and the reason
+the history is one commit is that those months cannot be published.
