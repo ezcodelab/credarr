@@ -3,6 +3,10 @@
 Read before exposing the console or trusting a rotation. Each item is a known
 v1 limit, not a roadmap promise.
 
+- **Session cookies follow the scheme you declare.** Behind TLS set `CREDARR_EXTERNAL_URL=https://...` or
+  `CREDARR_SECURE_COOKIES=1`. The scheme is not inferred from `X-Forwarded-Proto`: that header is client-supplied,
+  and trusting it without a verified proxy would let a caller decide the cookie policy. A contradiction (an `https`
+  URL with secure cookies off, or an `http` URL with them on) refuses to start.
 - **Plaintext at rest:** working copies, digests, hashes and notification
   secrets live in one `0600` SQLite file. Full-host compromise is full
   credential compromise. Default compose is HTTP. Bind to localhost or use a

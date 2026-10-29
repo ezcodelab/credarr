@@ -3139,6 +3139,69 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+_SECURE_VALUES = {"1": True, "true": True, "yes": True, "0": False, "false": False, "no": False}
+
+
+def _is_loopback(host: str) -> bool:
+    name = (host or "").strip().lower()
+    return name in _LOOPBACK_HOSTS or name.startswith("127.")
+
+
+def resolve_session_security(
+    *,
+    flag: bool,
+    env_secure: str | None,
+    external_url: str | None,
+    host: str,
+) -> tuple[bool, list[str]]:
+    """Decide the session cookie policy, and say what is risky about it.
+
+    Three inputs, in increasing authority: the flag, CREDARR_SECURE_COOKIES, and
+    a declared CREDARR_EXTERNAL_URL. The URL is the only way the app can know
+    the scheme it is served under; nothing here trusts a request header, because
+    X-Forwarded-Proto is client-supplied unless a proxy is declared and this
+    build has no way to verify one.
+
+    A contradiction is an error, not a guess: an https URL with secure cookies
+    disabled, or an http URL with them enabled, both produce a console that
+    cannot stay signed in.
+    """
+    value = (env_secure or "").strip().lower()
+    if value and value not in _SECURE_VALUES:
+        raise ValueError("CREDARR_SECURE_COOKIES must be 1 or 0")
+    env_off = value in {"0", "false", "no"}
+    secure = bool(flag or _SECURE_VALUES.get(value, False))
+
+    url = (external_url or "").strip()
+    if url:
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            raise ValueError(
+                "CREDARR_EXTERNAL_URL must be an http or https URL with a host"
+            )
+        if parts.scheme == "https":
+            if env_off and not flag:
+                raise ValueError(
+                    "CREDARR_EXTERNAL_URL is https but CREDARR_SECURE_COOKIES=0: "
+                    "remove one of the two"
+                )
+            secure = True
+        elif secure:
+            raise ValueError(
+                "CREDARR_EXTERNAL_URL is http while secure cookies are on: "
+                "the browser would drop the session, so set one scheme"
+            )
+
+    warnings: list[str] = []
+    if not secure and not _is_loopback(host):
+        warnings.append(
+            f"secure cookies are off and the console binds {host}; if this "
+            "instance is reached over HTTPS, set CREDARR_SECURE_COOKIES=1"
+        )
+    return secure, warnings
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     # Before config or secrets are read: a crash must not leave a core file with
     # the working copies this process handles.
@@ -3154,13 +3217,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return int(ExitCode.CONFIG)
+    try:
+        secure_cookies, security_warnings = resolve_session_security(
+            flag=args.secure_cookies,
+            env_secure=os.environ.get("CREDARR_SECURE_COOKIES"),
+            external_url=os.environ.get("CREDARR_EXTERNAL_URL"),
+            host=args.host,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return int(ExitCode.CONFIG)
+    for line in security_warnings:
+        print(f"warning: {line}", file=sys.stderr)
     settings = ServerSettings(
         config_path=args.config.resolve(),
         config_dir=args.config_dir,
         host=args.host,
         port=args.port,
         audit_interval=args.audit_interval,
-        secure_cookies=args.secure_cookies,
+        secure_cookies=secure_cookies,
         allow_network_config=os.environ.get("CREDARR_ALLOW_NETWORK_CONFIG") == "1",
         docker_url=os.environ.get("CREDARR_DOCKER_URL") or None,
         timezone=_configured_timezone(),

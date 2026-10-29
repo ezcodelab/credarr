@@ -32,7 +32,12 @@ from conftest import (
 )
 from credarr import __version__, facade
 from credarr.redact import Secret
-from credarr_server.app import ServerSettings, create_app, main
+from credarr_server.app import (
+    ServerSettings,
+    create_app,
+    main,
+    resolve_session_security,
+)
 from credarr_server.notifier import Notifier
 from credarr_server.scheduler import Scheduler
 
@@ -1908,3 +1913,53 @@ def test_repeated_wrong_logins_return_a_locked_response(server) -> None:
         assert locked.status_code == 429
         assert "too many failed sign-in attempts" in locked.json()["detail"]
         assert int(locked.headers["retry-after"]) > 0
+
+
+def test_secure_cookies_follow_the_environment_and_the_declared_url() -> None:
+    """Three inputs, one policy: an https URL turns the flag on for everyone,
+    and a contradiction is refused instead of guessed."""
+    secure, warnings = resolve_session_security(
+        flag=False, env_secure=None, external_url="https://credarr.example", host="0.0.0.0"
+    )
+    assert secure is True and warnings == []
+
+    secure, _ = resolve_session_security(
+        flag=False, env_secure="1", external_url=None, host="0.0.0.0"
+    )
+    assert secure is True
+
+    secure, warnings = resolve_session_security(
+        flag=False, env_secure=None, external_url=None, host="0.0.0.0"
+    )
+    assert secure is False
+    assert warnings and "CREDARR_SECURE_COOKIES=1" in warnings[0]
+
+    _secure, warnings = resolve_session_security(
+        flag=False, env_secure=None, external_url=None, host="127.0.0.1"
+    )
+    assert warnings == [], "a loopback bind needs no warning"
+
+
+def test_a_contradictory_session_security_is_refused() -> None:
+    with pytest.raises(ValueError, match="https but CREDARR_SECURE_COOKIES=0"):
+        resolve_session_security(
+            flag=False,
+            env_secure="0",
+            external_url="https://credarr.example",
+            host="0.0.0.0",
+        )
+    with pytest.raises(ValueError, match="http while secure cookies are on"):
+        resolve_session_security(
+            flag=False,
+            env_secure="1",
+            external_url="http://credarr.example",
+            host="0.0.0.0",
+        )
+    with pytest.raises(ValueError, match="must be 1 or 0"):
+        resolve_session_security(
+            flag=False, env_secure="yes please", external_url=None, host="0.0.0.0"
+        )
+    with pytest.raises(ValueError, match="http or https URL"):
+        resolve_session_security(
+            flag=False, env_secure=None, external_url="credarr.example", host="0.0.0.0"
+        )

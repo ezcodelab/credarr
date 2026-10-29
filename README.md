@@ -72,6 +72,10 @@ services:
 | `CREDARR_AUDIT_INTERVAL` | `3600` | Initial seconds between audits; a value saved in Settings wins. |
 | `CREDARR_ALLOW_NETWORK_CONFIG` | unset | `1` accepts a network `/config`. This weakens SQLite locking and is not HA support. |
 | `CREDARR_DOCKER_URL` | unset | Optional read-only Docker API for discovery, e.g. `http://socket-proxy:2375`. Never mount the raw socket. |
+| `CREDARR_SECURE_COOKIES` | unset | `1` marks the session cookie `Secure`. Set it behind HTTPS only. |
+| `CREDARR_EXTERNAL_URL` | unset | The URL people reach the console on. `https` turns secure cookies on; a contradiction with the variable above refuses to start. |
+
+Behind a TLS proxy set `CREDARR_EXTERNAL_URL=https://...`. Leave both unset for plain HTTP: a `Secure` cookie is dropped by the browser and sign-in fails. The server warns at startup when secure cookies are off and it binds a non-loopback address.
 
 ### Run-once (cron)
 

@@ -31,6 +31,10 @@ services:
       # Optional read-only Docker discovery. Point it at a socket proxy, never
       # at the raw socket.
       # CREDARR_DOCKER_URL: "http://socket-proxy:2375"
+      # Behind a TLS reverse proxy, declare the URL or set the flag. Leave both
+      # unset for plain HTTP, or the browser drops the session cookie.
+      # CREDARR_EXTERNAL_URL: "https://credarr.example.com"
+      # CREDARR_SECURE_COOKIES: "1"
     volumes:
       # app.db, credarr.yaml and encrypted backups. May start empty: first boot
       # writes a minimal config and an empty manifest.
