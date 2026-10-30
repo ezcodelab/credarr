@@ -1,0 +1,105 @@
+#!/usr/bin/env sh
+# Ship this checkout: build the image, push it to the Gitea registry, pin the
+# tag in homelab-applications, and deploy the stack through Arcane.
+#
+#   scripts/deploy-gitea                # build and push the image only
+#   scripts/deploy-gitea --deploy       # also bump the compose pin and deploy
+#   scripts/deploy-gitea --tag NAME     # use NAME instead of the short SHA
+#   scripts/deploy-gitea --dry-run      # print what would run
+#
+# The default tag is the commit's short SHA, so a pin always names the source it
+# was built from. A dirty tree is refused: an image that cannot be traced to a
+# commit cannot be rebuilt or reviewed later.
+#
+# This machine must already be logged in to git.ezcloud.casa for `docker push`.
+# The Gitea package is public, so Arcane pulls it without a registry credential.
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+apps=${APPS_REPO:-$(dirname "$root")/homelab-applications}
+registry=git.ezcloud.casa/admin/credarr
+compose=$apps/compose/credarr/compose.yaml
+tag=""
+deploy=0
+dry_run=0
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --deploy) deploy=1; shift ;;
+        --tag) tag=${2:?--tag needs a value}; shift 2 ;;
+        --dry-run) dry_run=1; shift ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+
+cd "$root"
+if [ -n "$(git status --porcelain)" ]; then
+    echo "refusing: commit or stash the working tree first" >&2
+    git status --short >&2
+    exit 1
+fi
+
+if [ -z "$tag" ]; then
+    tag=$(git rev-parse --short HEAD)
+fi
+image=$registry:$tag
+
+if [ "$deploy" = 1 ]; then
+    [ -f "$compose" ] || { echo "error: no $compose (set APPS_REPO)" >&2; exit 1; }
+    branch=$(git -C "$apps" rev-parse --abbrev-ref HEAD)
+    if [ "$branch" != "main" ]; then
+        echo "error: $apps is on '$branch', not main; GitOps deploys main" >&2
+        exit 1
+    fi
+fi
+
+echo "source: $(git rev-parse HEAD)"
+echo "image:  $image (and :latest)"
+[ "$deploy" = 1 ] && echo "apps:   $compose"
+
+if [ "$dry_run" = 1 ]; then
+    echo "  would run: make image"
+    echo "  would run: docker push $image and $registry:latest"
+    if [ "$deploy" = 1 ]; then
+        echo "  would set $compose to $image"
+        echo "  would commit and push $apps main"
+        echo "  would run: make -C $apps deploy SERVICES=credarr"
+    fi
+    exit 0
+fi
+
+# Build before publishing, so a broken build leaves the registry untouched.
+make image
+docker tag credarr:dev "$image"
+docker tag credarr:dev "$registry:latest"
+docker push "$image"
+docker push "$registry:latest"
+
+if [ "$deploy" = 0 ]; then
+    echo "pushed $image"
+    echo "next: scripts/deploy-gitea --deploy, after this image is the one you want live"
+    exit 0
+fi
+
+python3 - "$compose" "$image" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path, image = Path(sys.argv[1]), sys.argv[2]
+text = path.read_text()
+updated, count = re.subn(r"(?m)^(\s*image:\s*)\S+", r"\g<1>" + image, text, count=1)
+if count != 1:
+    raise SystemExit(f"no image line found in {path}")
+path.write_text(updated)
+PY
+
+if git -C "$apps" diff --quiet -- compose/credarr/compose.yaml; then
+    echo "compose already pins $tag"
+else
+    git -C "$apps" add compose/credarr/compose.yaml
+    git -C "$apps" commit -m "credarr: deploy $tag" -- compose/credarr/compose.yaml
+    git -C "$apps" push origin main
+fi
+
+make -C "$apps" deploy SERVICES=credarr

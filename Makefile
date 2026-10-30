@@ -9,7 +9,7 @@ VENV := .venv
 BIN  := $(VENV)/bin
 PORT ?= 8080
 
-.PHONY: help install test ui-test lint check ci worktree-setup serve ui-dev web ui-smoke wheel image publish release clean
+.PHONY: help install test ui-test lint check ci worktree-setup serve ui-dev web ui-smoke wheel image ship publish release clean
 
 GHCR := ghcr.io/ezcodelab/credarr
 
@@ -79,6 +79,9 @@ wheel: web  ## Build the wheel with the console inside (the image's input)
 
 image:  ## Build the one image (needs Docker; the console is built inside it)
 	docker build -t credarr:dev .
+
+ship:  ## Build, push to the Gitea registry, pin it, and deploy (TAG= optional)
+	scripts/deploy-gitea --deploy $(if $(TAG),--tag $(TAG),)
 
 publish:  ## Push main to both remotes (Gitea and GitHub)
 	git push origin main
