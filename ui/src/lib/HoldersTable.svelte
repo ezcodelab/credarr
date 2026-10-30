@@ -1,5 +1,6 @@
 <script>
   import StatusPill from "./StatusPill.svelte";
+  import { friendlyReason } from "./names.js";
   import { serviceById, describeHolder } from "./setupCatalog.js";
   import { statusRank } from "./status.js";
 
@@ -36,6 +37,11 @@
     );
   }
 
+  function qualifierName(item) {
+    const qualifier = String(item.info?.qualifier ?? "").trim();
+    return serviceById(qualifier)?.label ?? qualifier;
+  }
+
   // Copies are shown and rotated as one unit per service: a rotation already
   // writes every copy of the key in a single run, so fragmenting one app into
   // a row per target only hides that. Grouping keeps the worst audit verdict
@@ -65,7 +71,7 @@
 {#if consumers.length === 0}
   <p class="muted">No copies declared.</p>
 {:else}
-  <table>
+  <table class="holders-table">
     <caption class="sr-only">Copies of this credential</caption>
     <thead>
       <tr>
@@ -81,7 +87,7 @@
         {@const managed = group.items.every((item) => item.consumer.managed)}
         {@const worst = worstOf(group)}
         <tr>
-          <td>
+          <td data-label="Copy">
             <span class="row-title">
               {serviceById(group.service)?.label ?? group.service}
             </span>
@@ -94,7 +100,7 @@
             {/if}
           </td>
           {#if oncount}
-            <td>
+            <td data-label="Copies">
               {#each group.items as item (item.consumer.target)}
                 <div class="count-line">
                   <input
@@ -103,7 +109,7 @@
                     min="1"
                     step="1"
                     value={item.consumer.count ?? 1}
-                    aria-label={`Number of copies in ${serviceById(group.service)?.label ?? group.service}${item.info?.qualifier ? `: ${item.info.qualifier}` : ""}`}
+                    aria-label={`Number of copies in ${serviceById(group.service)?.label ?? group.service}${qualifierName(item) ? `: ${qualifierName(item)}` : ""}`}
                     disabled={busy}
                     onchange={async (event) => {
                       const input = event.currentTarget;
@@ -125,28 +131,26 @@
               {/each}
             </td>
           {/if}
-          <td>
+          <td data-label="Last audit">
             {#if worst.consumer.status}
               <StatusPill status={worst.consumer.status} />
               {#if worst.consumer.status !== "live" && worst.consumer.detail}
-                <div class="status-detail">{worst.consumer.detail}</div>
+                <div class="status-detail">{friendlyReason(worst.consumer.detail)}</div>
               {/if}
             {:else}
               <StatusPill status="none" label="not audited yet" />
             {/if}
           </td>
-          {#if onremove}
-            <td>
+          {#if onremove && group.items.length > 1}
+            <td data-label="Actions">
               <div class="row-actions">
-                {#if group.items.length > 1}
-                  <button
-                    class="danger"
-                    type="button"
-                    onclick={() => onremove(group.items.map((item) => item.consumer.target))}
-                  >
-                    Remove all
-                  </button>
-                {/if}
+                <button
+                  class="danger"
+                  type="button"
+                  onclick={() => onremove(group.items.map((item) => item.consumer.target))}
+                >
+                  Remove all
+                </button>
               </div>
             </td>
           {/if}

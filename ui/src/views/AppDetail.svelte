@@ -506,7 +506,9 @@
     const detail = String(check?.detail ?? "");
     if (
       check?.reason === "no_canonical" ||
-      detail === "no canonical reference in the manifest"
+      check?.reason === "value_missing" ||
+      detail === "no canonical reference in the manifest" ||
+      detail.startsWith("no value at ")
     ) {
       return "No value stored yet.";
     }
@@ -787,10 +789,10 @@
         {/if}
       </span>
       <button type="button" onclick={planRotation} disabled={planBusy}>
-        {planBusy ? "Planning…" : "Plan"}
+        {planBusy ? "Previewing…" : "Preview rotation"}
       </button>
       <button type="button" onclick={checkApp} disabled={checkBusy}>
-        {checkBusy ? "Checking…" : "Check"}
+        {checkBusy ? "Checking…" : "Check app"}
       </button>
       <button
         class="primary"
@@ -931,6 +933,7 @@
             <button
               type="button"
               class={selectedMethod === "reconstruct" ? "primary" : ""}
+              aria-pressed={selectedMethod === "reconstruct"}
               onclick={() => saveMethod("reconstruct")}
               disabled={fallbackBusy || selectedMethod === "reconstruct"}
             >
@@ -946,6 +949,7 @@
           <button
             type="button"
             class={selectedMethod === "manual" ? "primary" : ""}
+            aria-pressed={selectedMethod === "manual"}
             onclick={() => saveMethod("manual")}
             disabled={fallbackBusy || selectedMethod === "manual"}
           >
@@ -990,7 +994,6 @@
         </button>
       {/if}
       <button
-        class="primary"
         type="button"
         onclick={saveConnection}
         disabled={connBusy || (url === urlLoaded && !secret.trim())}
@@ -1009,7 +1012,7 @@
     </div>
     {#if checksError}<Banner tone="danger">{checksError}</Banner>{/if}
     {#if checks.length > 0}
-      <table>
+      <table class="checks-table">
         <caption class="sr-only">Checks and stack audits for this app</caption>
         <thead>
           <tr>
@@ -1022,12 +1025,12 @@
         <tbody>
           {#each checks as check}
             <tr>
-              <td class="muted time">{timestamp(check.at)}</td>
-              <td><StatusPill status={checkStatus(check.status, row)} /></td>
-              <td class="muted">
+              <td class="muted time" data-label="When">{timestamp(check.at)}</td>
+              <td data-label="Result"><StatusPill status={checkStatus(check.status, row)} /></td>
+              <td class="muted" data-label="Source">
                 {check.source === "audit" ? "Stack audit" : "Check"}
               </td>
-              <td class="muted">{checkDetail(check)}</td>
+              <td class="muted" data-label="What happened">{checkDetail(check)}</td>
             </tr>
           {/each}
         </tbody>
@@ -1036,7 +1039,7 @@
       <p class="muted">Reading checks…</p>
     {:else}
       <p class="muted">
-        No checks yet. Use Check to test this app without auditing the whole
+        No checks yet. Use Check app to test this app without auditing the whole
         stack.
       </p>
     {/if}
@@ -1074,21 +1077,11 @@
     </section>
   {/if}
 
-  {#key row.name}
-    <AutoRotationCard
-      {row}
-      {onrefresh}
-      {onsignout}
-      manual={row.write?.manual_mint === true}
-    />
-  {/key}
-
   <section class="card section">
     <div class="section-head">
       <div><h3>Used in</h3></div>
       {#if !addingCopy}
         <button
-          class="primary"
           type="button"
           onclick={openCopyForm}
           disabled={holderBusy || copyServices.length === 0}
@@ -1169,6 +1162,15 @@
       {/if}
     {/if}
   </section>
+
+  {#key row.name}
+    <AutoRotationCard
+      {row}
+      {onrefresh}
+      {onsignout}
+      manual={row.write?.manual_mint === true}
+    />
+  {/key}
 
   {#if removeTargets.length}
     <ConfirmDialog

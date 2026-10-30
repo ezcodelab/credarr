@@ -64,10 +64,66 @@ function slugPart(text) {
 // copy's plain name; anything without a known target passes through untouched.
 const TARGET_PREFIX = /^([^.\s:]+)\.([^:[\s]+)(?:\[([^\]]*)\])?\s*:?\s*/;
 
-function targetName(match) {
-  const meta = targetByKey(`${match[1]}.${match[2]}`);
+function targetLabel(service, slot, qualifier) {
+  const meta = targetByKey(`${service}.${slot}`);
   if (!meta) return null;
-  return match[3] ? `${meta.label} [${match[3]}]` : meta.label;
+  const name = serviceById(qualifier)?.label ?? qualifier;
+  if (slot === "settings_json" && name) {
+    const owner = serviceById(meta.service)?.label ?? meta.label;
+    return `${owner}'s ${name} settings`;
+  }
+  return name ? `${meta.label} [${name}]` : meta.label;
+}
+
+function targetName(match) {
+  return targetLabel(match[1], match[2], match[3]);
+}
+
+// A target stub can sit mid-sentence in an engine detail, not only at the
+// start. Replace only stubs the registry knows, so file names and URLs pass
+// through untouched.
+const TARGET_ANYWHERE = /\b([a-z0-9_-]+)\.([a-z0-9_]+)(?:\[([^\]]*)\])?/gi;
+
+function replaceTargets(text) {
+  return text.replace(
+    TARGET_ANYWHERE,
+    (stub, service, slot, qualifier) =>
+      targetLabel(service, slot, qualifier) ?? stub,
+  );
+}
+
+// Engine sentences describe the copy, not the operator's problem. Rewrite the
+// two measured ones here so the CLI keeps its stable detail and the console
+// never shows "live copy differ" or a process name.
+const LIVE_COPY = /\b(\d+) of (\d+) live cop(?:y|ies) differ from the saved value\b/;
+const RUNNING_PROCESS =
+  /\bthe running ([a-z0-9_-]+) process reports the saved value\b/i;
+
+function copyCount(found, total) {
+  if (total === "1") return "The copy differs from the saved value";
+  if (found === total) return `All ${total} copies differ from the saved value`;
+  return `${found} of ${total} copies ${found === "1" ? "differs" : "differ"} from the saved value`;
+}
+
+function humanDetail(text) {
+  return text
+    .replace(LIVE_COPY, (_, found, total) => copyCount(found, total))
+    .replace(
+      RUNNING_PROCESS,
+      (_, service) =>
+        `${serviceById(service)?.label ?? titleCase(service)} reports the saved value`,
+    )
+    .replace(
+      /^the holder's API could not be read for a liveness test.*$/i,
+      "Credarr couldn't read this copy to test the key. Check the service's URL and that its API is answering, then audit again.",
+    )
+    .replace(
+      /^no stored key for ([a-z0-9_-]+);.*$/i,
+      (_, service) => {
+        const label = serviceById(service)?.label ?? titleCase(service);
+        return `No key is stored for ${label}. Add it on ${label}'s app page before this copy can be checked.`;
+      },
+    );
 }
 
 // A target stub as the copy's plain name, for rows and buttons. Anything
@@ -82,11 +138,13 @@ export function copyLabel(target) {
 export function friendlyReason(reason) {
   const text = String(reason ?? "");
   const match = TARGET_PREFIX.exec(text);
-  if (!match) return sentenceCase(plainEngineText(text));
+  if (!match) return sentenceCase(humanDetail(replaceTargets(plainEngineText(text))));
   const name = targetName(match);
-  if (name === null) return sentenceCase(plainEngineText(text));
+  if (name === null) return sentenceCase(humanDetail(replaceTargets(plainEngineText(text))));
   return sentenceCase(
-    plainEngineText(`${name}: ${text.slice(match[0].length)}`),
+    plainEngineText(
+      `${name}: ${humanDetail(replaceTargets(text.slice(match[0].length)))}`,
+    ),
   );
 }
 

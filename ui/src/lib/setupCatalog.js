@@ -224,32 +224,36 @@ export function describeHolder(holder, ownerLabel) {
   const owner = ownerLabel || "This key";
   const service = serviceById(holder?.service)?.label ?? holder?.service ?? "?";
   const qualifier = String(holder?.qualifier ?? "").trim();
+  // A qualifier is usually a service id (`sonarr`) or a user's row name. Only
+  // known service ids become labels; a row name stays exactly as the operator
+  // typed it.
+  const qualifierName = serviceById(qualifier)?.label ?? qualifier;
   switch (holder?.slot) {
     case "applications":
       return qualifier
-        ? `A copy of ${owner}'s key is in ${service}'s ${qualifier} app.`
+        ? `A copy of ${owner}'s key is in ${service}'s ${qualifierName} app.`
         : `A copy of ${owner}'s key is in ${service}'s Apps.`;
     case "indexers":
       return qualifier
-        ? `A copy of ${owner}'s key is in ${service}'s ${qualifier} indexer.`
+        ? `A copy of ${owner}'s key is in ${service}'s ${qualifierName} indexer.`
         : `A copy of ${owner}'s key is in each of ${service}'s indexers.`;
     case "download_clients":
       return qualifier
-        ? `A copy of ${owner}'s key is in ${service}'s ${qualifier} download client.`
+        ? `A copy of ${owner}'s key is in ${service}'s ${qualifierName} download client.`
         : `A copy of ${owner}'s key is in each of ${service}'s download clients.`;
     case "settings_json":
       return qualifier
-        ? `A copy of ${owner}'s key is in ${service}'s ${qualifier} settings.`
+        ? `A copy of ${owner}'s key is in ${service}'s ${qualifierName} settings.`
         : `A copy of ${owner}'s key is in ${service}'s settings.`;
     case "label":
       return `A copy of ${owner}'s key is rendered as a Homepage label when you deploy. It is not read back.`;
     case "instance":
       return qualifier
-        ? `A copy of ${owner}'s key is in ${service}'s ${qualifier} instance.`
+        ? `A copy of ${owner}'s key is in ${service}'s ${qualifierName} instance.`
         : `A copy of ${owner}'s key is in a ${service} instance.`;
     case "arr_config":
       return qualifier
-        ? `A copy of ${owner}'s key is in ${service}'s ${qualifier} Arr instance. Profilarr has no update API; update this copy by hand.`
+        ? `A copy of ${owner}'s key is in ${service}'s ${qualifierName} Arr instance. Profilarr has no update API; update this copy by hand.`
         : `A copy of ${owner}'s key is in ${service}'s Arr instances. Profilarr has no update API; update these copies by hand.`;
     default:
       return targetString({

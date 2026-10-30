@@ -45,6 +45,62 @@ test("a target stub at the front of a reason reads as the copy's name", () => {
   );
 });
 
+test("a lowercase target qualifier still names the service", () => {
+  assert.equal(
+    friendlyReason("prowlarr.applications[sonarr]: connection refused"),
+    "Prowlarr applications [Sonarr]: connection refused",
+  );
+});
+
+test("engine copy about a copy and a process is written for the operator", () => {
+  assert.equal(
+    friendlyReason(
+      "seerr.settings_json[sonarr]: 1 of 1 live copy differ from the saved value",
+    ),
+    "Seerr's Sonarr settings: The copy differs from the saved value",
+  );
+  assert.equal(
+    friendlyReason(
+      "seerr.settings_json[sonarr]: 2 of 3 live copies differ from the saved value",
+    ),
+    "Seerr's Sonarr settings: 2 of 3 copies differ from the saved value",
+  );
+  assert.equal(
+    friendlyReason(
+      "seerr.settings_json[sonarr]: 1 of 2 live copies differ from the saved value",
+    ),
+    "Seerr's Sonarr settings: 1 of 2 copies differs from the saved value",
+  );
+  assert.equal(
+    friendlyReason(
+      "seerr.settings_json[sonarr]: the running seerr process reports the saved value",
+    ),
+    "Seerr's Sonarr settings: Seerr reports the saved value",
+  );
+  assert.equal(
+    friendlyReason(
+      "prowlarr.applications[Sonarr]: the holder's API could not be read for a liveness test (prowlarr at http://127.0.0.1:9/api/v1/applications could not be reached: URLError); this copy was not compared",
+    ),
+    "Prowlarr applications [Sonarr]: Credarr couldn't read this copy to test the key. Check the service's URL and that its API is answering, then audit again.",
+  );
+  assert.equal(
+    friendlyReason(
+      "seerr.settings_json[sonarr]: no stored key for seerr; store seerr's own key before declaring process_api; the running service's value is not confirmed",
+    ),
+    "Seerr's Sonarr settings: No key is stored for Seerr. Add it on Seerr's app page before this copy can be checked.",
+  );
+  assert.equal(
+    friendlyReason(
+      "this build has no process readback for seerr.settings_json[sonarr]",
+    ),
+    "This build has no process readback for Seerr's Sonarr settings",
+  );
+  assert.equal(
+    copyLabel("seerr.settings_json[sonarr]"),
+    "Seerr's Sonarr settings",
+  );
+});
+
 test("a reason without a known target keeps its words, sentence-cased", () => {
   assert.equal(
     friendlyReason("prowlarr: could not be reached during preflight"),

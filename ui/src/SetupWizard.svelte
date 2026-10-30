@@ -1083,7 +1083,7 @@
                         (other) => other.id !== credential.id && other.name,
                       ) as other (other.id)}
                         <option value={other.name}>
-                          {credentialTitle(other.name)} ({other.name})
+                          {credentialTitle(other.name)}
                         </option>
                       {/each}
                     </select>
@@ -1332,9 +1332,9 @@
             </label>
           {/if}
           <p class="field-help">
-            A fresh stack-wide audit can start a due rotation; manual
-            copies are notified. It never resumes an interrupted run. The key
-            must be stored.
+            When a key is due, Credarr runs an audit and rotates it only if the
+            checks pass. Manual copies are reported for you to update. An
+            interrupted run is never retried. The key must be stored.
           </p>
         </div>
       {/if}
@@ -1650,10 +1650,10 @@
     {/if}
 
     {#if loadedFromTopology && !imported}
-      <Banner tone="quiet" title="Editing the current topology.">
+      <Banner tone="quiet" title="Editing your current stack.">
         <span class="muted">
-          Only catalog services and credentials are shown. Removing one here
-          does not delete it from the store; values are kept.
+          Only services Credarr knows are shown. Unchecking one here does not
+          delete it from your saved stack; its stored key is kept.
         </span>
       </Banner>
     {/if}

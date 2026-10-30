@@ -7,6 +7,7 @@
   let { mode, ondone } = $props();
   let password = $state("");
   let confirm = $state("");
+  let reveal = $state(false);
   let error = $state("");
   let busy = $state(false);
 
@@ -42,31 +43,40 @@
     </div>
 
     {#if mode === "setup"}
-      <h2>Take the admin seat</h2>
+      <h2>Set the admin password</h2>
       <p class="muted">One admin. Twelve characters minimum, and no reset.</p>
     {:else}
       <h2>Sign in</h2>
     {/if}
 
     <form onsubmit={submit}>
-      <input
-        type="password"
-        bind:value={password}
-        placeholder={mode === "setup" ? "new password" : "password"}
-        aria-label={mode === "setup" ? "new password" : "password"}
-        autocomplete={mode === "setup" ? "new-password" : "current-password"}
-        required
-      />
-      {#if mode === "setup"}
+      <label class="field">
+        <span>{mode === "setup" ? "New password" : "Password"}</span>
         <input
-          type="password"
-          bind:value={confirm}
-          placeholder="repeat password"
-          aria-label="repeat password"
-          autocomplete="new-password"
+          type={reveal ? "text" : "password"}
+          bind:value={password}
+          autocomplete={mode === "setup" ? "new-password" : "current-password"}
           required
         />
+      </label>
+      {#if mode === "setup"}
+        <label class="field">
+          <span>Repeat password</span>
+          <input
+            type={reveal ? "text" : "password"}
+            bind:value={confirm}
+            autocomplete="new-password"
+            required
+          />
+        </label>
       {/if}
+      <button
+        type="button"
+        class="link"
+        onclick={() => (reveal = !reveal)}
+      >
+        {reveal ? "Hide passwords" : "Show passwords"}
+      </button>
       <button class="primary" type="submit" disabled={busy}>
         {busy
           ? mode === "setup"

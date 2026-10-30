@@ -822,9 +822,9 @@
     <div class="section-head">
       <div>
         <h3>Notifications</h3>
-        <p class="muted">Manage notification services and delivery settings</p>
+        <p class="muted">Where audit changes are delivered.</p>
       </div>
-      <button class="primary" type="button" onclick={startCreate}>Add Service</button>
+      <button type="button" onclick={startCreate}>Add service</button>
     </div>
 
     {#if error}<Banner tone="danger">{error}</Banner>{/if}
@@ -832,9 +832,9 @@
     {#if services === null}
       <p class="muted">Loading notification services…</p>
     {:else if services.length === 0}
-      <p class="muted">No notification services configured. Click 'Add Service' to get started.</p>
+      <p class="muted">No service is configured. Audit changes stay in Activity until you add one.</p>
     {:else}
-      <table>
+      <table class="notify-table">
         <caption class="sr-only">Notification services</caption>
         <thead>
           <tr><th>Service</th><th>Type</th><th>Status</th><th>Notifications</th><th>Delivery</th><th></th></tr>
@@ -842,17 +842,17 @@
         <tbody>
           {#each services as service (service.id)}
             <tr>
-              <td><strong>{service.name}</strong></td>
-              <td>{typeLabel(service.kind)}</td>
-              <td>
+              <td data-label="Service"><strong>{service.name}</strong></td>
+              <td data-label="Type">{typeLabel(service.kind)}</td>
+              <td data-label="Status">
                 <StatusPill
                   status={service.enabled === false ? "off" : "enabled"}
                   label={service.enabled === false ? "disabled" : "enabled"}
                 />
               </td>
-              <td><span class="muted">{kindsSummary(service)}</span></td>
-              <td><span class="muted">{statsSummary(service)}</span></td>
-              <td>
+              <td data-label="Notifications"><span class="muted">{kindsSummary(service)}</span></td>
+              <td data-label="Delivery"><span class="muted">{statsSummary(service)}</span></td>
+              <td data-label="Actions">
                 <div class="row-actions">
                   <button
                     type="button"

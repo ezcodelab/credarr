@@ -1,7 +1,7 @@
 // One vocabulary for every surface. The engine's status words are the labels;
 // the glosses explain the word without inventing a softer state. A second map
 // would let the hub and the app page disagree about the same run.
-import { credentialTitle } from "./names.js";
+import { credentialTitle, friendlyReason } from "./names.js";
 import { serviceById } from "./setupCatalog.js";
 
 export const STATUS = {
@@ -38,7 +38,7 @@ export const STATUS = {
   live: {
     label: "ok",
     tone: "ok",
-    why: "Accepted by the service; equality can't be read back, so this is the full proof.",
+    why: "The service accepted this key. It cannot be read back, so acceptance is the strongest check available.",
   },
   indirect: {
     label: "manual",
@@ -113,7 +113,7 @@ export const STATUS = {
   configured: {
     label: "configured",
     tone: "ok",
-    why: "A sink is configured.",
+    why: "A delivery service is configured.",
   },
 };
 
@@ -217,14 +217,19 @@ export function stackHealth(status, data) {
     ["error", "drift", "missing"].includes(row.status),
   );
   if (attention.length) {
+    // Names are identities in the manifest and slugs in the API; the operator
+    // sees the app's title, never the slug.
+    const names = [...new Set(attention.map((row) => credentialTitle(row.name)))];
+    const finding =
+      names.length === 1
+        ? "has a copy that no longer matches"
+        : "have copies that no longer match";
     return {
       tone: "bad",
       status: "drift",
-      label: `${attention.length} need attention`,
+      label: `${attention.length} ${attention.length === 1 ? "needs" : "need"} attention`,
       title: "Copies disagree",
-      why: `${attention.map((row) => row.name).join(", ")} ${
-        attention.length === 1 ? "has" : "have"
-      } a current finding.`,
+      why: `${names.join(", ")} ${finding}.`,
     };
   }
 
@@ -317,12 +322,22 @@ export function stackHealth(status, data) {
   };
 }
 
+const CREDENTIAL_REASON = {
+  value_missing:
+    "No value is stored yet. Add this key on its app page, then run an audit again.",
+  no_canonical:
+    "No value is stored yet. Add this key on its app page, then run an audit again.",
+};
+
 // A null row status has three honest causes: nothing has run, the state the run
 // measured is no longer declared, or there is no holder to compare.
 export function credentialReason(row, observed) {
-  if (row.status) return row.detail || statusInfo(row.status).why;
+  if (row.status) {
+    if (CREDENTIAL_REASON[row.reason]) return CREDENTIAL_REASON[row.reason];
+    return row.detail ? friendlyReason(row.detail) : statusInfo(row.status).why;
+  }
   if (row.consumers.length === 0)
-    return "Declared with no holders; there is no copy to compare.";
+    return "No copy of this key is declared, so there is nothing to compare.";
   if (!observed)
     return row.stored
       ? "Waiting for the first audit; the stored value has not been measured."
@@ -342,7 +357,7 @@ export function autoInfo(policy = {}) {
     return {
       status: "enabled",
       label: "enabled",
-      why: "A fresh stack-wide audit can start a due rotation; manual copies are notified. It never resumes an interrupted run.",
+      why: "When a key is due, Credarr runs an audit and rotates it only if the checks pass. An interrupted run is never retried.",
     };
   }
   return {

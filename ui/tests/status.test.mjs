@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { checkStatus, eventInfo, fixHint, stackHealth, statusInfo, statusOf } from "../src/lib/status.js";
+import { checkStatus, credentialReason, eventInfo, fixHint, stackHealth, statusInfo, statusOf } from "../src/lib/status.js";
 
 const audit = {
   topology: { imported: true },
@@ -12,6 +12,37 @@ const audit = {
 function health(rows) {
   return stackHealth(audit, { credentials: rows, observed_run: {} });
 }
+
+test("a finding names the app title, not the credential slug", () => {
+  const result = health([
+    { name: "sonarr_api_key", status: "drift", consumers: [{}] },
+  ]);
+
+  assert.equal(result.tone, "bad");
+  assert.equal(result.label, "1 needs attention");
+  assert.match(result.why, /Sonarr API Key has a copy that no longer matches/);
+  assert.doesNotMatch(result.why, /sonarr_api_key/);
+});
+
+test("operator status copy does not name engine structures", () => {
+  assert.doesNotMatch(statusInfo("live").why, /full proof/i);
+  assert.doesNotMatch(statusInfo("configured").why, /sink/i);
+});
+
+test("a missing stored value does not name the vault path", () => {
+  const reason = credentialReason(
+    {
+      status: "error",
+      reason: "value_missing",
+      consumers: [{}],
+      detail: "no value at sonarr.apiKey in /config/vault.yaml",
+    },
+    {},
+  );
+
+  assert.match(reason, /No value is stored yet/);
+  assert.doesNotMatch(reason, /vault|sonarr\.apiKey/);
+});
 
 test("a no-holder credential is not 'not audited yet'", () => {
   assert.equal(statusOf({ status: null, consumers: [] }), "no_holders");

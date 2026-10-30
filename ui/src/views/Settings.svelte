@@ -11,6 +11,7 @@
   import ConfirmDialog from "../lib/ConfirmDialog.svelte";
   import PageHeader from "../lib/PageHeader.svelte";
   import StatusPill from "../lib/StatusPill.svelte";
+  import { deviceLabel } from "../lib/device.js";
   import { clearDraft } from "../lib/setup.js";
   import { toast } from "../lib/toast.js";
   import NotificationServices from "../lib/NotificationServices.svelte";
@@ -384,10 +385,10 @@
 <PageHeader title="Settings">
   {#snippet actions()}
     <button type="button" onclick={onreopen} disabled={!onreopen}>
-      Re-run Setup Wizard
+      Re-run setup
     </button>
-    <button type="button" onclick={() => (resetOpen = true)}>
-      Reset
+    <button class="danger" type="button" onclick={() => (resetOpen = true)}>
+      Reset topology
     </button>
   {/snippet}
 </PageHeader>
@@ -485,7 +486,7 @@
         <li class="session-row">
           <div class="session-main">
             <div class="session-title">
-              <strong>{session.device}</strong>
+              <strong>{deviceLabel(session.device)}</strong>
               {#if session.current}<span class="pill accent">this session</span>{/if}
             </div>
             <div class="session-meta muted">
@@ -629,7 +630,7 @@
       {/each}
     </ul>
   {:else}
-    <p class="muted">No API keys.</p>
+    <p class="muted">No API keys. Create one to use the API from a script.</p>
   {/if}
 </section>
 

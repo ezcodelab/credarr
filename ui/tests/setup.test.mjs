@@ -448,7 +448,7 @@ test("a process_api holder warns when its own service credential is absent", () 
   assert.equal(missing.ok, true);
   assert.match(
     missing.warnings[holdersKey],
-    /add Seerr as a credential and store its key/,
+    /Add Seerr as a credential and store its key/,
   );
 
   draft.credentials.push(newCredential(draft, "seerr"));
@@ -793,7 +793,7 @@ test("a copy is described in its settings screen's words", () => {
   );
   assert.equal(
     describeHolder({ service: "seerr", slot: "settings_json", qualifier: "sonarr" }, "Sonarr"),
-    "A copy of Sonarr's key is in Seerr's sonarr settings.",
+    "A copy of Sonarr's key is in Seerr's Sonarr settings.",
   );
   assert.equal(
     describeHolder({ service: "homepage", slot: "label", qualifier: "" }, "Sonarr"),

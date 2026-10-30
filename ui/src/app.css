@@ -15,7 +15,7 @@
   --text: #e6e9ee;
   --text-strong: #f7f8fa;
   --dim: #a0a8b5;
-  --dim-2: #6f7887;
+  --dim-2: #87909f;
 
   --accent: #5b9dff;
   --accent-hover: #7ab1ff;
@@ -155,7 +155,7 @@ textarea {
   border-radius: 8px;
   padding: 0.48rem 0.65rem;
   font: inherit;
-  font-size: 0.84rem;
+  font-size: 0.875rem;
   transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
 }
 input:hover:not(:disabled),
@@ -170,6 +170,8 @@ textarea:focus {
 }
 input::placeholder,
 textarea::placeholder { color: var(--dim-2); }
+input[type="checkbox"],
+input[type="radio"] { accent-color: var(--accent); }
 input:disabled,
 select:disabled,
 textarea:disabled { opacity: 0.55; }
@@ -198,7 +200,7 @@ button {
   border-radius: 8px;
   padding: 0.42rem 0.8rem;
   font: inherit;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-weight: 550;
   line-height: 1.2;
   cursor: pointer;
@@ -211,6 +213,20 @@ button:hover:not(:disabled) {
 button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+button.primary:disabled {
+  background: var(--panel-2);
+  border-color: var(--line-strong);
+  color: var(--dim);
+  opacity: 1;
+}
+/* A selected method is disabled because it is already chosen; it keeps the
+   accent so the choice is visible, at a quieter strength than a live action. */
+button.primary[aria-pressed="true"]:disabled {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  opacity: 0.55;
 }
 button.primary {
   background: var(--accent);
@@ -340,8 +356,10 @@ aside nav > button:hover .nav-icon { color: var(--accent); }
 .nav-caret {
   margin-left: auto;
   color: var(--dim-2);
-  font-size: 0.72rem;
+  display: inline-flex;
+  transition: transform 0.12s;
 }
+.nav-caret.open { transform: rotate(90deg); }
 .nav-badge {
   margin-left: auto;
   min-width: 1.2rem;
@@ -562,7 +580,7 @@ aside footer button { align-self: flex-start; }
 }
 .card .value.time,
 .card .value.small { font-size: 0.92rem; font-weight: 550; }
-.card .muted { font-size: 0.78rem; }
+.card .muted { font-size: 0.8125rem; }
 .metric {
   display: flex;
   flex-direction: column;
@@ -676,7 +694,7 @@ aside footer button { align-self: flex-start; }
   flex-direction: column;
   gap: 0.35rem;
   color: var(--dim);
-  font-size: 0.8rem;
+  font-size: 0.84rem;
 }
 .field > input,
 .field > select,
@@ -786,7 +804,7 @@ table {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
-  font-size: 0.83rem;
+  font-size: 0.875rem;
 }
 th,
 td {
@@ -799,7 +817,7 @@ td {
 th {
   background: var(--well);
   color: var(--dim-2);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   font-weight: 650;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -875,7 +893,7 @@ th .sort .mark {
   max-width: 38ch;
   margin-top: 0.22rem;
   color: var(--dim);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   overflow-wrap: anywhere;
 }
 .status-why { color: var(--dim-2); }
@@ -937,7 +955,7 @@ tr.detail p { margin-top: 0; }
   padding: 0.11rem 0.5rem;
   background: var(--panel-2);
   color: var(--dim);
-  font-size: 0.71rem;
+  font-size: 0.75rem;
   font-weight: 600;
   line-height: 1.4;
   max-width: 100%;
@@ -1270,6 +1288,7 @@ the button lines up with its bottom edge. */
   margin: 0 0 0.2rem;
   font-size: 1.05rem;
 }
+.auth-card form .link { align-self: flex-start; }
 
 /* --- responsive -------------------------------------------------------- */
 @media (max-width: 1200px) {
@@ -1341,6 +1360,76 @@ the button lines up with its bottom edge. */
   .table-tools .search input { min-width: 0; width: 100%; }
   .table-tools .search { flex: 1 1 100%; }
   .table-tools .count { margin-left: 0; }
+
+  /* Touch targets: a 34px control is fine with a mouse and not with a thumb. */
+  button { min-height: 44px; }
+  button.icon { min-width: 44px; min-height: 44px; }
+  input,
+  select,
+  textarea { min-height: 44px; }
+  aside nav > button,
+  .nav-sub button { min-height: 44px; }
+  .holders-table button.link { min-height: 44px; }
+  .auth-card form .link { min-height: 44px; }
+
+  /* Tables become one card per row. The column names stay as value labels,
+     because a five-column grid at 390px is not a table anymore. */
+  .events-table,
+  .holders-table,
+  .checks-table,
+  .notify-table {
+    border: 0;
+    border-radius: 0;
+    background: none;
+    overflow: visible;
+  }
+  .events-table thead,
+  .holders-table thead,
+  .checks-table thead,
+  .notify-table thead { display: none; }
+  .events-table tbody,
+  .holders-table tbody,
+  .checks-table tbody,
+  .notify-table tbody,
+  .events-table tr,
+  .holders-table tr,
+  .checks-table tr,
+  .notify-table tr { display: block; }
+  .events-table tr,
+  .holders-table tr,
+  .checks-table tr,
+  .notify-table tr {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 0.7rem 0.8rem;
+    margin-bottom: 0.55rem;
+  }
+  .events-table td,
+  .holders-table td,
+  .checks-table td,
+  .notify-table td {
+    display: block;
+    border: 0;
+    padding: 0.2rem 0;
+  }
+  .events-table td:nth-child(1),
+  .events-table td:nth-child(2) { width: auto; }
+  .events-table td::before,
+  .holders-table td::before,
+  .checks-table td::before,
+  .notify-table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 0.1rem;
+    color: var(--dim-2);
+    font-size: 0.7rem;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .holders-table td:first-child { display: block; padding-bottom: 0.45rem; }
+  .holders-table td:first-child::before { display: none; }
 }
 
 @media (max-width: 540px) {
@@ -1364,9 +1453,7 @@ the button lines up with its bottom edge. */
 .setup {
   min-height: 100vh;
   padding: 1.25rem 1.25rem 3rem;
-  background:
-    radial-gradient(60rem 30rem at 50% -10%, rgba(91, 157, 255, 0.1), transparent 60%),
-    var(--bg);
+  background: var(--bg);
 }
 .setup-shell { width: min(100%, 76rem); margin: 0 auto; }
 .setup-head {
@@ -1475,11 +1562,16 @@ the button lines up with its bottom edge. */
   font-size: 0.82rem;
 }
 .setup-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
   display: flex;
   align-items: center;
   gap: 0.6rem;
   flex-wrap: wrap;
-  padding-top: 1rem;
+  margin-top: 0.5rem;
+  padding: 0.8rem 0;
+  background: var(--panel);
   border-top: 1px solid var(--line);
 }
 .setup-actions .spacer { flex: 1 1 auto; }
@@ -1575,6 +1667,7 @@ the button lines up with its bottom edge. */
 .setup-services {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(16.5rem, 1fr));
+  align-items: start;
   gap: 0.65rem;
   margin: 0;
   padding: 0;

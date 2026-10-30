@@ -100,8 +100,9 @@
     <div>
       <h3>Auto-rotation</h3>
       <p class="muted">
-        Off by default. A fresh stack-wide audit can start a due rotation; manual
-        copies are notified. It never resumes an interrupted run.
+        Off by default. When a key is due, Credarr runs an audit and rotates it
+        only if the checks pass. Copies it cannot write are reported for you to
+        update. An interrupted run is never retried.
       </p>
     </div>
     <StatusPill status={info.status} label={info.label} title={info.why} />
@@ -134,7 +135,7 @@
       {#if needsManualConsent}
         <label class="setup-check">
           <input type="checkbox" bind:checked={acceptedManual} />
-          I understand these copies need follow-up.
+          I'll update these copies after each rotation.
         </label>
       {/if}
     </Banner>
@@ -182,7 +183,6 @@
       {/if}
       <span class="spacer"></span>
       <button
-        class="primary"
         type="submit"
         disabled={busy || everyDays === "" || manual || (needsManualConsent && !acceptedManual)}
       >

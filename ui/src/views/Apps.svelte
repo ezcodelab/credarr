@@ -99,6 +99,13 @@
       ),
   );
 
+  const visibleUnassigned = $derived(
+    joined.unassigned.filter((row) => {
+      const needle = query.trim().toLowerCase();
+      return !needle || titleOfCredential(row).toLowerCase().includes(needle);
+    }),
+  );
+
   function failed(failure) {
     if (failure instanceof ApiError && failure.status === 401) onsignout();
     else actionError = errorText(failure);
@@ -407,6 +414,11 @@
 
   {#if servicesLoading}
     <p class="muted">Reading service connections…</p>
+  {:else if visibleApps.length === 0 && visibleUnassigned.length === 0 && query.trim()}
+    <div class="empty compact">
+      <p>No app matches that filter.</p>
+      <button onclick={() => (query = "")}>Show everything</button>
+    </div>
   {:else}
     <div class="apps-grid">
       {#each visibleApps as app (app.name)}
@@ -448,17 +460,15 @@
           </div>
 
           <p class="status-why">
-            {#if app.row.status}
-              {app.row.detail || credentialReason(app.row, observed)}
-            {:else}
-              {credentialReason(app.row, observed)}
-            {/if}
+            {credentialReason(app.row, observed)}
           </p>
           {#if fixHint(app.row)}
             <p class="status-why">{fixHint(app.row)}</p>
           {/if}
 
-          <p class="muted">{copies.length ? `Used in: ${copies.join(", ")}` : "Nothing holds this key yet."}</p>
+          {#if copies.length}
+            <p class="muted">Used in: {copies.join(", ")}</p>
+          {/if}
 
           {#if missing.length && !servicesError}
             <p class="field-warn">
@@ -523,15 +533,15 @@
       </section>
     {/if}
 
-    {#if joined.unassigned.length}
+    {#if visibleUnassigned.length}
       <section class="card section" aria-labelledby="apps-unassigned-title">
         <div class="section-head">
-          <div><h3 id="apps-unassigned-title">Needs attention</h3></div>
+          <div><h3 id="apps-unassigned-title">Not linked to an app</h3></div>
         </div>
-        {#each joined.unassigned as row (row.name)}
+        {#each visibleUnassigned as row (row.name)}
           <div class="app-line">
             <strong>{titleOfCredential(row)}</strong>
-            <span class="muted">This key does not match any known app.</span>
+            <span class="muted">No app in this stack is linked to this key.</span>
             <button onclick={() => onopen(row.name)}>Open</button>
           </div>
         {/each}

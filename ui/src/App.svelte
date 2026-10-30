@@ -223,7 +223,7 @@
     if (item.id === "settings") settingsSection = "";
     clearToasts();
     view = item.id;
-    if (!DROPDOWNS.includes(item.id)) closeNav();
+    closeNav();
   }
 
   function navigateChild(parent, child) {
@@ -544,7 +544,7 @@
               <span class="nav-badge" aria-hidden="true">{rotationPending.length}</span>
             {/if}
             {#if children.length}
-              <span class="nav-caret" aria-hidden="true">{open[item.id] ? "▾" : "▸"}</span>
+              <span class="nav-caret" class:open={open[item.id]} aria-hidden="true"><Icon name="chevron" size={13} /></span>
             {/if}
           </button>
           {#if children.length && open[item.id]}

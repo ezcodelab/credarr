@@ -783,7 +783,7 @@ export function validateDraft(draft) {
         .map((service) => serviceById(service)?.label ?? service)
         .join(" and ");
       warnings[credentialField(credential, "holders")] =
-        `A process_api holder is read over ${names}'s running API; add ${names} as a credential and store its key, or that copy will be unverifiable.`;
+        `A copy in ${names} is read through ${names}'s own API. Add ${names} as a credential and store its key, or this copy cannot be checked.`;
     }
 
     const credentialTargets = new Set();

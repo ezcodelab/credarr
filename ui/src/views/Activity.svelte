@@ -71,9 +71,9 @@
     if (delivery?.state === "failed")
       return `gave up after ${delivery.attempts} attempts: ${delivery.last_error}`;
     if (delivery?.state === "pending" && event.at < sink.updated_at)
-      return "not sent: the sink was configured later";
+      return "not sent: the service was added later";
     if (delivery?.state === "pending") return `retrying in ${elapsed(nextIn(delivery))}: ${delivery.last_error}`;
-    if (event.at < sink.updated_at) return "not sent: the sink was configured later";
+    if (event.at < sink.updated_at) return "not sent: the service was added later";
     return "queued";
   }
 
@@ -102,7 +102,7 @@
   }
 
   function deliverySummary(event) {
-    if (!data?.sinks?.length) return { status: "off", label: "no sink configured" };
+    if (!data?.sinks?.length) return { status: "off", label: "no service configured" };
     const categories = data.sinks.map((sink) => deliveryCategory(event, sink));
     const delivered = categories.filter((category) => category === "delivered").length;
     const failed = categories.filter((category) => category === "failed").length;
@@ -177,7 +177,7 @@
         aria-label="Filter activity"
       />
     </label>
-    {#if filtering}
+    {#if filtering && visibleEvents.length > 0}
       <button onclick={clearFilters}>Clear filters</button>
     {/if}
     <span class="count">{visibleEvents.length} of {data.events.length}</span>
@@ -205,8 +205,8 @@
           {@const kind = eventInfo(event.kind)}
           {@const delivery = deliverySummary(event)}
           <tr>
-            <td class="muted time">{timestamp(event.at)}</td>
-            <td>
+            <td class="muted time" data-label="When">{timestamp(event.at)}</td>
+            <td data-label="Change">
               <span class="event-pills">
                 <StatusPill status={kind.status} label={kind.label} />
                 {#if event.kind === "rotation_manual"}
@@ -214,9 +214,9 @@
                 {/if}
               </span>
             </td>
-            <td>{event.credential ? credentialTitle(event.credential) : "—"}</td>
-            <td class="muted">{eventReason(event)}</td>
-            <td>
+            <td data-label="App">{event.credential ? credentialTitle(event.credential) : "—"}</td>
+            <td class="muted" data-label="What happened">{eventReason(event)}</td>
+            <td data-label="Delivery">
               {#if data.sinks.length === 0}
                 <span class="muted">no service configured</span>
               {:else}
@@ -239,4 +239,6 @@
       </tbody>
     </table>
   {/if}
+{:else if loading}
+  <p class="muted">Reading changes…</p>
 {/if}

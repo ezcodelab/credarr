@@ -351,14 +351,14 @@ async function main() {
     );
     check("a fresh deployment asks for the admin password", true);
 
-    await page.getByPlaceholder("new password").fill("short");
-    await page.getByPlaceholder("repeat password").fill("short");
+    await page.getByLabel("New password", { exact: true }).fill("short");
+    await page.getByLabel("Repeat password", { exact: true }).fill("short");
     await page.getByRole("button", { name: "Create the admin" }).click();
     await page.getByText(/at least 12 characters/).waitFor();
     check("a too-short password is refused in words, not a status code", true);
 
-    await page.getByPlaceholder("new password").fill(PASSWORD);
-    await page.getByPlaceholder("repeat password").fill(PASSWORD);
+    await page.getByLabel("New password", { exact: true }).fill(PASSWORD);
+    await page.getByLabel("Repeat password", { exact: true }).fill(PASSWORD);
     await page.getByRole("button", { name: "Create the admin" }).click();
     await page.getByRole("heading", { name: "Set up your stack" }).waitFor();
     check("setup signs the admin in and opens the first-run wizard", true);
@@ -878,7 +878,7 @@ async function main() {
         response.url().includes("/api/v1/audit?only=sonarr_api_key") &&
         response.request().method() === "POST",
     );
-    await page.getByRole("button", { name: "Check", exact: true }).click();
+    await page.getByRole("button", { name: "Check app", exact: true }).click();
     await checked;
     await page.getByRole("heading", { name: "Check history" }).waitFor();
     const checkHistory = page.locator("#check-history");
@@ -964,7 +964,7 @@ async function main() {
     );
     check(
       "and where the copy lives, in the settings screen's words",
-      await page.getByText("A copy of Sonarr's key is in Seerr's sonarr settings.").isVisible(),
+      await page.getByText("A copy of Sonarr's key is in Seerr's Sonarr settings.").isVisible(),
     );
 
 
@@ -999,8 +999,8 @@ async function main() {
     await page.getByRole("button", { name: "Rotate", exact: true }).waitFor();
     const headerActions = await page.locator(".page-actions button").allTextContents();
     check(
-      "Check sits between Plan and Rotate, with Plan's secondary styling",
-      headerActions.join("|") === "Plan|Check|Rotate" &&
+      "Preview rotation and Check app sit before Rotate, with secondary styling",
+      headerActions.join("|") === "Preview rotation|Check app|Rotate" &&
         !(await page.locator(".page-actions button").nth(1).getAttribute("class") ?? "").includes("primary"),
     );
     check(
@@ -1036,7 +1036,7 @@ async function main() {
       "and the confirmation button is gone with nothing to run",
       (await page.getByRole("button", { name: "Confirm rotation", exact: true }).count()) === 0,
     );
-    await page.getByRole("button", { name: "Plan", exact: true }).click();
+    await page.getByRole("button", { name: "Preview rotation", exact: true }).click();
     await page.getByText("This key cannot be rotated yet.").waitFor();
     check(
       "the plan reads the same answer as the run",
@@ -1128,7 +1128,7 @@ async function main() {
       planToken,
       { timeout: 60000 },
     );
-    await page.getByRole("button", { name: "Plan", exact: true }).click();
+    await page.getByRole("button", { name: "Preview rotation", exact: true }).click();
     try {
       await page
         .locator("#rotation-card")
@@ -1175,7 +1175,8 @@ async function main() {
           (button) =>
             button.textContent === "Use config rebuild" &&
             button.disabled &&
-            button.className.includes("primary"),
+            button.className.includes("primary") &&
+            button.getAttribute("aria-pressed") === "true",
         ),
       { timeout: 60_000 },
     );
@@ -1185,7 +1186,7 @@ async function main() {
     await openMenu("Apps");
     await page.locator("aside .nav-sub button").filter({ hasText: /^Prowlarr API Key$/ }).click();
     await page.getByRole("heading", { name: "Prowlarr API Key" }).waitFor();
-    await page.getByRole("button", { name: "Plan", exact: true }).click();
+    await page.getByRole("button", { name: "Preview rotation", exact: true }).click();
     await page.getByText("The checks failed; nothing was changed.").waitFor();
     check("a plan that cannot be checked is not called ready", true);
     const preflightText = await page.locator("#rotation-card").innerText();
@@ -1221,7 +1222,8 @@ async function main() {
           (button) =>
             button.textContent === "Rotate the key myself" &&
             button.disabled &&
-            button.className.includes("primary"),
+            button.className.includes("primary") &&
+            button.getAttribute("aria-pressed") === "true",
         ),
       { timeout: 60_000 },
     );
@@ -1229,6 +1231,7 @@ async function main() {
     check(
       "the manual selection reads as blue, not as wording",
       ((await manualButton.getAttribute("class")) ?? "").includes("primary") &&
+        (await manualButton.getAttribute("aria-pressed")) === "true" &&
         (await manualButton.isDisabled()),
     );
     check(
@@ -1248,7 +1251,7 @@ async function main() {
         response.request().method() === "POST",
       { timeout: 60_000 },
     );
-    await page.getByRole("button", { name: "Plan", exact: true }).click();
+    await page.getByRole("button", { name: "Preview rotation", exact: true }).click();
     await planned;
     // The answer lands a beat after the response; the panel shows one of the
     // plan states by then.
@@ -1548,17 +1551,17 @@ async function main() {
     );
     check("an API key can be revoked from Settings", true);
 
-    // The Profilarr pattern: a list with Add Service, then a form page with a
+    // The Profilarr pattern: a list with Add service, then a form page with a
     // type dropdown and the fields that type needs.
     await page.locator("#settings-notifications").waitFor();
     check(
-      "the Notifications list starts empty and offers Add Service",
-      (await page.getByText(/No notification services configured/).isVisible()) &&
-        (await page.getByRole("button", { name: "Add Service" }).isVisible()),
+      "the Notifications list starts empty and offers Add service",
+      (await page.getByText(/No service is configured/).isVisible()) &&
+        (await page.getByRole("button", { name: "Add service" }).isVisible()),
     );
-    await page.getByRole("button", { name: "Add Service" }).click();
+    await page.getByRole("button", { name: "Add service" }).click();
     await page.getByRole("heading", { name: "New Notification Service" }).waitFor();
-    check("Add Service opens the new-service form", true);
+    check("Add service opens the new-service form", true);
     await page.getByLabel("Service Type").selectOption("email");
     await page.getByLabel("SMTP Host").waitFor();
     check(
@@ -1612,7 +1615,7 @@ async function main() {
     // Discord and Telegram are added the same way. Telegram's API base is the
     // local stand-in so the request can be inspected without contacting Telegram.
     // Each service is tested on its own row: one test reaches one service.
-    await page.getByRole("button", { name: "Add Service" }).click();
+    await page.getByRole("button", { name: "Add service" }).click();
     await page.getByLabel("Service Name").fill("discord");
     await page.getByLabel("Service Type").selectOption("discord");
     await page.getByLabel("Webhook URL").fill(`${sinkBase}/discord`);
@@ -1627,7 +1630,7 @@ async function main() {
       .getByRole("button", { name: "Save", exact: true })
       .click();
     await page.locator(".toasts").getByText("Saved.").first().waitFor();
-    await page.getByRole("button", { name: "Add Service" }).click();
+    await page.getByRole("button", { name: "Add service" }).click();
     await page.getByLabel("Service Name").fill("telegram");
     await page.getByLabel("Service Type").selectOption("telegram");
     check(
@@ -1741,12 +1744,12 @@ async function main() {
     check(
       "a drift is one row: the kind and the audit's own sentence, under the copy's plain name",
       (await driftRow.getByText("drift", { exact: true }).count()) >= 1 &&
-        (await driftRow.getByText("Seerr settings [sonarr]:").isVisible()),
+        (await driftRow.getByText("Seerr's Sonarr settings:").isVisible()),
     );
     await driftRow.locator("details.delivery summary").click();
     check(
       "an event from before the sink existed says never sent, not queued",
-      await driftRow.getByText("not sent: the sink was configured later").first().isVisible(),
+      await driftRow.getByText("not sent: the service was added later").first().isVisible(),
     );
     await page.screenshot({ path: path.join(ARTIFACTS, "events.png"), fullPage: true });
     await new Promise((resolve) => sink.close(resolve));
@@ -1902,7 +1905,7 @@ async function main() {
     // --- a refusal hangs off the field that can fix it ---------------------
     // Lifting the class lets the plan run far enough to refuse on the missing
     // token name; the engine's sentence shows under Token name, verbatim.
-    await page.getByRole("button", { name: "Plan", exact: true }).click();
+    await page.getByRole("button", { name: "Preview rotation", exact: true }).click();
     await page.getByText("This key cannot be rotated yet.").waitFor();
     check(
       "the refusal hangs off the token-name field it needs",
@@ -1975,11 +1978,11 @@ async function main() {
     // --- sign out, and back in with a wrong password first --------------------
     await page.getByRole("button", { name: "Sign out" }).click();
     await page.getByRole("button", { name: "Sign in" }).waitFor();
-    await page.getByPlaceholder("password").fill(PASSWORD);
+    await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
     await page.getByRole("button", { name: "Sign in" }).click();
     await page.getByText("wrong password").waitFor();
     check("the password the admin changed away from is refused", true);
-    await page.getByPlaceholder("password").fill(NEW_PASSWORD);
+    await page.getByLabel("Password", { exact: true }).fill(NEW_PASSWORD);
     await page.getByRole("button", { name: "Sign in" }).click();
     await page.getByRole("button", { name: "Apps" }).waitFor();
     check("the admin can sign back in with the new password", true);
@@ -1987,7 +1990,7 @@ async function main() {
     // --- Re-run opens the wizard at step 1, not where a draft was left -----
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("heading", { name: "Settings" }).waitFor();
-    await page.getByRole("button", { name: "Re-run Setup Wizard" }).click();
+    await page.getByRole("button", { name: "Re-run setup" }).click();
     await page.getByRole("heading", { name: "Connect", exact: true }).waitFor();
     check("re-running setup starts at Connect, not a saved step", true);
     await page.getByRole("button", { name: "Skip for now" }).click();
@@ -2013,7 +2016,7 @@ async function main() {
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("heading", { name: "Settings" }).waitFor();
-    await page.getByRole("button", { name: "Reset", exact: true }).click();
+    await page.getByRole("button", { name: "Reset topology", exact: true }).click();
     await page.getByRole("heading", { name: "Reset everything?", exact: true }).waitFor();
     check("reset asks once, naming what goes away", true);
     await page.getByRole("button", { name: "Reset everything", exact: true }).click();
