@@ -52,5 +52,8 @@ src/credarr_server/web/
 # one the README suggests.
 *.backup
 
+# Local deployment helper: machine-specific token handling, never published.
+scripts/deploy-github
+
 # pytest-testmon state (an experiment; not used by CI)
 .testmondata*
