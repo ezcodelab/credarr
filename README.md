@@ -90,42 +90,6 @@ credarr rotate prowlarr_api_key        # plan only; nothing changes
 credarr rotate prowlarr_api_key --apply  # typed confirmation, then run
 ```
 
-### Exit codes
-
-| Code | Meaning |
-| --- | --- |
-| `0` | No finding. The summary can still be `unverifiable` or `live` (those are not drift). |
-| `1` | Drift, or a rotation left manual steps outstanding. |
-| `2` | The command line was wrong (including a missing confirmation). |
-| `3` | Configuration unusable / preflight refused the run. |
-| `4` | A host was unreachable; coverage was partial. |
-| `5` | The rotation was refused: nothing could mint that value. |
-
-### Backups
-
-```sh
-# once: one line, owner-only
-install -m 600 /dev/null /config/backup.passphrase
-
-# stop the server first: the tool takes the same /config/app.lock
-credarr-backup -c /config/credarr.yaml --config-dir /config \
-  --out /config/backups/credarr-$(date +%F).backup \
-  --passphrase-file /config/backup.passphrase
-```
-
-## Development
-
-```sh
-make install   # virtualenv + dev dependencies
-make test      # unit suite against fake service APIs
-make check     # lint + Python tests + UI unit tests; run before every commit
-make serve     # BFF for this worktree; state in ./state, PORT=8081 for a second
-make ui-dev    # Vite dev server proxying /api to this worktree's PORT
-make web       # build the SPA into the package (Node 24+)
-make ui-smoke  # build, then drive the console in headless Chromium
-make image     # build the container image
-```
-
 ## Documentation
 
 | Page | What it is |
