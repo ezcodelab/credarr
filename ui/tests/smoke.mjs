@@ -328,6 +328,9 @@ async function main() {
       }
     });
     await page.getByRole("button", { name: "Run audit", exact: true }).click();
+    // Work in flight shows the line at the top of the viewport, not only on
+    // the button that started it.
+    await page.locator(".activity-bar.active").waitFor({ timeout: 2000 });
     await finished;
     // The POST only starts the job. Let Svelte apply the busy state before we
     // read the button again; otherwise a fast fixture can look finished while
@@ -1036,8 +1039,13 @@ async function main() {
       "and the confirmation button is gone with nothing to run",
       (await page.getByRole("button", { name: "Confirm rotation", exact: true }).count()) === 0,
     );
+    const scrollBeforePlan = await page.evaluate(() => window.scrollY);
     await page.getByRole("button", { name: "Preview rotation", exact: true }).click();
     await page.getByText("This key cannot be rotated yet.").waitFor();
+    check(
+      "previewing a rotation leaves the page in place",
+      Math.abs((await page.evaluate(() => window.scrollY)) - scrollBeforePlan) < 5,
+    );
     check(
       "the plan reads the same answer as the run",
       await page.getByText(/audit-only/).isVisible(),

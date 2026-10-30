@@ -7,7 +7,6 @@
   let { mode, ondone } = $props();
   let password = $state("");
   let confirm = $state("");
-  let reveal = $state(false);
   let error = $state("");
   let busy = $state(false);
 
@@ -53,7 +52,7 @@
       <label class="field">
         <span>{mode === "setup" ? "New password" : "Password"}</span>
         <input
-          type={reveal ? "text" : "password"}
+          type="password"
           bind:value={password}
           autocomplete={mode === "setup" ? "new-password" : "current-password"}
           required
@@ -63,20 +62,13 @@
         <label class="field">
           <span>Repeat password</span>
           <input
-            type={reveal ? "text" : "password"}
+            type="password"
             bind:value={confirm}
             autocomplete="new-password"
             required
           />
         </label>
       {/if}
-      <button
-        type="button"
-        class="link"
-        onclick={() => (reveal = !reveal)}
-      >
-        {reveal ? "Hide passwords" : "Show passwords"}
-      </button>
       <button class="primary" type="submit" disabled={busy}>
         {busy
           ? mode === "setup"

@@ -4,6 +4,8 @@
 // messages are written to be read by an operator and the UI must not replace
 // them with its own paraphrase.
 
+import { beginActivity, endActivity } from "./activity.js";
+
 // The session-bound CSRF token, kept in memory only. It arrives from
 // `/auth/me` after sign-in and is sent on writes; it is not a credential and
 // is never written to storage.
@@ -44,32 +46,37 @@ export async function api(
   if (!["GET", "HEAD", "OPTIONS"].includes(method) && csrfToken) {
     headers["x-csrf-token"] = csrfToken;
   }
-  const response = await fetch(`/api/v1${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : type === "application/json" ? JSON.stringify(body) : body,
-    credentials: "same-origin",
-    // No default: a rotation or a live service scan can legitimately take
-    // longer than a normal read. Full audits use the job helpers below.
-    signal: timeout ? AbortSignal.timeout(timeout) : undefined,
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    // The password change rotates this session in one transaction, but a read
-    // that left before the new cookie arrived can still be refused. Re-check
-    // the session once and retry a read only: a write must never be replayed
-    // behind the operator's back.
-    if (response.status === 401 && !retried && IDEMPOTENT.has(method)) {
-      const me = await fetch("/api/v1/auth/me", { credentials: "same-origin" });
-      if (me.ok) {
-        const state = await me.json().catch(() => null);
-        setCsrfToken(state?.csrf ?? "");
-        return api(path, { method, body, type, timeout, retried: true });
+  beginActivity();
+  try {
+    const response = await fetch(`/api/v1${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : type === "application/json" ? JSON.stringify(body) : body,
+      credentials: "same-origin",
+      // No default: a rotation or a live service scan can legitimately take
+      // longer than a normal read. Full audits use the job helpers below.
+      signal: timeout ? AbortSignal.timeout(timeout) : undefined,
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      // The password change rotates this session in one transaction, but a
+      // read that left before the new cookie arrived can still be refused.
+      // Re-check the session once and retry a read only: a write must never be
+      // replayed behind the operator's back.
+      if (response.status === 401 && !retried && IDEMPOTENT.has(method)) {
+        const me = await fetch("/api/v1/auth/me", { credentials: "same-origin" });
+        if (me.ok) {
+          const state = await me.json().catch(() => null);
+          setCsrfToken(state?.csrf ?? "");
+          return api(path, { method, body, type, timeout, retried: true });
+        }
       }
+      throw new ApiError(response.status, detailOf(payload));
     }
-    throw new ApiError(response.status, detailOf(payload));
+    return payload;
+  } finally {
+    endActivity();
   }
-  return payload;
 }
 
 // A full audit is a server-side job, not a request the browser holds open.

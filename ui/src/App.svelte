@@ -11,6 +11,7 @@
     setTimeZone,
     waitForAudit,
   } from "./lib/api.js";
+  import ActivityBar from "./lib/ActivityBar.svelte";
   import Banner from "./lib/Banner.svelte";
   import Icon from "./lib/Icon.svelte";
   import Toasts from "./lib/Toasts.svelte";
@@ -575,6 +576,7 @@
     </aside>
 
     <main class="main" id="main-content">
+      <ActivityBar holding={busy} />
       <div class="page">
         {#if status && !status.scheduler.running}
           <Banner tone="warn" title="The audit loop is not running.">

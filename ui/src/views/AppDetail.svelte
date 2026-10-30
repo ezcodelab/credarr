@@ -16,6 +16,7 @@
   import RotationPanel from "../lib/RotationPanel.svelte";
   import StatusPill from "../lib/StatusPill.svelte";
   import { checkStatus, statusInfo } from "../lib/status.js";
+  import { readHistory, writeHistory } from "../lib/checkHistory.js";
   import { toast } from "../lib/toast.js";
 
   import { bannerLine, credentialTitle, copyLabel, friendlyReason, plainEngineText, reasonsForField } from "../lib/names.js";
@@ -48,8 +49,6 @@
   let connBusy = $state(false);
   let checkBusy = $state(false);
   let checkError = $state("");
-  let checks = $state([]);
-  let checksLoading = $state(true);
   let checksRead = 0;
   let checksError = $state("");
   let message = $state("");
@@ -58,6 +57,11 @@
   const rows = $derived(data?.credentials ?? []);
   const observed = $derived(data?.observed_run ?? null);
   const row = $derived(rows.find((entry) => entry.name === name) ?? rows[0] ?? null);
+
+  // A known history paints on the first frame; the fresh read still runs.
+  const knownHistory = readHistory(row?.name ?? "");
+  let checks = $state(knownHistory ?? []);
+  let checksLoading = $state(knownHistory === null);
 
   // Editable state is synced at explicit points - mount, app switch, save -
   // never in a guard-variable effect: an effect that both reads and writes
@@ -480,16 +484,19 @@
       checksLoading = false;
       return;
     }
+    const appName = row.name;
     const read = ++checksRead;
+    checks = readHistory(appName) ?? [];
     checksLoading = true;
     checksError = "";
     try {
       const answer = await api(
-        `/audit?only=${encodeURIComponent(row.name)}&limit=20`,
+        `/audit?only=${encodeURIComponent(appName)}&limit=20`,
         { timeout: WRITE_TIMEOUT },
       );
       if (read !== checksRead) return;
       checks = Array.isArray(answer?.checks) ? answer.checks : [];
+      writeHistory(appName, checks);
     } catch (failure) {
       if (read !== checksRead) return;
       if (failure instanceof ApiError && failure.status === 401) {
@@ -585,13 +592,11 @@
     rotateBtn?.focus({ preventScroll: true });
   });
 
-  function scrollToRotation() {
-    document.getElementById("rotation-card")?.scrollIntoView({ block: "start" });
-  }
-
   function planRotation() {
+    // The plan reports in the card directly below the header. Do not move the
+    // page: the operator pressed a button they can still see, and the answer
+    // arrives where they are already looking.
     panelApi?.startPlan();
-    scrollToRotation();
   }
 
   function pressRotate() {
@@ -600,7 +605,6 @@
     // is no stored key to arm against, and the form's own submit confirms.
     if (!rotationArmed && row?.write?.manual_mint === true) {
       panelApi?.openManualKey();
-      scrollToRotation();
       return;
     }
     if (rotationArmed) {
@@ -1036,7 +1040,16 @@
         </tbody>
       </table>
     {:else if checksLoading}
-      <p class="muted">Reading checks…</p>
+      <div class="check-skeleton" role="status">
+        <span class="sr-only">Reading check history…</span>
+        {#each [0, 1, 2] as line (line)}
+          <div class="skeleton-row" aria-hidden="true">
+            <span class="skeleton"></span>
+            <span class="skeleton short"></span>
+            <span class="skeleton"></span>
+          </div>
+        {/each}
+      </div>
     {:else}
       <p class="muted">
         No checks yet. Use Check app to test this app without auditing the whole
