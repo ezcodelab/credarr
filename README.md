@@ -1,21 +1,12 @@
-# credarr
+<p align="center">
+  <img src=".github/assets/credarr-logo.png" alt="credarr" width="360">
+</p>
 
 **Find out which of your services hold each API key, whether the copies still match, and what can actually be rotated. Then rotate it.**
 
 ![The Apps view: stack health, one card per app, copies and their last audit](.github/assets/apps.png)
 
 Credarr keeps a holder map, audits every readable copy against the canonical value, and rotates the keys it can prove.
-
-```
-$ credarr audit
-Credential audit - fingerprints only, no values
-
-  prowlarr_api_key  [A, max age 90d]  3f9a2c1b8e07
-      DRIFT  sonarr.indexers               1 of 2 differ from the canonical value
-      manual homepage.label
-
-1 credential(s): drift 1
-```
 
 ## What it does
 
