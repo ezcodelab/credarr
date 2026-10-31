@@ -407,9 +407,9 @@
 
   <form onsubmit={changePassword}>
     <h4 class="settings-subhead">Change password</h4>
-    <div class="field-grid">
+    <div class="field-grid password-grid">
       <label class="field">
-        <span>current password</span>
+        <span>Current password</span>
         <input
           type="password"
           autocomplete="current-password"
@@ -417,28 +417,33 @@
           required
         />
       </label>
+      <div class="password-new">
+        <label class="field" for="new-password">
+          <span>New password</span>
+          <input
+            id="new-password"
+            type="password"
+            autocomplete="new-password"
+            minlength="12"
+            aria-describedby="password-help"
+            bind:value={newPassword}
+            required
+          />
+        </label>
+        <p class="field-help" id="password-help">At least 12 characters.</p>
+      </div>
       <label class="field">
-        <span>new password</span>
+        <span>Confirm new password</span>
         <input
           type="password"
           autocomplete="new-password"
           minlength="12"
-          bind:value={newPassword}
-          required
-        />
-      </label>
-      <label class="field">
-        <span>confirm new password</span>
-        <input
-          type="password"
-          autocomplete="new-password"
-          minlength="12"
+          aria-describedby="password-help"
           bind:value={confirmPassword}
           required
         />
       </label>
     </div>
-    <p class="field-help">At least 12 characters.</p>
     <div class="toolbar">
       <button
         class="primary"

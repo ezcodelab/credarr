@@ -5,6 +5,24 @@ that language; `UI_IA.md` is the source of truth for the information
 architecture. If the code and this document disagree, the code is wrong and the
 change must fix one of them in the same commit.
 
+## Portable audit
+
+The first-pass contract is [`docs/ui-contract.md`](ui-contract.md). The portable
+audit is pointed at this project by [`ui-system/config.json`](../ui-system/config.json):
+the real token source is `ui/src/app.css`, including the generic audit aliases,
+and the gallery is `ui/src/views/DesignSystem.svelte` at `/?design`. There is no
+second token file or palette.
+
+Run the local harness from this directory:
+
+```sh
+python3 ~/Documents/homelab/brain/bin/ui_system.py audit .
+```
+
+The audit checks the contract headings, the alias token names, the system doc,
+the gallery and the README. It does not judge taste; `/design-review` does that
+against the contract and the approved references.
+
 ## Direction
 
 **Graphite ledger.** A quiet instrument panel for one operator: keys, copies,

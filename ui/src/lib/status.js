@@ -56,9 +56,9 @@ export const STATUS = {
     why: "No current status is recorded for this state.",
   },
   no_holders: {
-    label: "no holders",
+    label: "no copies",
     tone: "none",
-    why: "Nothing outside this app holds this value; there is no copy to compare.",
+    why: "No copy of this key is declared, so there is nothing to compare.",
   },
   enabled: {
     label: "enabled",
@@ -296,7 +296,7 @@ export function stackHealth(status, data) {
       label: "all clear",
       title: "No findings",
       why:
-        "No drift, missing or error. Every readable copy matched; every " +
+        "No drift, missing copies or errors. Every readable copy matched; every " +
         `exercised copy was accepted by its service.${manualNote}`,
     };
   }
@@ -308,7 +308,7 @@ export function stackHealth(status, data) {
       label: "all clear",
       title: manual.length ? "No findings" : "Every declared copy matches",
       why: manual.length
-        ? "No drift, missing or error. Manual copies are not compared."
+        ? "No drift, missing copies or errors. Manual copies are not compared."
         : "Every declared credential was compared; no drift.",
     };
   }

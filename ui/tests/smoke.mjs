@@ -588,7 +588,7 @@ async function main() {
     );
     check(
       "and the app that nothing holds says so",
-      (await page.getByText("no holders", { exact: true }).count()) === 1,
+      (await page.getByText("no copies", { exact: true }).count()) === 1,
     );
     check(
       "the hub has no duplicate rotate actions",
@@ -629,11 +629,11 @@ async function main() {
     // both expected badges instead of racing the card re-render.
     const unverifiable = page.locator(".app-card").getByText("unverifiable", { exact: true });
     await unverifiable.nth(1).waitFor();
-    await page.locator(".app-card").getByText("no holders", { exact: true }).waitFor();
+    await page.locator(".app-card").getByText("no copies", { exact: true }).waitFor();
     check(
       "a run with nothing to compare says so instead of 'not audited yet'",
       (await unverifiable.count()) === 2 &&
-        (await page.locator(".app-card").getByText("no holders", { exact: true }).count()) === 1,
+        (await page.locator(".app-card").getByText("no copies", { exact: true }).count()) === 1,
     );
 
     // --- Activity: a baseline is not a change --------------------------------
@@ -1474,9 +1474,9 @@ async function main() {
       (await page.locator("#settings-security .session-row").count()) === 1 &&
         (await page.locator("#settings-security .session-row").getByText("this session").isVisible()),
     );
-    await page.getByLabel("current password").fill(PASSWORD);
-    await page.getByLabel("new password", { exact: true }).fill(NEW_PASSWORD);
-    await page.getByLabel("confirm new password").fill(NEW_PASSWORD);
+    await page.getByLabel("Current password").fill(PASSWORD);
+    await page.getByLabel("New password", { exact: true }).fill(NEW_PASSWORD);
+    await page.getByLabel("Confirm new password").fill(NEW_PASSWORD);
     await page.getByRole("button", { name: "Change password" }).click();
     try {
       await page
@@ -1494,7 +1494,7 @@ async function main() {
     check("a password change keeps this session and says it signed the rest out", true);
     check(
       "and the new password satisfies the minimum while the fields are emptied",
-      (await page.getByLabel("current password").inputValue()) === "",
+      (await page.getByLabel("Current password").inputValue()) === "",
     );
 
     // --- Audit schedule: persisted and applied without a restart -------------

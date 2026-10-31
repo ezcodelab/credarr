@@ -219,7 +219,7 @@ test("a live run with a manual copy is all clear and names manual coverage", () 
   assert.doesNotMatch(result.why, /app cards/i);
 });
 
-test("a credential with no holders reads as no holders, not manual", () => {
+test("a credential with no copies reads as no copies, not manual", () => {
   const row = { consumers: [] };
   assert.equal(checkStatus("indirect", row), "no_holders");
   assert.equal(checkStatus("manual", row), "no_holders");

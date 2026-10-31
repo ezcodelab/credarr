@@ -95,7 +95,7 @@
   }
 </script>
 
-<section class="card section auto-card">
+<section class="card section auto-card" id="auto-rotation">
   <div class="section-head">
     <div>
       <h3>Auto-rotation</h3>

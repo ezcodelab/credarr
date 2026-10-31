@@ -838,10 +838,10 @@
   </section>
 
   <nav class="detail-nav" aria-label="App sections">
-    <a href="#rotation-card">Rotation</a>
     <a href="#connection">Connection</a>
     <a href="#check-history">Check history</a>
     <a href="#used-in">Used in</a>
+    <a href="#auto-rotation">Auto-rotation</a>
     <a href="#danger">Delete</a>
   </nav>
 

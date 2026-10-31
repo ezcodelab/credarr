@@ -141,18 +141,9 @@
   {/snippet}
 </PageHeader>
 
-{#if lastAudit}
-  <p class="page-intro">
-    Last audit finished {timestamp(lastAudit.finished_at)}.
-    {#if !data?.events?.length}
-      It set the baseline; only changes appear below.
-    {/if}
-  </p>
-{/if}
-
 <section class="activity-summary" aria-label="Activity summary">
   <div class="activity-stat">
-    <span>Last audit</span>
+    <span>Last audit finished</span>
     {#if lastAudit}
       <div class="activity-stat-value">
         <StatusPill status={lastAudit.exit_status ?? "none"} />
@@ -168,7 +159,7 @@
   </div>
   <div class="activity-stat">
     <span>Delivery</span>
-    <strong>{data?.sinks?.length ? data.sinks.map((sink) => sink.name).join(", ") : "No service"}</strong>
+    <strong>{data === null ? "Reading…" : data.sinks.length ? data.sinks.map((sink) => sink.name).join(", ") : "No service"}</strong>
   </div>
 </section>
 

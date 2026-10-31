@@ -18,9 +18,11 @@
   `ADDING_A_SERVICE.md`.
 - Keep `docs/` truthful with the code in the same change. The engine and the
   server are authoritative over prose.
-- UI changes use `docs/UI_SYSTEM.md` and the dev gallery (`cd ui && npm run dev`,
-  then `/?design`). A new primitive or pattern updates the gallery and the
-  document in the same change; do not add a second visual language.
+- UI changes use `docs/ui-contract.md`, `docs/UI_SYSTEM.md` and the dev gallery
+  (`cd ui && npm run dev`, then `/?design`). Run
+  `python3 ~/Documents/homelab/brain/bin/ui_system.py audit .` and keep the
+  contract, system and gallery current. A new primitive or pattern updates all
+  three in the same change; do not add a second visual language.
 
 ## Publishing
 

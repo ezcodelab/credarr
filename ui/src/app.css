@@ -42,6 +42,13 @@
   --radius: 12px;
   --radius-sm: 8px;
   --radius-lg: 16px;
+  /* Portable audit names. These are aliases of the Credarr tokens above, not
+     a second palette; the source of truth stays in this block. */
+  --surface: var(--panel);
+  --surface-raised: var(--panel-2);
+  --text-muted: var(--dim);
+  --border: var(--line);
+  --radius-md: var(--radius);
   --shadow: 0 1px 0 rgba(255, 255, 255, 0.035) inset,
     0 14px 34px rgba(0, 0, 0, 0.18);
 
@@ -529,6 +536,7 @@ aside footer button { align-self: flex-start; }
 #connection,
 #check-history,
 #used-in,
+#auto-rotation,
 #danger,
 [id^="settings-"] { scroll-margin-top: 4rem; }
 
@@ -882,6 +890,14 @@ aside footer button { align-self: flex-start; }
   align-items: end;
   margin-top: 0.85rem;
 }
+.password-grid { align-items: start; }
+.password-new {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.password-new .field-help { margin: 0; }
 /* Top-aligned: the boxes share one edge while the text under each runs as
    long as it needs to. */
 .field-grid.align-start { align-items: start; }
@@ -2227,7 +2243,7 @@ button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 1
 }
 .app-url {
   margin: 0.2rem 0 0;
-  color: var(--dim-2);
+  color: var(--dim);
   font-family: var(--font-mono);
   font-size: 0.7rem;
   line-height: 1.4;
@@ -2277,11 +2293,6 @@ button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 1
 .app-line strong { overflow-wrap: anywhere; }
 
 /* --- activity summary -------------------------------------------------- */
-.page-intro {
-  margin: -0.35rem 0 1rem;
-  color: var(--dim);
-  font-size: 0.82rem;
-}
 .activity-summary {
   display: grid;
   grid-template-columns: 1.4fr 1fr 1fr;
@@ -2382,4 +2393,35 @@ button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 1
 @media (max-width: 720px) {
   .apps-loading-row { grid-template-columns: 2.2rem minmax(0, 1fr); }
   .apps-loading-state { display: none; }
+}
+
+/* Activity summary is defined after the main responsive block; keep its
+   narrow layout here for the same source-order reason as the ledger. */
+@media (max-width: 720px) {
+  .activity-summary { grid-template-columns: 1fr; }
+  .activity-stat {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .activity-stat:last-child { border-bottom: 0; }
+}
+
+/* Narrow touch targets on controls that are links or summaries rather than
+   buttons. 44px is the contract floor, not a hover preference. */
+@media (max-width: 720px) {
+  .detail-nav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0.55rem 0.7rem;
+  }
+  .setup-check {
+    align-items: center;
+    min-height: 44px;
+  }
+  summary {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
 }
