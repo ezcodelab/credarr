@@ -130,7 +130,10 @@
   }
 </script>
 
-<PageHeader title="Activity">
+<PageHeader
+  title="Activity"
+  description="What changed since the last audit, and whether each change reached a delivery service."
+>
   {#snippet actions()}
     <button onclick={load} disabled={loading}>
       {loading ? "Loading…" : "Refresh"}
@@ -139,13 +142,35 @@
 </PageHeader>
 
 {#if lastAudit}
-  <p class="muted">
+  <p class="page-intro">
     Last audit finished {timestamp(lastAudit.finished_at)}.
     {#if !data?.events?.length}
       It set the baseline; only changes appear below.
     {/if}
   </p>
 {/if}
+
+<section class="activity-summary" aria-label="Activity summary">
+  <div class="activity-stat">
+    <span>Last audit</span>
+    {#if lastAudit}
+      <div class="activity-stat-value">
+        <StatusPill status={lastAudit.exit_status ?? "none"} />
+        <strong class="tabular">{timestamp(lastAudit.finished_at)}</strong>
+      </div>
+    {:else}
+      <strong>Not audited yet</strong>
+    {/if}
+  </div>
+  <div class="activity-stat">
+    <span>Changes</span>
+    <strong>{data?.events?.length ?? "—"}</strong>
+  </div>
+  <div class="activity-stat">
+    <span>Delivery</span>
+    <strong>{data?.sinks?.length ? data.sinks.map((sink) => sink.name).join(", ") : "No service"}</strong>
+  </div>
+</section>
 
 {#if error}
   <Banner tone="danger">{error}</Banner>

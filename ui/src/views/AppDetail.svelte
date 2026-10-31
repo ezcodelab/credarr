@@ -12,10 +12,11 @@
   import ConfirmDialog from "../lib/ConfirmDialog.svelte";
   import EmptyState from "../lib/EmptyState.svelte";
   import HoldersTable from "../lib/HoldersTable.svelte";
+  import KeyTile from "../lib/KeyTile.svelte";
   import PageHeader from "../lib/PageHeader.svelte";
   import RotationPanel from "../lib/RotationPanel.svelte";
   import StatusPill from "../lib/StatusPill.svelte";
-  import { checkStatus, statusInfo } from "../lib/status.js";
+  import { checkStatus, credentialReason, statusInfo, statusOf } from "../lib/status.js";
   import { readHistory, writeHistory } from "../lib/checkHistory.js";
   import { toast } from "../lib/toast.js";
 
@@ -785,13 +786,6 @@
 {:else if row}
   <PageHeader title={title} description={row.description}>
     {#snippet actions()}
-      <span class="muted">
-        {#if observed}
-          Last observed {timestamp(observed.finished_at)}
-        {:else}
-          Not observed yet
-        {/if}
-      </span>
       <button type="button" onclick={planRotation} disabled={planBusy}>
         {planBusy ? "Previewing…" : "Preview rotation"}
       </button>
@@ -817,6 +811,39 @@
   </PageHeader>
 
   {#if checkError}<Banner tone="danger">{checkError}</Banner>{/if}
+
+  <section class="detail-summary">
+    <KeyTile status={row.status ?? statusOf(row)} size="lg" />
+    <div class="detail-summary-main">
+      <div class="detail-facts">
+        <div class="detail-fact">
+          <span>State</span>
+          <StatusPill status={row.status ?? statusOf(row)} />
+        </div>
+        <div class="detail-fact">
+          <span>Value</span>
+          <strong>{row.stored ? "Stored" : "Not set"}</strong>
+        </div>
+        <div class="detail-fact">
+          <span>Copies</span>
+          <strong>{row.consumers?.length ?? 0}</strong>
+        </div>
+        <div class="detail-fact">
+          <span>Last observed</span>
+          <strong class="tabular">{observed ? timestamp(observed.finished_at) : "Not yet"}</strong>
+        </div>
+      </div>
+      <p class="detail-reason">{credentialReason(row, observed)}</p>
+    </div>
+  </section>
+
+  <nav class="detail-nav" aria-label="App sections">
+    <a href="#rotation-card">Rotation</a>
+    <a href="#connection">Connection</a>
+    <a href="#check-history">Check history</a>
+    <a href="#used-in">Used in</a>
+    <a href="#danger">Delete</a>
+  </nav>
 
   <div id="rotation-card">
     <RotationPanel
@@ -1090,7 +1117,7 @@
     </section>
   {/if}
 
-  <section class="card section">
+  <section class="card section" id="used-in">
     <div class="section-head">
       <div><h3>Used in</h3></div>
       {#if !addingCopy}
@@ -1196,7 +1223,7 @@
     />
   {/if}
 
-  <section class="card section">
+  <section class="card section" id="danger">
     <div class="section-head">
       <div><h3>Delete</h3></div>
     </div>

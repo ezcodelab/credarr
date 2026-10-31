@@ -145,7 +145,7 @@ export function statusOf(row) {
 }
 
 // A check of a credential with no holders is still a measurement of that one
-// value; it must not read as the engine's "manual copy" status. The Apps card
+// value; it must not read as the engine's "manual copy" status. The Apps row
 // has always derived `no holders` from the declared shape, so the app history
 // uses the same vocabulary for the same row.
 export function checkStatus(status, row) {

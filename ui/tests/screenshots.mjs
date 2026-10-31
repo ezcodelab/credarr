@@ -281,7 +281,7 @@ async function main() {
     await page.getByRole("button", { name: "Apps", exact: true }).waitFor();
     await page.getByText("Sonarr API Key", { exact: false }).first().waitFor();
     await page.waitForTimeout(600);
-    const grid = await page.locator(".apps-grid").boundingBox();
+    const grid = await page.locator(".apps-ledger").boundingBox();
     await shot(page, "apps", { height: grid ? grid.y + grid.height + 40 : 640 });
 
     // App detail: connection, copies, check history and the rotation panel.
@@ -311,7 +311,7 @@ async function main() {
     await page.getByRole("button", { name: "Activity", exact: true }).click();
     await page.getByText("drift", { exact: false }).first().waitFor();
     await page.waitForTimeout(600);
-    await shot(page, "activity", { height: 420 });
+    await shot(page, "activity", { height: 500 });
 
     // Settings: security and the audit schedule; the import/export blocks are
     // reference material, not the point of the image.

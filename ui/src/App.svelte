@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import {
     api,
     ApiError,
@@ -9,14 +9,17 @@
     errorText,
     setCsrfToken,
     setTimeZone,
+    timestamp,
     waitForAudit,
   } from "./lib/api.js";
   import ActivityBar from "./lib/ActivityBar.svelte";
   import Banner from "./lib/Banner.svelte";
   import Icon from "./lib/Icon.svelte";
+  import StatusPill from "./lib/StatusPill.svelte";
   import Toasts from "./lib/Toasts.svelte";
   import { clearToasts } from "./lib/toast.js";
   import { credentialTitle } from "./lib/names.js";
+  import { stackHealth } from "./lib/status.js";
   import Auth from "./Auth.svelte";
   import SetupWizard from "./SetupWizard.svelte";
   import Apps from "./views/Apps.svelte";
@@ -135,6 +138,7 @@
   const rotationNames = $derived([
     ...new Set(rotationPending.map((step) => step.credential)),
   ]);
+  const health = $derived(stackHealth(status, credentials));
 
   // The two reads are the console's whole state; a hung one must not hold the
   // screen on "Loading…" forever.
@@ -192,6 +196,12 @@
     navOpen = false;
   }
 
+  // A route change is a new page: land at its top. A section jump or a
+  // rotation focus has its own scroll target and must win over this.
+  function scrollTop() {
+    tick().then(() => window.scrollTo({ top: 0, left: 0, behavior: "auto" }));
+  }
+
   function onKeydown(event) {
     if (event.key === "Escape" && navOpen) closeNav();
   }
@@ -204,6 +214,7 @@
     clearToasts();
     view = target;
     closeNav();
+    scrollTop();
   }
 
   // A top-level item with children both navigates and opens: the menu is how
@@ -218,6 +229,7 @@
       clearToasts();
       view = "apps";
       closeNav();
+      scrollTop();
       return;
     }
     if (view === item.id) return;
@@ -225,6 +237,7 @@
     clearToasts();
     view = item.id;
     closeNav();
+    scrollTop();
   }
 
   function navigateChild(parent, child) {
@@ -234,6 +247,7 @@
       clearToasts();
       view = "app";
       closeNav();
+      scrollTop();
       return;
     }
     settingsSection = child;
@@ -313,6 +327,7 @@
     setupActive = false;
     writeSetupSkip();
     view = "apps";
+    scrollTop();
   }
 
   function resumeSetup(fresh = false) {
@@ -321,6 +336,7 @@
     setupSkipped = false;
     clearSetupSkip();
     setupActive = true;
+    scrollTop();
   }
 
   async function resetTopology() {
@@ -332,6 +348,7 @@
     clearSetupSkip();
     setupActive = true;
     await refresh();
+    scrollTop();
   }
 
   async function finishSetup(target = "apps") {
@@ -343,6 +360,7 @@
     credentialName = "";
     // Older callers say "overview"/"credential"; both mean Apps now.
     view = target === "credential" || target === "app" ? "app" : "apps";
+    scrollTop();
     await refresh();
   }
 
@@ -353,6 +371,7 @@
     clearToasts();
     view = "app";
     closeNav();
+    scrollTop();
   }
 
   function rotateCredential(name) {
@@ -563,6 +582,16 @@
           {/if}
         {/each}
       </nav>
+      <div class="sidebar-state" aria-live="polite">
+        <StatusPill status={health.status} label={health.label} />
+        <span class="sidebar-state-time">
+          {#if status?.last_audit}
+            Checked {timestamp(status.last_audit.finished_at)}
+          {:else}
+            Not audited yet
+          {/if}
+        </span>
+      </div>
       <footer>
         <div class="app-name">
           credarr <span class="muted">v{status?.version ?? "—"}</span>

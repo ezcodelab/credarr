@@ -11,6 +11,7 @@
   import Banner from "../lib/Banner.svelte";
   import EmptyState from "../lib/EmptyState.svelte";
   import Icon from "../lib/Icon.svelte";
+  import KeyTile from "../lib/KeyTile.svelte";
   import PageHeader from "../lib/PageHeader.svelte";
   import StatusPill from "../lib/StatusPill.svelte";
   import TopologyImport from "../lib/TopologyImport.svelte";
@@ -39,7 +40,7 @@
     statusRank,
   } from "../lib/status.js";
 
-  // Apps is the console's home: one card per app, each card the credential
+  // Apps is the console's home: one ledger row per app, each row the credential
   // joined to its service. Connecting, testing, storing a key and watching
   // copies happen here; the detail page is for rotation and surgery.
   let {
@@ -272,7 +273,10 @@
 
 </script>
 
-<PageHeader title="Apps">
+<PageHeader
+  title="Apps"
+  description="Where each credential lives, whether every copy agrees, and what a rotation would touch."
+>
   {#snippet actions()}
     <button onclick={refreshAll} disabled={busy}>Refresh</button>
     {#if topology.imported}
@@ -292,11 +296,17 @@
   </div>
   <h2 class="health-title">{health.title}</h2>
   <p class="health-why">{health.why}</p>
-  {#if status?.last_audit}
-    <div class="health-meta">
+  <div class="health-meta">
+    <span>{joined.apps.length} {joined.apps.length === 1 ? "app" : "apps"}</span>
+    {#if joined.unconnected.length}
+      <span>{joined.unconnected.length} not connected</span>
+    {/if}
+    {#if status?.last_audit}
       <span>Last run <strong>{timestamp(status.last_audit.finished_at)}</strong></span>
-    </div>
-  {/if}
+    {:else}
+      <span>No audit yet</span>
+    {/if}
+  </div>
 </section>
 
 {#if !topology.imported}
@@ -413,14 +423,29 @@
   </div>
 
   {#if servicesLoading}
-    <p class="muted">Reading service connections…</p>
+    <div class="apps-loading" role="status">
+      <span class="sr-only">Reading service connections…</span>
+      {#each [0, 1, 2] as row (row)}
+        <div class="apps-loading-row" aria-hidden="true">
+          <span class="skeleton apps-loading-key"></span>
+          <span class="skeleton apps-loading-title"></span>
+          <span class="skeleton apps-loading-state"></span>
+        </div>
+      {/each}
+    </div>
   {:else if visibleApps.length === 0 && visibleUnassigned.length === 0 && query.trim()}
     <div class="empty compact">
       <p>No app matches that filter.</p>
       <button onclick={() => (query = "")}>Show everything</button>
     </div>
   {:else}
-    <div class="apps-grid">
+    <div class="apps-ledger" role="list" aria-label="Apps">
+      <div class="apps-ledger-head" aria-hidden="true">
+        <span>App</span>
+        <span>State</span>
+        <span>Copies</span>
+        <span></span>
+      </div>
       {#each visibleApps as app (app.name)}
         {@const copies = copyNames(app.row)}
         {@const missing = missingCopyServices(app.row, definitions)}
@@ -439,12 +464,16 @@
             }
           }}
         >
-          <div class="section-head">
-            <div>
+          <div class="app-main">
+            <KeyTile status={app.row.status ?? statusOf(app.row)} />
+            <div class="app-title">
               <h3 id={`app-${app.name}`}>{app.title}</h3>
-              <p class="muted">{app.url || "no URL yet"}</p>
+              <p class="app-url">{app.url || "no URL yet"}</p>
             </div>
-            <div class="toolbar">
+          </div>
+
+          <div class="app-state">
+            <div class="app-status-line">
               <StatusPill status={app.row.status ?? statusOf(app.row)} />
               {#if app.manualCopies.length}
                 <StatusPill
@@ -457,39 +486,41 @@
                 <StatusPill status="none" label="no key yet" />
               {/if}
             </div>
+            <p class="status-why">
+              {credentialReason(app.row, observed)}
+            </p>
+            {#if fixHint(app.row)}
+              <p class="status-fix">{fixHint(app.row)}</p>
+            {/if}
           </div>
 
-          <p class="status-why">
-            {credentialReason(app.row, observed)}
-          </p>
-          {#if fixHint(app.row)}
-            <p class="status-why">{fixHint(app.row)}</p>
-          {/if}
+          <div class="app-copies">
+            {#if copies.length}
+              <p class="app-copy-line">Used in: {copies.join(", ")}</p>
+            {:else}
+              <p class="app-copy-line muted">No copies</p>
+            {/if}
+            {#if missing.length && !servicesError}
+              <p class="field-warn">
+                {missing.map(titleOfService).join(", ")} holds a copy but is not
+                connected. Connect it below to watch those copies.
+              </p>
+              <div class="toolbar">
+                {#each missing.filter((serviceId) => !servicesError) as serviceId (serviceId)}
+                  <button
+                    onclick={(event) => {
+                      event.stopPropagation();
+                      openAddFor(serviceId);
+                    }}
+                  >
+                    Connect {titleOfService(serviceId)}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
 
-          {#if copies.length}
-            <p class="muted">Used in: {copies.join(", ")}</p>
-          {/if}
-
-          {#if missing.length && !servicesError}
-            <p class="field-warn">
-              {missing.map(titleOfService).join(", ")} holds a copy but is not
-              connected. Connect it below to watch those copies.
-            </p>
-          {/if}
-          {#if missing.length && !servicesError}
-            <div class="toolbar">
-              {#each missing.filter((serviceId) => !servicesError) as serviceId (serviceId)}
-                <button
-                  onclick={(event) => {
-                    event.stopPropagation();
-                    openAddFor(serviceId);
-                  }}
-                >
-                  Connect {titleOfService(serviceId)}
-                </button>
-              {/each}
-            </div>
-          {/if}
+          <span class="app-open" aria-hidden="true"><Icon name="chevron" size={16} /></span>
         </div>
       {/each}
     </div>

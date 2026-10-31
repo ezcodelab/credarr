@@ -51,4 +51,4 @@ Off unless `CREDARR_DOCKER_URL` names a Docker API (normally a read-only socket 
 
 ## Console map
 
-**Apps** (landing): one card per app with health, URL, stored-key state, copies, and Plan, Check, Rotate. **App detail**: connection, check history, copy editor, rotation plan, auto-rotation interval. **Activity**: last audit plus event ledger. **Settings**: security, audit schedule, API keys, notifications, import/export, setup. Values are write-only in the browser. No credential value is kept in local storage.
+**Apps** (landing): a stack-health strip and a ledger with one row per app (key tile, title, state + why/fix, copies, open). **App detail**: a summary strip, a sticky section nav, connection, check history, copy editor, rotation plan, auto-rotation interval. **Activity**: a three-part summary and the event ledger. **Settings**: security, audit schedule, API keys, notifications, import/export, setup. Values are write-only in the browser. No credential value is kept in local storage.

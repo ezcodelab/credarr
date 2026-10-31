@@ -382,7 +382,10 @@
 
 
 
-<PageHeader title="Settings">
+<PageHeader
+  title="Settings"
+  description="Security, audit cadence, delivery and the console's own keys."
+>
   {#snippet actions()}
     <button type="button" onclick={onreopen} disabled={!onreopen}>
       Re-run setup
