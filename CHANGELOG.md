@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Console
+
+- Redesigned the console around a graphite ledger: quieter surfaces, one
+  interaction accent, status words with dots instead of badge soup, and key
+  tiles as the app identity anchor.
+- Apps is now a ledger with a stack-health strip, one row per app, copies and
+  an open affordance. It stacks into a card below 960px.
+- App detail starts with a summary strip and a sticky section nav; Activity
+  starts with a three-part summary. Settings keeps its anchored sections.
+- Added `docs/UI_SYSTEM.md` and a development-only gallery at `/?design` under
+  `npm run dev`.
+
 ## 1.0.0
 
 Credarr maps who holds each API key, audits every copy against the canonical

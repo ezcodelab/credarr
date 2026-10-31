@@ -1494,6 +1494,7 @@ the button lines up with its bottom edge. */
   .overview-top { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .health-card { grid-column: span 2; }
   .detail-grid { grid-template-columns: 1fr; }
+  .detail-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 960px) {
@@ -2353,6 +2354,11 @@ button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 1
     align-items: baseline;
     gap: 0.5rem 1rem;
     flex-wrap: wrap;
+  }
+  .app-open {
+    grid-column: 3;
+    grid-row: 1;
+    align-self: center;
   }
 }
 
