@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { SERVICE_CATALOG, TARGETS, describeHolder, holderSuggestions, mechanismOptions, serviceById, targetByKey } from "../src/lib/setupCatalog.js";
+import { SERVICE_CATALOG, TARGETS, WIZARD_EXCLUDED_TARGETS, describeHolder, holderSuggestions, mechanismOptions, serviceById, targetByKey } from "../src/lib/setupCatalog.js";
 import {
   DRAFT_KEY,
   clearDraft,
@@ -103,12 +103,34 @@ test("the catalog matches the build's target registry", { skip: !hasPython }, ()
     { cwd: REPO, encoding: "utf8" },
   );
   const registry = JSON.parse(output);
-  assert.deepEqual(TARGETS.map((target) => target.key).sort(), registry.targets);
+  const offered = registry.targets.filter(
+    (key) => !WIZARD_EXCLUDED_TARGETS.has(key),
+  );
+  assert.deepEqual(TARGETS.map((target) => target.key).sort(), offered);
   // The catalog's writer flag is a second copy of holder_for; a key-only
   // comparison let it drift into offering a holder the planner would refuse.
   assert.deepEqual(
     Object.fromEntries(TARGETS.map((target) => [target.key, target.writer])),
-    registry.writers,
+    Object.fromEntries(offered.map((key) => [key, registry.writers[key]])),
+  );
+  // The exercised flag is a second copy of the engine's confirmation route.
+  const confirmed = execFileSync(
+    PYTHON,
+    [
+      "-c",
+      "import json; from credarr.writers import holder_for; " +
+        "keys = " + JSON.stringify(TARGETS.map((target) => target.key)) + "; " +
+        "out = {}; " +
+        "[out.__setitem__(key, bool(holder_for(*key.split('.', 1)) and " +
+        "(holder_for(*key.split('.', 1)).test_path or " +
+        "holder_for(*key.split('.', 1)).readback))) for key in keys]; " +
+        "print(json.dumps(out))",
+    ],
+    { cwd: REPO, encoding: "utf8" },
+  );
+  assert.deepEqual(
+    Object.fromEntries(TARGETS.map((target) => [target.key, target.exercised])),
+    JSON.parse(confirmed),
   );
 });
 
@@ -590,6 +612,22 @@ test("every holder suggestion is a real target", () => {
     true,
     "Sonarr/Radarr downloadclient/test is measured",
   );
+  assert.equal(
+    suggestionsFor("qbittorrent").some(
+      (suggestion) => suggestion.key === "lidarr.download_clients",
+    ),
+    false,
+    "Lidarr has no qBittorrent apiKey field",
+  );
+  const bazarr = suggestionsFor("sonarr").find(
+    (suggestion) => suggestion.key === "bazarr.settings",
+  );
+  assert.equal(bazarr?.qualifier, "sonarr");
+  assert.equal(bazarr?.exercised, true, "Bazarr settings readback is measured");
+  const sab = suggestionsFor("sabnzbd").filter(
+    (suggestion) => suggestion.key === "sonarr.download_clients",
+  );
+  assert.deepEqual(sab.map((suggestion) => suggestion.qualifier), ["SABnzbd:apiKey"]);
 });
 
 function giteaPair() {
@@ -628,6 +666,8 @@ test("only gitea offers a rotation-method choice", () => {
   assert.deepEqual(mechanismOptions("gitea"), ["gitea_token", "gitea_hook_secret", "stored"]);
   assert.deepEqual(mechanismOptions("grafana"), ["grafana_service_token"]);
   assert.deepEqual(mechanismOptions("sonarr"), ["servarr_command"]);
+  assert.deepEqual(mechanismOptions("sabnzbd"), ["sabnzbd_rotate_api"]);
+  assert.deepEqual(mechanismOptions("bazarr"), ["bazarr_rotate_api"]);
   assert.deepEqual(mechanismOptions("homepage"), []);
 });
 

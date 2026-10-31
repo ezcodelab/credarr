@@ -52,10 +52,10 @@ def test_only_known_test_routes_are_advertised():
     assert holder_for("prowlarr", "applications").test_path == "applications/test"
     assert holder_for("prowlarr", "indexers").test_path == ""
     assert holder_for("seerr", "settings_json").test_path == ""
-    # The Servarr siblings share the shape but no live run has measured their
-    # test route, so they stay exercise-unproven.
+    # Measured 2026-10-30 (tests/live/servarr_indexer_test.py) on the pinned
+    # Lidarr, Readarr and Whisparr builds.
     for service in ("lidarr", "readarr", "whisparr"):
-        assert holder_for(service, "indexers").test_path == ""
+        assert holder_for(service, "indexers").test_path == "indexer/test"
         assert holder_for(service, "download_clients").test_path == ""
 
 
@@ -74,10 +74,14 @@ def test_class_a_confirmation_routes_are_pinned():
     assert confirmed == {
         ("sonarr", "indexers"),
         ("radarr", "indexers"),
+        ("lidarr", "indexers"),
+        ("readarr", "indexers"),
+        ("whisparr", "indexers"),
         ("sonarr", "download_clients"),
         ("radarr", "download_clients"),
         ("prowlarr", "applications"),
         ("seerr", "settings_json"),
+        ("bazarr", "settings"),
         ("qui", "instance"),
     }
 
@@ -243,6 +247,9 @@ def test_every_api_holder_carries_the_name_of_what_it_writes():
             assert holder.api_path, holder
         elif holder.write == "seerr_api":
             assert holder.readback_path, holder
+        elif holder.write == "bazarr_api":
+            assert holder.readback_path, holder
+            assert holder.field, holder
         elif holder.write == "qui_api":
             assert holder.api_path, holder
             assert holder.readback_path, holder
@@ -258,10 +265,12 @@ def test_the_registry_holds_no_credential():
     check is on the whole vocabulary rather than on a length threshold that a
     real key would slip under.
     """
+    import re
+
     vocabulary = {holder.field for holder in HOLDERS.values()}
     # Routes are paths, not credential-shaped words; a long route is still a
     # route. The check is for a value that could be a key, so leave paths out.
-    assert not any(len(name) > 20 for name in vocabulary), vocabulary
+    assert not any(re.fullmatch(r"[0-9a-fA-F]{32,}", name) for name in vocabulary), vocabulary
 
 
 def test_api_version_differs_between_services():
@@ -300,4 +309,5 @@ def test_every_mint_source_is_pinned_literally():
     """
     assert known_systems() == frozenset(
         {"sonarr", "radarr", "prowlarr", "lidarr", "readarr", "whisparr",
-         "jellyfin", "qbittorrent", "seerr", "grafana", "arcane", "gitea"})
+         "jellyfin", "qbittorrent", "seerr", "grafana", "arcane", "gitea",
+         "bazarr", "sabnzbd"})

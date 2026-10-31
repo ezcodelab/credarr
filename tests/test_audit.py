@@ -1432,3 +1432,145 @@ credentials:
       - target: seerr.settings_json[sonarr]
         mechanism: file_unverified
 """)
+
+
+QBT_KEY = "qbt_synthetic_holder_value_0001"  # gitleaks:allow
+QUI_KEY = "qui-own-key-0000000000000000000"  # gitleaks:allow
+VAULT["vault_env_secrets"]["qbt"] = {"QBITTORRENT_API_KEY": QBT_KEY}
+VAULT["vault_env_secrets"]["qui"] = {"QUI_API_KEY": QUI_KEY}
+
+QUI_MANIFEST = """
+version: 1
+credentials:
+  qbittorrent_api_key:
+    class: A
+    max_age_days: 90
+    vault:
+      backend: ansible-vault
+      file: vault.yml
+      path: [vault_env_secrets, qbt, QBITTORRENT_API_KEY]
+    write:
+      mechanism: qbittorrent_rotate_api
+    consumers:
+      - target: qui.instance[qBittorrent]
+        count: 1
+        mechanism: qui_api
+  qui_api_key:
+    class: B
+    max_age_days: 90
+    vault:
+      backend: ansible-vault
+      file: vault.yml
+      path: [vault_env_secrets, qui, QUI_API_KEY]
+"""
+
+
+class QuiAPI:
+    """qui's instance list and its own connection test."""
+
+    def __init__(self, *, connected: bool = True, auth_key: str = QUI_KEY) -> None:
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.connected = connected
+        self.auth_key = auth_key
+        self.requests: list[tuple[str, str]] = []
+        api = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _answer(self, status: int, payload: object) -> None:
+                body = json.dumps(payload).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _authorised(self) -> bool:
+                if self.headers.get("X-API-Key") == api.auth_key:
+                    return True
+                self._answer(401, {})
+                return False
+
+            def do_GET(self) -> None:
+                api.requests.append(("GET", self.path))
+                if not self._authorised():
+                    return
+                if self.path == "/api/instances":
+                    self._answer(200, [{"id": 7, "name": "qBittorrent"}])
+                    return
+                self._answer(404, {})
+
+            def do_POST(self) -> None:
+                api.requests.append(("POST", self.path))
+                if not self._authorised():
+                    return
+                if self.path == "/api/instances/7/test":
+                    self._answer(200, {"connected": api.connected})
+                    return
+                self._answer(404, {})
+
+            def log_message(self, format: str, *args: object) -> None:
+                """Silence. A test's output is its assertions."""
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.server.server_port}"
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def test_a_qui_holder_is_live_when_its_own_test_connects():
+    api = QuiAPI()
+    try:
+        result = _audit(
+            QUI_MANIFEST, urls={"qui": api.url}, only={"qbittorrent_api_key"},
+        )
+    finally:
+        api.close()
+
+    consumer = result.results[0].consumers[0]
+    assert consumer.status is Status.LIVE
+    assert "own test connected" in consumer.detail
+    assert "equality with the saved value is not proven" in consumer.detail
+    assert api.requests == [
+        ("GET", "/api/instances"), ("POST", "/api/instances/7/test"),
+    ]
+    assert QBT_KEY not in consumer.detail
+    assert QUI_KEY not in consumer.detail
+
+
+def test_a_qui_holder_that_cannot_connect_is_not_a_match():
+    api = QuiAPI(connected=False)
+    try:
+        result = _audit(
+            QUI_MANIFEST, urls={"qui": api.url}, only={"qbittorrent_api_key"},
+        )
+    finally:
+        api.close()
+
+    consumer = result.results[0].consumers[0]
+    assert consumer.status is Status.UNVERIFIABLE
+    assert consumer.reason == "liveness_rejected"
+    assert "refused to connect with its stored value" in consumer.detail
+    assert QBT_KEY not in consumer.detail
+
+
+def test_a_qui_holder_that_cannot_be_reached_is_unverifiable_and_scrubbed():
+    """An unreachable holder is a gap, never a finding, and never a leak."""
+    result = _audit(
+        QUI_MANIFEST, urls={"qui": "http://127.0.0.1:9"},
+        only={"qbittorrent_api_key"},
+    )
+
+    consumer = result.results[0].consumers[0]
+    assert consumer.status is Status.UNVERIFIABLE
+    assert consumer.reason == "unreachable"
+    assert QBT_KEY not in consumer.detail
+    assert QUI_KEY not in consumer.detail

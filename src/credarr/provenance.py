@@ -64,6 +64,12 @@ MEASURED_VERSIONS: dict[str, str] = {
     "grafana": "12.1.1",
     "arcane": "2.17.0",
     "gitea": "1.27.2",
+    # Bazarr 1.6.2: form settings write and process readback for the Sonarr
+    # and Radarr keys, measured 2026-10-30 (tests/live/bazarr_settings.py).
+    "bazarr": "1.6.2",
+    # SABnzbd 5.1.3: set_apikey, mode=restart, old 403/new 200, and Sonarr's
+    # SABnzbd downloadclient/test, measured 2026-10-30.
+    "sabnzbd": "5.1.3",
 }
 
 # The image each measurement above ran against, where the live run recorded
@@ -98,6 +104,8 @@ MEASURED_IMAGES: dict[str, str] = {
     "jellyfin": "sha256:799509f8ef3be7037478699cc6fd14d19dd75faac5e474ed219e98ae78a5b3e4",
     "gitea": "sha256:c7953964c6e8fe532cf7fc3f3efdea1d0b161d7859c47e04f5e05489d494dea0",
     "arcane": "sha256:47af3e1aa8492eb17276d0dcc6c55fb1dfde98cfd928c12f2961023221891f5a",
+    "bazarr": "sha256:9a625883f054e722795affe5e3ca71057e6ed817ecdf99f4a99624346fcc509c",
+    "sabnzbd": "sha256:a7cfba459929f73b83c98b476a845076dc72524af80b24fcb4200684e6b1b675",
 }
 
 

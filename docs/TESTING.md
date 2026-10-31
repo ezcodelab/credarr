@@ -1,15 +1,15 @@
 # Testing
 
 What the suite does today, where it is weak, and the rules for new tests.
-The numbers here are from the 2026-10-28 tree; re-measure when they move.
+The numbers here are from the 2026-10-30 tree; re-measure when they move.
 
 ## Current shape
 
 | Layer | Tool | Size | Runtime |
 | --- | --- | --- | --- |
-| Engine + server unit tests | pytest, fake transport, some real HTTP fixtures | 945 passed, 2 skipped | ~3.5 min |
+| Engine + server unit tests | pytest, fake transport, some real HTTP fixtures | 971 passed, 2 skipped | ~3.5 min |
 | Property tests | hypothesis (inside the above) | 7 | ~1 s |
-| Console unit tests | `node --test` | 104 | ~3 s |
+| Console unit tests | `node --test` | 115 | ~3 s |
 | Console end-to-end | Playwright + Chromium against a real server | 207 checks | ~2 min |
 | Container black box | pytest `-m integration`, testcontainers | 4 | ~9 s + image start |
 
@@ -60,6 +60,35 @@ pytest -m integration      # container black box; needs Docker (skips without)
 pytest tests/test_properties.py -q   # property tests
 pytest -o addopts="" -m "not integration" -q   # explicit counts (the default addopts hide them)
 ```
+
+## Live holder fixtures
+
+The `tests/live/` scripts are manual, disposable-container harnesses. They are
+not part of `make check`, and they never point at the production stack. Run
+them from the repository root with the source and live directories on the
+path:
+
+```sh
+PYTHONPATH="$PWD/src:$PWD/tests/live" .venv/bin/python tests/live/<script>.py
+```
+
+Measured additions (2026-10-30 and 2026-10-31):
+
+| Script | Question | Result |
+| --- | --- | --- |
+| `servarr_indexer_test.py` | Does `indexer/test` exercise the stored key on Lidarr, Readarr and Whisparr? | Lidarr 3.1.0.4875, Readarr 0.4.19.2811, Whisparr 2.2.0.231: 2xx live, non-2xx with a rejected upstream key, 2xx after restore |
+| `bazarr_settings.py` | Does Bazarr's form settings API reach the running process, and does its own key change immediately? | Bazarr 1.6.2: write 204, Sonarr/Radarr keys read back from the process, old Bazarr key 401 after `settings-auth-apikey` with no restart |
+| `sabnzbd_key.py` | Does SABnzbd's set_apikey/restart sequence settle on the new key, and does Sonarr's SABnzbd row test follow it? | SABnzbd 5.1.3: reset returns a key, restart makes old 403/new 200, `downloadclient/test` accepts new and rejects old |
+| `server_auto_sabnzbd.py` | Does the real server auto-rotate a SABnzbd key with a Sonarr holder? | `auto_succeeded`; Sonarr row holds the new key; old 403/new 200 |
+| `server_auto_bazarr.py` | Does the real server auto-rotate Bazarr's own key with a deploy-time Homepage copy? | `auto_manual`; old 401/new 200; policy stays enabled |
+| `server_auto_servarr.py` | Do Radarr, Lidarr, Readarr and Whisparr auto-rotate with Prowlarr's application row as the holder, and Prowlarr with a Sonarr indexer row? | all five `auto_succeeded`; old 401/new 200; the holder row holds the new key |
+| `server_auto_jellyfin.py` | Does the real server auto-rotate Jellyfin's reissued key with Seerr's `jellyfin` section as the holder? | `auto_succeeded`; Seerr reports the new key; old 401/new 200 |
+| `server_auto_qbittorrent.py` | Does the real server auto-rotate qBittorrent's key with qui's instance test as the holder? | `auto_succeeded`; qui test green; old 403/new 200 |
+| `server_auto_manual.py` | Do Seerr, Grafana, Arcane and Gitea mint with only a deploy-time Homepage copy and record `auto_manual`? | all four `auto_manual`; old key refused, new key accepted, policy enabled |
+
+The Torznab stand-in gained music, book and adult caps/items so the three
+library managers can validate their own category families; the extra items are
+inert for Sonarr and Radarr.
 
 ## Continuous integration
 

@@ -92,6 +92,11 @@ WRITE_BACKOFF = 5
 # Ceiling on the pacing interval. Bounded because an escalating delay that never
 # resets would turn a slow rotation into a stalled one.
 MAX_WRITE_INTERVAL = 30.0
+# A chosen-value mint can be refused because the service rejects the value's
+# shape, not the credential. Nothing is written in that case, so choosing
+# another value is safe; three attempts cover a validator with a narrow rule
+# without turning a real refusal into an endless mint.
+MINT_VALUE_ATTEMPTS = 3
 
 # Sonarr validates an indexer while saving it, which can involve contacting it.
 # Three of ten took over five seconds and some exceeded thirty, so a short
@@ -761,6 +766,55 @@ class Executor:
                         "ambiguous"
                     )
                 continue
+            if described.write == "bazarr_api":
+                row = self._row_name(step.target)
+                if row is None:
+                    problems.append(
+                        f"{step.target}: does not name which Bazarr settings "
+                        "section to write"
+                    )
+                    continue
+                try:
+                    api_key = self._service_key(system)
+                except (ConfigError, TransportError) as exc:
+                    problems.append(
+                        f"{step.target}: cannot read {system}'s own API key "
+                        f"({exc}), so no write to it could be authenticated"
+                    )
+                    continue
+                if not api_key:
+                    problems.append(
+                        f"{step.target}: no API key for {system!r}; store "
+                        f"{system}'s own key before rotating a credential it holds"
+                    )
+                    continue
+                answered = self._checked_call(
+                    system, "GET", described.readback_path, key=api_key,
+                    auth_header=described.auth_header_name,
+                    auth_transport=described.auth_transport,
+                )
+                if answered is None:
+                    problems.append(
+                        f"{step.target}: {system} was unreachable during "
+                        "preflight; the write could not be confirmed"
+                    )
+                    continue
+                status, body = answered
+                if status != 200 or not isinstance(body, dict):
+                    problems.append(
+                        f"{step.target}: cannot read {system}'s settings "
+                        f"(HTTP {status}); the write would fail after the key "
+                        "was already revoked"
+                    )
+                elif not isinstance(body.get(row), dict) or not body[row].get(
+                    described.readback_field
+                ):
+                    problems.append(
+                        f"{step.target}: {system} has no {row} settings entry "
+                        "holding a key, so a rotation would revoke the old key "
+                        "and update nothing"
+                    )
+                continue
             if described.write == "seerr_api":
                 row = self._row_name(step.target)
                 if row is None:
@@ -1089,6 +1143,10 @@ class Executor:
             return self._mint_jellyfin(step)
         if mechanism == "rotate":
             return self._mint_qbittorrent(step)
+        if mechanism == "sabnzbd_rotate":
+            return self._mint_sabnzbd(step)
+        if mechanism == "bazarr_rotate":
+            return self._mint_bazarr(step)
         if mechanism == "regenerate":
             return self._mint_seerr(step)
         raise RotationError(
@@ -2185,6 +2243,333 @@ class Executor:
             "so exercise-only confirmation will not be claimed"
         )
 
+    def _sabnzbd_reset(self, service: str, old_key: str) -> str:
+        """Reset SABnzbd's key and return the new value; the response is it."""
+        status, body = self._call(
+            self._ctx.host, service, "GET",
+            "/api?mode=config&name=set_apikey&output=json",
+            key=old_key, auth_transport="query", query_key_name="apikey",
+            transport=self._ctx.transport,
+        )
+        if status != 200 or not isinstance(body, dict):
+            raise RotationError(
+                f"{service} refused the key reset (HTTP {status})",
+                hint="the reset is authenticated with the current key. If it "
+                "answered 403 the stored key is no longer live; check the "
+                "pending store before re-running.",
+            )
+        new_key = body.get("apikey")
+        if (
+            not isinstance(new_key, str)
+            or len(new_key) != 32
+            or any(char not in "0123456789abcdef" for char in new_key.lower())
+        ):
+            raise RotationError(
+                f"{service}: the reset response carried no usable API key",
+                hint="the current key is still live; nothing has been changed "
+                "except SABnzbd's own config write. Re-run after checking the "
+                "service.",
+            )
+        if new_key == old_key:
+            raise RotationError(
+                f"{service}: the reset was accepted but the key is unchanged",
+                hint="the old key would not be proven dead, so nothing has "
+                "been written to a holder.",
+            )
+        return new_key
+
+    def _sabnzbd_restart(self, service: str, old_key: str, new_key: str) -> None:
+        """Ask SABnzbd to restart with the new key, then settle on it."""
+        status, _ = self._call(
+            self._ctx.host, service, "GET", "/api?mode=restart&output=json",
+            key=new_key, auth_transport="query", query_key_name="apikey",
+            transport=self._ctx.transport,
+        )
+        if status == 200:
+            return
+        # The running process may still be serving the reset's old key on some
+        # builds; one retry with the stored key is safer than a blind failure.
+        retry_status, _ = self._call(
+            self._ctx.host, service, "GET", "/api?mode=restart&output=json",
+            key=old_key, auth_transport="query", query_key_name="apikey",
+            transport=self._ctx.transport,
+        )
+        if retry_status != 200:
+            raise RotationError(
+                f"{service} would not restart (HTTP {status}, then "
+                f"{retry_status})",
+                hint="the new key is parked in the pending store. Restart "
+                "SABnzbd manually and re-run; do not mint again.",
+            )
+
+    def _mint_sabnzbd(self, step: Step) -> str:
+        """Reset SABnzbd's key, restart, and settle on the new value.
+
+        Measured 2026-10-31 on 5.1.3: set_apikey returns the new key, but the
+        old key may keep answering until the process restarts; after
+        mode=restart the new key answers 200 and the old key 403 on mode=queue.
+        The response is the only copy, so it is parked before the restart.
+        """
+        service = step.target
+        if self._ctx.minted is not None:
+            return f"{service}: key already minted by this run; nothing to redo"
+        expected = self._ctx.vault_value
+        if expected is None:
+            raise RotationError(
+                f"{service}: refusing to rotate with no stored value",
+                hint="the reset authenticates with the current key. Store the "
+                "credential and re-run; nothing has been changed.",
+            )
+        pending = self._ctx.pending
+        if pending is None:
+            raise RotationError(
+                f"{service}: refusing to rotate with no pending-secret store",
+                hint="the reset response is the only copy of the new key; a "
+                "crash before the vault write would lose it. Nothing has been "
+                "changed.",
+            )
+        name = self._ctx.credential.name
+        candidate = pending.get(name)
+        if candidate is not None and candidate.reveal() == expected:
+            pending.clear(name)
+            candidate = None
+
+        old_verdict, old_detail = self._authenticate_settled(service, expected)
+        if old_verdict == "unknown":
+            raise RotationError(
+                f"{service}: cannot ask whether the stored key is live "
+                f"({old_detail})",
+                hint="nothing has been changed.",
+            )
+        if candidate is not None:
+            candidate_verdict, candidate_detail = self._authenticate_settled(
+                service, candidate.reveal()
+            )
+        else:
+            candidate_verdict, candidate_detail = "absent", "no pending value"
+
+        if old_verdict == "dead" and candidate_verdict == "live":
+            self._ctx.minted = candidate
+            self._ctx.minted_service = service
+            self._ctx.resumed = True
+            self._confirm_old_key_dead(service, expected)
+            return "already-rotated: continuing with the pending key"
+        if old_verdict == "dead":
+            raise RotationError(
+                f"{service}: neither the stored key nor the pending key is "
+                f"confirmed live (stored: {old_detail}; pending: "
+                f"{candidate_detail})",
+                hint="the reset may have completed without a parked value. "
+                "Restore access and reset the key again; nothing has been "
+                "written to a holder.",
+            )
+
+        if candidate is None or candidate_verdict == "dead":
+            new_key = self._sabnzbd_reset(service, expected)
+            pending.set(name, Secret(new_key))
+            candidate = Secret(new_key)
+        elif candidate_verdict == "live":
+            # The reset happened and the old key has not been restarted away
+            # yet. The restart below settles it; this is the measured
+            # pre-restart state, not an ambiguity.
+            pass
+        else:
+            raise RotationError(
+                f"{service}: the pending key could not be checked safely "
+                f"({candidate_detail})",
+                hint="nothing has been written to a holder.",
+            )
+
+        self._sabnzbd_restart(service, expected, candidate.reveal())
+        self._await_restart_key(
+            service, old_key=expected, new_key=candidate.reveal(),
+            dead_detail="HTTP 403")
+        self._confirm_old_key_dead(service, expected)
+        self._ctx.minted = candidate
+        self._ctx.minted_service = service
+        self._ctx.resumed = False
+        if self._ctx.old_key_dead:
+            return "reset the key, restarted, and proved the old key dead"
+        return (
+            "reset the key and restarted; the old key was not proven dead, "
+            "so exercise-only confirmation will not be claimed"
+        )
+
+    def _bazarr_choice(self) -> str:
+        """A 32-hex key with at least one letter.
+
+        Bazarr's dynaconf coerces an all-numeric form value to int and answers
+        406. A 32-hex value is all digits about 3e-7 of the time; regenerate it
+        rather than hand the form a value the validator will coerce.
+        """
+        while True:
+            key = token_hex(16)
+            if not key.isdigit():
+                return key
+
+    def _bazarr_write(self, service: str, expected: str, candidate: Secret,
+                      pending: PendingSecrets, name: str) -> Secret:
+        """Write the chosen value, re-choosing it if the service rejects it.
+
+        A 406/422 is the form validator refusing the value, not the credential:
+        the old key is still live and nothing was written. Re-choosing is safe
+        only after re-proving that, so a write that did land despite its answer
+        is never overwritten with a second value. Any other status is raised as
+        before; an auth failure is never retried.
+        """
+        for attempt in range(1, MINT_VALUE_ATTEMPTS + 1):
+            status, _ = self._call(
+                self._ctx.host, service, "POST", "/api/system/settings",
+                body={"settings-auth-apikey": candidate.reveal()},
+                key=expected, auth_header="X-API-KEY",
+                auth_transport="header",
+                content_type="application/x-www-form-urlencoded",
+                transport=self._ctx.transport,
+            )
+            if status in (200, 204):
+                return candidate
+            if status not in (406, 422):
+                raise RotationError(
+                    f"{service} refused the settings write (HTTP {status})",
+                    hint="the old key is still live; nothing has been written "
+                    "to a holder. Re-run once the settings API accepts the "
+                    "write.",
+                )
+            still_live, detail = self._authenticate_settled(service, expected)
+            if still_live == "unknown":
+                raise RotationError(
+                    f"{service}: the settings write answered HTTP {status} but "
+                    f"whether the stored key still authenticates could not be "
+                    f"checked ({detail})",
+                    hint="the chosen value is parked. Re-run once the service "
+                    "answers; do not mint again until it does.",
+                )
+            if still_live != "live":
+                raise RotationError(
+                    f"{service}: the settings write answered HTTP {status} but "
+                    f"the stored key no longer authenticates ({detail})",
+                    hint="the value may have been applied despite the answer. "
+                    "The chosen value is parked; re-run to resume it, or "
+                    "restore access before minting again.",
+                )
+            if attempt == MINT_VALUE_ATTEMPTS:
+                # A rejected value was never applied, so leaving it parked
+                # would make the next run resume a value the service refuses.
+                pending.clear(name)
+                raise RotationError(
+                    f"{service} refused the settings write (HTTP {status}) "
+                    f"after {MINT_VALUE_ATTEMPTS} chosen values",
+                    hint="the old key is still live; nothing has been written "
+                    "to a holder. The service's value rule is narrower than a "
+                    "32-hex key; check it before re-running.",
+                )
+            pending.clear(name)
+            candidate = Secret(self._bazarr_choice())
+            pending.set(name, candidate)
+            log_line(
+                f"      {service} rejected the chosen value (HTTP {status}); "
+                f"choosing another ({attempt + 1}/{MINT_VALUE_ATTEMPTS})"
+            )
+        raise AssertionError("unreachable: the loop either returns or raises")
+
+    def _mint_bazarr(self, step: Step) -> str:
+        """Replace Bazarr's own API key with a chosen form value.
+
+        Measured 2026-10-31 on 1.6.2: `settings-auth-apikey` replaces the key
+        in the running process with no restart; the new key answers 200 and the
+        old key 401 immediately. The chosen value is parked before the write.
+        """
+        service = step.target
+        if self._ctx.minted is not None:
+            return f"{service}: key already minted by this run; nothing to redo"
+        expected = self._ctx.vault_value
+        if expected is None:
+            raise RotationError(
+                f"{service}: refusing to rotate with no stored value",
+                hint="the settings write authenticates with the current key. "
+                "Store the credential and re-run; nothing has been changed.",
+            )
+        pending = self._ctx.pending
+        if pending is None:
+            raise RotationError(
+                f"{service}: refusing to rotate with no pending-secret store",
+                hint="the chosen key must survive a crash between the form "
+                "write and the vault write. Nothing has been changed.",
+            )
+        name = self._ctx.credential.name
+        candidate = pending.get(name)
+        if candidate is not None and candidate.reveal() == expected:
+            pending.clear(name)
+            candidate = None
+
+        old_verdict, old_detail = self._authenticate_settled(service, expected)
+        if old_verdict == "unknown":
+            raise RotationError(
+                f"{service}: cannot ask whether the stored key is live "
+                f"({old_detail})",
+                hint="nothing has been changed.",
+            )
+        if candidate is not None:
+            candidate_verdict, candidate_detail = self._authenticate_settled(
+                service, candidate.reveal()
+            )
+        else:
+            candidate_verdict, candidate_detail = "absent", "no pending value"
+
+        if old_verdict == "dead" and candidate_verdict == "live":
+            self._ctx.minted = candidate
+            self._ctx.minted_service = service
+            self._ctx.resumed = True
+            self._confirm_old_key_dead(service, expected)
+            return "already-rotated: continuing with the pending key"
+        if old_verdict == "dead":
+            raise RotationError(
+                f"{service}: neither the stored key nor the pending key is "
+                f"confirmed live (stored: {old_detail}; pending: "
+                f"{candidate_detail})",
+                hint="restore access and re-run; nothing has been written to "
+                "a holder.",
+            )
+        if candidate_verdict == "unknown":
+            raise RotationError(
+                f"{service}: the pending key could not be checked safely "
+                f"({candidate_detail})",
+                hint="nothing has been written to a holder.",
+            )
+        if candidate_verdict == "live":
+            raise RotationError(
+                f"{service}: both the stored key and the pending key "
+                "authenticate",
+                hint="Bazarr has one API key. This is ambiguous, so rotating "
+                "would invalidate whichever one is actually live. Wait for the "
+                "service to settle and re-run.",
+            )
+        if candidate is None:
+            candidate = Secret(self._bazarr_choice())
+            pending.set(name, candidate)
+
+        candidate = self._bazarr_write(
+            service, expected, candidate, pending, name)
+        verdict, detail = self._authenticate_settled(
+            service, candidate.reveal())
+        if verdict != "live":
+            raise RotationError(
+                f"{service}: the new key does not authenticate ({detail})",
+                hint="the chosen value is parked. Re-run to resume; do not "
+                "mint again.",
+            )
+        self._confirm_old_key_dead(service, expected)
+        if not self._ctx.old_key_dead:
+            raise RotationError(
+                f"{service}: the old key still authenticates after the write",
+                hint="the running process did not adopt settings-auth-apikey; "
+                "the chosen value is parked. Re-run once it settles.",
+            )
+        self._ctx.minted = candidate
+        self._ctx.minted_service = service
+        self._ctx.resumed = False
+        return "chose a new key, wrote it to the running process, and proved the old key dead"
+
     def _mint_seerr(self, step: Step) -> str:
         """Replace Seerr's own API key and park the new one at once.
 
@@ -2446,6 +2831,8 @@ class Executor:
                 f"{step.target}: no writer known for that slot",
                 hint=f"known: {', '.join(sorted(known_systems()))}",
             )
+        if described.write == "bazarr_api":
+            return self._propagate_bazarr(step, described)
         if described.write == "seerr_api":
             return self._propagate_seerr(step, described)
         if described.write == "qui_api":
@@ -2664,6 +3051,118 @@ class Executor:
             f"{written} row(s) written, not proven: the holder's API exposes "
             f"no equality readback and {written - confirmed} row(s) lack an "
             "exercise confirmation"
+        )
+
+    def _propagate_bazarr(self, step: Step, holder: Holder) -> str:
+        """Write a Sonarr/Radarr key into Bazarr's settings and read it back.
+
+        Bazarr's settings endpoint is a form POST, and its GET returns the
+        value the running process holds under `sonarr.apikey` / `radarr.apikey`,
+        so the confirmation is a process read-equal rather than a file read or
+        a guessed test route. Measured on 1.6.2.
+        """
+        if self._ctx.minted is None:
+            raise RotationError(
+                f"nothing to propagate for {step.target}: no key was minted",
+                hint="this means the mint step did not run; refusing to write a "
+                "stale value over a working one",
+            )
+        row = self._row_name(step.target)
+        if row is None:
+            raise RotationError(
+                f"{step.target}: does not name which Bazarr settings section "
+                "to write. Bazarr holds both Sonarr and Radarr keys, so the "
+                "target needs a row qualifier"
+            )
+        minted = self._ctx.minted.reveal()
+        try:
+            try:
+                api_key = self._service_key(holder.system)
+            except (ConfigError, TransportError) as exc:
+                raise RotationError(
+                    f"cannot read {holder.system}'s own API key ({exc})",
+                    hint="store Bazarr's own key before rotating a credential "
+                    "it holds",
+                ) from exc
+            if not api_key:
+                raise RotationError(
+                    f"no API key for {holder.system!r}; nothing could "
+                    "authenticate the settings write",
+                    hint="store Bazarr's own key before rotating a credential "
+                    "it holds",
+                )
+
+            status, before = self._call(
+                self._ctx.host, holder.system, "GET", holder.readback_path,
+                key=api_key, auth_header=holder.auth_header_name,
+                auth_transport=holder.auth_transport,
+                transport=self._ctx.transport,
+            )
+            if status != 200 or not isinstance(before, dict):
+                raise RotationError(
+                    f"could not read Bazarr's {row} settings (HTTP {status})",
+                    hint="the old key is already revoked; restore access and "
+                    "re-run to finish",
+                )
+            section = before.get(row)
+            if not isinstance(section, dict):
+                raise RotationError(
+                    f"Bazarr has no {row} settings entry, so there is nothing "
+                    "to update",
+                    hint="the old key is already revoked; restore the settings, "
+                    "then re-run to finish",
+                )
+
+            field = holder.field.format(service=row)
+            # Bazarr's dynaconf coerces an all-numeric form value to int and
+            # answers 406. A real 32-hex key is all digits about 3e-7 of the
+            # time; that write fails loudly rather than reporting confirmed.
+            status, _ = self._call(
+                self._ctx.host, holder.system, "POST", holder.api_path,
+                body={field: minted}, key=api_key,
+                auth_header=holder.auth_header_name,
+                auth_transport=holder.auth_transport,
+                transport=self._ctx.transport,
+                content_type="application/x-www-form-urlencoded",
+            )
+            if status not in (200, 204):
+                raise RotationError(
+                    f"Bazarr refused the {row} settings write (HTTP {status})",
+                    hint="the mint already ran and the old key is revoked. "
+                    "Re-run once the settings API accepts the write.",
+                )
+            status, after = self._call(
+                self._ctx.host, holder.system, "GET", holder.readback_path,
+                key=api_key, auth_header=holder.auth_header_name,
+                auth_transport=holder.auth_transport,
+                transport=self._ctx.transport,
+            )
+            if status != 200 or not isinstance(after, dict):
+                raise RotationError(
+                    f"Bazarr would not read its {row} settings back "
+                    f"(HTTP {status})",
+                    hint="the old key is already revoked; restore access and "
+                    "re-run to finish",
+                )
+            observed = (after.get(row) or {}).get(holder.readback_field)
+            if observed != minted:
+                raise RotationError(
+                    f"Bazarr's running process does not report the new {row} "
+                    "key",
+                    hint="the write was accepted but the process value differs; "
+                    "re-run once the settings API settles",
+                )
+        except RotationError as exc:
+            self._ctx.holders.append(
+                HolderOutcome(step.target, row, "failed", str(exc))
+            )
+            raise
+        self._ctx.holders.append(
+            HolderOutcome(step.target, row, "confirmed", "", "read-equal")
+        )
+        return (
+            f"written to bazarr.settings[{row}] over the API and confirmed "
+            "against the running Bazarr"
         )
 
     def _propagate_seerr(self, step: Step, holder: Holder) -> str:
@@ -3923,7 +4422,8 @@ class Executor:
             )
 
     def _await_restart_key(
-        self, service: str, *, old_key: str, new_key: str
+        self, service: str, *, old_key: str, new_key: str,
+        dead_detail: str = "HTTP 401",
     ) -> None:
         """Wait until the new key is accepted and the old key is not still live.
 
@@ -3941,10 +4441,10 @@ class Executor:
             old_verdict, last_old = self._authenticate(service, old_key)
             new_verdict, last_new = self._authenticate(service, new_key)
             if new_verdict == "live" and old_verdict != "live":
-                # Only a 401 proves the old key is dead. A 403 or an unknown
-                # answer is not evidence that it is still live, so the run
-                # proceeds - but it must not use exercise-only confirmation.
-                self._ctx.old_key_dead = last_old == "HTTP 401"
+                # Only the service's measured rejection proves the old key is
+                # dead. A bare 403 is not a credential verdict in general; the
+                # callers that measured it pass the service's own answer.
+                self._ctx.old_key_dead = last_old == dead_detail
                 if not self._ctx.old_key_dead:
                     log_line(
                         f"      {service}: the old key was {last_old}, which "
@@ -4009,6 +4509,9 @@ class Executor:
             }
         if service == "seerr":
             return {"key": key, "auth_header": "X-API-Key"}
+        if service == "sabnzbd":
+            return {"key": key, "auth_transport": "query",
+                    "query_key_name": "apikey"}
         if service == "grafana":
             # A Grafana Bearer token; Basic admin auth is a different credential
             # and is not used by this build.
@@ -4098,7 +4601,9 @@ class Executor:
             # route this check calls), so only those enable the exercise-only
             # reading.
             dead_detail = (
-                "HTTP 403" if service in ("qbittorrent", "seerr") else "HTTP 401"
+                "HTTP 403"
+                if service in ("qbittorrent", "seerr", "sabnzbd")
+                else "HTTP 401"
             )
             if verdict == "dead" and detail == dead_detail:
                 self._ctx.old_key_dead = True
@@ -4805,6 +5310,8 @@ def _servarr_call(
     auth_transport: str = "header", timeout: int | None = None,
     versioned: bool = True, follow_redirects: bool = True,
     extra_headers: Mapping[str, str] | None = None,
+    content_type: str = "application/json",
+    query_key_name: str = "ApiKey",
 ) -> tuple[int, object]:
     """Call a Servarr API, from the host that owns it.
 
@@ -4823,6 +5330,8 @@ def _servarr_call(
     exactly what the preflight exists to find. `timeout` bounds the transport
     call itself, so a caller answering a human (the Services view) can cap a
     blackholed host instead of inheriting the deployment's command timeout.
+    `content_type` names the body encoding: JSON for the APIs, form encoding
+    for Bazarr's settings route.
     """
     version = api_version(service)
     # Jellyfin has no `/api/{version}` prefix - its routes are `/Auth/Keys` -
@@ -4843,7 +5352,7 @@ def _servarr_call(
         # Done here rather than in the generated script: it is string building the
         # caller can read, and it keeps `__import__` out of the probe.
         sep = "&" if "?" in url else "?"
-        url = f"{url}{sep}ApiKey={urllib.parse.quote(str(key))}"
+        url = f"{url}{sep}{query_key_name}={urllib.parse.quote(str(key))}"
 
     if follow_redirects:
         # The default path is the plain urlopen the wire-body tests patch;
@@ -4890,9 +5399,16 @@ def _servarr_call(
         f"auth_header = {auth_header!r}\n"
         f"user_agent = {USER_AGENT!r}\n"
         f"extra_headers = {dict(extra_headers or {})!r}\n"
-        "data = json.dumps(body).encode() if body is not None else None\n"
+        f"content_type = {content_type!r}\n"
+        "if body is None:\n"
+        "    data = None\n"
+        "elif content_type == 'application/x-www-form-urlencoded':\n"
+        "    import urllib.parse\n"
+        "    data = urllib.parse.urlencode(body).encode()\n"
+        "else:\n"
+        "    data = json.dumps(body).encode()\n"
         "request = urllib.request.Request(url, data=data, method=method)\n"
-        "request.add_header('Content-Type', 'application/json')\n"
+        "request.add_header('Content-Type', content_type)\n"
         "request.add_header('User-Agent', user_agent)\n"
         "if key is not None:\n"
         "    request.add_header(auth_header, key)\n"

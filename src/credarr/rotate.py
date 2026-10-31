@@ -140,6 +140,10 @@ def plan_rotation(credential: Credential, host: HostConfig) -> RotationPlan:
         _plan_jellyfin_keys(plan)
     elif mechanism == "qbittorrent_rotate_api":
         _plan_qbittorrent(plan)
+    elif mechanism == "sabnzbd_rotate_api":
+        _plan_sabnzbd(plan)
+    elif mechanism == "bazarr_rotate_api":
+        _plan_bazarr(plan)
     elif mechanism == "seerr_regenerate":
         _plan_seerr_self(plan)
     elif mechanism in REISSUE_MECHANISMS:
@@ -396,6 +400,66 @@ def _plan_qbittorrent(plan: RotationPlan) -> None:
     )
 
 
+def _plan_sabnzbd(plan: RotationPlan) -> None:
+    """Rotate SABnzbd's API key through reset and restart.
+
+    `mode=config&name=set_apikey` returns a new key, but the running process
+    may keep serving the old one until it restarts. `mode=restart` is the point
+    that settles the swap; only after it does the old key answer 403. The
+    response is the only copy of the new key, so it is parked before restart.
+    """
+    service = service_for(plan.credential)
+    source = MINT_SOURCES.get(service)
+    if source is None or source.mechanism != "sabnzbd_rotate":
+        plan.blocked_by.append(
+            f"unknown service {service!r} for write.mechanism "
+            "'sabnzbd_rotate_api'"
+        )
+        return
+    plan.revokes_before_holders = True
+    plan.mint_via = "rotate"
+    plan.add(
+        StepKind.MINT,
+        service,
+        "reset the API key and restart SABnzbd",
+        reversible=False,
+        reason="SABnzbd's set_apikey response carries the new value, but the "
+        "old key can stay live until mode=restart. The new value is parked "
+        "before the restart, and only an answered 403 for the old key after "
+        "the restart counts as dead. Every holder holds a dead key until it "
+        "is reached.",
+    )
+
+
+def _plan_bazarr(plan: RotationPlan) -> None:
+    """Rotate Bazarr's own API key with a chosen form value.
+
+    `POST /api/system/settings` with `settings-auth-apikey` replaces the key in
+    the running process; the old key answers 401 immediately and no restart is
+    needed. The value is chosen here, so it is parked before the write.
+    """
+    service = service_for(plan.credential)
+    source = MINT_SOURCES.get(service)
+    if source is None or source.mechanism != "bazarr_rotate":
+        plan.blocked_by.append(
+            f"unknown service {service!r} for write.mechanism "
+            "'bazarr_rotate_api'"
+        )
+        return
+    plan.revokes_before_holders = True
+    plan.mint_via = "rotate"
+    plan.add(
+        StepKind.MINT,
+        service,
+        "POST /api/system/settings with settings-auth-apikey",
+        reversible=False,
+        reason="Bazarr has one API key. The chosen value is parked before the "
+        "form write; the running process serves it immediately and the old key "
+        "answers 401 with no restart. Every holder holds a dead key until it "
+        "is reached.",
+    )
+
+
 def _plan_seerr_self(plan: RotationPlan) -> None:
     """Rotate Seerr's own API key over its settings API.
 
@@ -610,6 +674,17 @@ def _plan_consumers(plan: RotationPlan) -> None:
                 "the running process",
                 reason="the API updates the in-memory settings directly, so no "
                 "restart and no file write are needed",
+            )
+            continue
+
+        if described.write == "bazarr_api":
+            plan.add(
+                StepKind.PROPAGATE,
+                str(target),
+                "POST the new value to Bazarr's settings form and read it "
+                "back from the running process",
+                reason="the settings API updates the running process directly, "
+                "so no restart and no file write are needed",
             )
             continue
 

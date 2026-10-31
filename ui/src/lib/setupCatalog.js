@@ -17,7 +17,7 @@ const SLOT_META = {
   },
   download_clients: {
     label: "download clients",
-    note: "Download-client rows; written over the Servarr API. Sonarr and Radarr have a measured test route; no equality readback is exposed.",
+    note: "Download-client rows; written over the Servarr API. qBittorrent and SABnzbd rows in Sonarr and Radarr have a measured test route; no equality readback is exposed.",
     proof: "API write; test where measured",
     mechanism: "",
     writer: true,
@@ -32,6 +32,13 @@ const SLOT_META = {
   settings_json: {
     label: "settings",
     note: "A row in Seerr's settings; the running process reports it over its own API.",
+    proof: "running service",
+    mechanism: "process_api",
+    writer: true,
+  },
+  settings: {
+    label: "settings",
+    note: "A Sonarr or Radarr key in Bazarr's settings; the running process reports it over its own API.",
     proof: "running service",
     mechanism: "process_api",
     writer: true,
@@ -82,28 +89,28 @@ const SERVICE_DEFS = [
     label: "Prowlarr",
     blurb: "Indexer manager.",
     mint: { mechanism: "servarr_command" },
-    slots: ["indexers", "download_clients", "applications"],
+    slots: ["applications"],
   },
   {
     id: "lidarr",
     label: "Lidarr",
     blurb: "Music library manager.",
     mint: { mechanism: "servarr_command" },
-    slots: ["indexers", "download_clients"],
+    slots: ["indexers"],
   },
   {
     id: "readarr",
     label: "Readarr",
     blurb: "Book library manager.",
     mint: { mechanism: "servarr_command" },
-    slots: ["indexers", "download_clients"],
+    slots: ["indexers"],
   },
   {
     id: "whisparr",
     label: "Whisparr",
     blurb: "Adult-media library manager.",
     mint: { mechanism: "servarr_command" },
-    slots: ["indexers", "download_clients"],
+    slots: ["indexers"],
   },
   {
     id: "jellyfin",
@@ -125,6 +132,14 @@ const SERVICE_DEFS = [
     blurb: "Its API key is held by qui and *arr download clients.",
     mint: { mechanism: "qbittorrent_rotate_api" },
     slots: [],
+  },
+  {
+    id: "sabnzbd",
+    label: "SABnzbd",
+    blurb: "Usenet downloader; its API key is held by Sonarr and Radarr.",
+    mint: { mechanism: "sabnzbd_rotate_api" },
+    slots: [],
+    port: 8080,
   },
   {
     id: "homepage",
@@ -149,6 +164,15 @@ const SERVICE_DEFS = [
     blurb: "Holds a qBittorrent credential.",
     mint: null,
     slots: ["instance"],
+  },
+  {
+    id: "bazarr",
+    label: "Bazarr",
+    blurb:
+      "Holds Sonarr and Radarr keys and mints its own key; its settings API reports the copies back.",
+    mint: { mechanism: "bazarr_rotate_api" },
+    slots: ["settings"],
+    port: 6767,
   },
   {
     id: "grafana",
@@ -199,6 +223,20 @@ export const TARGETS = SERVICE_CATALOG.flatMap((service) => service.targets);
 
 export const TARGET_BY_KEY = new Map(TARGETS.map((target) => [target.key, target]));
 
+// Targets the engine still recognises generically but the wizard must not
+// offer, because these slots cannot hold the credential a person would attach
+// to them: Prowlarr's own indexer/download-client rows do not hold Prowlarr's
+// key, and Lidarr/Readarr/Whisparr download clients have no apiKey field for
+// qBittorrent's key. The wizard's suggestions and editor stay honest even
+// while the engine's generic registry keeps its compatibility set.
+export const WIZARD_EXCLUDED_TARGETS = new Set([
+  "prowlarr.indexers",
+  "prowlarr.download_clients",
+  "lidarr.download_clients",
+  "readarr.download_clients",
+  "whisparr.download_clients",
+]);
+
 export function serviceById(id) {
   return SERVICE_BY_ID.get(id) ?? null;
 }
@@ -242,6 +280,10 @@ export function describeHolder(holder, ownerLabel) {
         ? `A copy of ${owner}'s key is in ${service}'s ${qualifierName} download client.`
         : `A copy of ${owner}'s key is in each of ${service}'s download clients.`;
     case "settings_json":
+      return qualifier
+        ? `A copy of ${owner}'s key is in ${service}'s ${qualifierName} settings.`
+        : `A copy of ${owner}'s key is in ${service}'s settings.`;
+    case "settings":
       return qualifier
         ? `A copy of ${owner}'s key is in ${service}'s ${qualifierName} settings.`
         : `A copy of ${owner}'s key is in ${service}'s settings.`;
@@ -380,13 +422,16 @@ export function mechanismOptions(ownerId) {
 function hasConfirmation(service, slot) {
   // Keep this in step with writers.py: a confirmation route is a measured
   // holder test or a running-process read-back, not merely a writer.
+  if (slot === "settings") return service === "bazarr";
   if (slot === "settings_json" || slot === "instance" || slot === "applications") {
     return true;
   }
-  return (
-    (slot === "indexers" || slot === "download_clients") &&
-    (service === "sonarr" || service === "radarr")
-  );
+  if (slot === "indexers") {
+    return ["sonarr", "radarr", "lidarr", "readarr", "whisparr"].includes(
+      service,
+    );
+  }
+  return slot === "download_clients" && ["sonarr", "radarr"].includes(service);
 }
 
 export function holderSuggestions(ownerId) {
@@ -418,6 +463,7 @@ export function holderSuggestions(ownerId) {
     add("prowlarr", "applications", cap, `Prowlarr's ${cap} application row.`);
     if (ownerId === "sonarr" || ownerId === "radarr") {
       add("seerr", "settings_json", ownerId, `Seerr's ${cap} settings row.`);
+      add("bazarr", "settings", ownerId, `Bazarr's ${cap} settings row.`);
     }
     if (["sonarr", "radarr", "lidarr"].includes(ownerId)) {
       add(
@@ -435,11 +481,16 @@ export function holderSuggestions(ownerId) {
     }
   } else if (ownerId === "jellyfin") {
     add("seerr", "settings_json", "jellyfin", "Seerr's Jellyfin settings row.");
+  } else if (ownerId === "sabnzbd") {
+    for (const service of ["sonarr", "radarr"]) {
+      add(service, "download_clients", "SABnzbd:apiKey", `SABnzbd's API key in a ${service} download-client row.`);
+    }
   } else if (ownerId === "qbittorrent") {
-    for (const service of SERVARR_LIBRARY) {
-      // A qBittorrent API key belongs in the apiKey field. The password field
-      // is for a username/password download client, not a second copy of this
-      // key; suggesting it created a duplicate, unverifiable holder.
+    for (const service of ["sonarr", "radarr"]) {
+      // Only Sonarr and Radarr expose an apiKey field on the qBittorrent
+      // download-client schema. Lidarr, Readarr and Whisparr are
+      // username/password only, so suggesting the API key there created an
+      // unverifiable holder.
       add(service, "download_clients", "qBittorrent:apiKey", `qBittorrent's API key in a ${service} download-client row.`);
     }
     add("qui", "instance", "qBittorrent", "qui's stored qBittorrent credential.");

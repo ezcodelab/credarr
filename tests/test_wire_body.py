@@ -160,3 +160,26 @@ def test_a_string_that_looks_like_code_stays_a_string():
                   key="k", transport=transport)
 
     assert json.loads(transport.sent_body) == body
+
+
+def test_a_form_body_is_urlencoded():
+    """Bazarr's settings route reads request.form, not JSON.
+
+    The generated probe must encode the mapping and say so in Content-Type;
+    sending JSON would be a 406 from the validator, not a credential refusal.
+    """
+    host = HostConfig(
+        name="t", urls={"bazarr": "http://127.0.0.1:6767"})
+    transport = _CapturingTransport()
+    _servarr_call(
+        host, "bazarr", "POST", "/api/system/settings",
+        body={"settings-sonarr-apikey": "a1b2c3d4"}, key="k",
+        transport=transport,
+        content_type="application/x-www-form-urlencoded",
+    )
+
+    assert transport.sent_body == b"settings-sonarr-apikey=a1b2c3d4"
+    assert (
+        transport.sent_headers["Content-type"]
+        == "application/x-www-form-urlencoded"
+    )

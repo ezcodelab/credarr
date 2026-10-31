@@ -28,6 +28,9 @@ for _system in ("sonarr", "radarr", "prowlarr", "lidarr", "readarr", "whisparr")
         TARGETS[f"{_system}.{_slot}"] = _description
 TARGETS["prowlarr.applications"] = "application rows over the Prowlarr API"
 TARGETS["seerr.settings_json"] = "settings API, read back from the running process"
+TARGETS["bazarr.settings"] = (
+    "Bazarr's Sonarr/Radarr settings, read back from the running process"
+)
 TARGETS["qui.instance"] = "qBittorrent instance, confirmed by qui's connection test"
 
 # Profilarr stores each Arr instance's API key in `arr_instances.api_key`. Its

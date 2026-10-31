@@ -422,6 +422,140 @@ class Auditor:
             observed_count=len(rows),
         ), ""
 
+    def _qui_test(
+        self, consumer: Consumer, canonical: Secret
+    ) -> ConsumerResult | None:
+        """Ask qui to connect to qBittorrent with the value it stores.
+
+        qui encrypts instance credentials, so its API cannot report the value
+        back. `POST /instances/{id}/test` is the measured exercise proof, the
+        same ceiling a Servarr `indexer/test` gives: the holder accepted the
+        value it holds, not that it equals the saved one. `None` means this is
+        not a qui-shaped holder, so the caller keeps its other branches.
+        """
+        holder = holder_for(consumer.target.system, consumer.target.slot)
+        if (
+            holder is None
+            or holder.readback != "qui_test"
+            or not holder.api_path
+            or not holder.readback_path
+        ):
+            return None
+        service = consumer.target.system
+        host = self._config.host(self._host_of(consumer))
+        if service not in host.urls:
+            return ConsumerResult(
+                consumer, Status.UNVERIFIABLE,
+                detail=f"the host declares no URL for {service}; this copy was "
+                "not compared",
+                reason="no_url",
+            )
+        key = self._service_key(service)
+        if key is None:
+            return ConsumerResult(
+                consumer, Status.UNVERIFIABLE,
+                detail=f"no stored key for {service}, so its instance API "
+                "cannot be asked to test this copy; this is not a match",
+                reason="no_service_key",
+            )
+        secret = key.reveal()
+        transport = build_transport()
+
+        def unconfirmed(text: str, code: str) -> ConsumerResult:
+            return ConsumerResult(
+                consumer, Status.UNVERIFIABLE,
+                detail=f"{text}; the value was not read back, so equality with "
+                "the saved value is not proven",
+                reason=code,
+            )
+
+        try:
+            status, rows = _servarr_call(
+                host, service, "GET", f"/{holder.api_path.strip('/')}",
+                key=secret, auth_header="X-API-Key", transport=transport,
+                timeout=EXERCISE_TIMEOUT,
+            )
+        except CredctlError as exc:
+            return unconfirmed(
+                "the holder's API could not be read for a liveness test "
+                f"({scrub_url_credentials(scrub(str(exc), secret, canonical))})",
+                "unreachable",
+            )
+        if status != 200 or not isinstance(rows, list):
+            reason = scrub_url_credentials(
+                scrub(_explain(rows), secret, canonical)
+            ) or f"HTTP {status}"
+            return unconfirmed(
+                f"the holder's API did not list its instances for a liveness "
+                f"test ({reason})",
+                "unreachable",
+            )
+
+        rows = [row for row in rows if isinstance(row, dict)]
+        selector = parse_row_selector(str(consumer.target))
+        if selector is not None:
+            rows = [
+                row for row in rows
+                if str(row.get("name", "")) == selector.row
+            ]
+            if not rows:
+                return unconfirmed(
+                    f"the holder's API lists no instance named {selector.row!r}",
+                    "row_missing",
+                )
+        if len(rows) != consumer.count:
+            return ConsumerResult(
+                consumer, Status.UNVERIFIABLE,
+                detail=f"declared {consumer.count} cop"
+                f"{'y' if consumer.count == 1 else 'ies'}, the holder's API "
+                f"lists {len(rows)} instance(s); liveness cannot confirm the "
+                "declared copies",
+                reason="count_mismatch",
+                observed_count=len(rows),
+            )
+        for row in rows:
+            instance_id = row.get("id")
+            if not isinstance(instance_id, int):
+                return unconfirmed(
+                    "an instance has no id, so it cannot be tested",
+                    "liveness_inconclusive",
+                )
+            path = holder.readback_path.replace("{id}", str(instance_id))
+            try:
+                tested, answer = _servarr_call(
+                    host, service, "POST", path, key=secret,
+                    auth_header="X-API-Key", transport=transport,
+                    timeout=EXERCISE_TIMEOUT,
+                )
+            except CredctlError as exc:
+                return unconfirmed(
+                    f"instance {row.get('name')!r} could not be tested "
+                    f"({scrub_url_credentials(scrub(str(exc), secret, canonical))})",
+                    "unreachable",
+                )
+            if tested != 200 or not isinstance(answer, dict):
+                return unconfirmed(
+                    f"instance {row.get('name')!r} test answered {tested}",
+                    "liveness_inconclusive",
+                )
+            if answer.get("connected") is not True:
+                message = scrub_url_credentials(scrub(
+                    _explain(answer), secret, canonical
+                ))
+                return unconfirmed(
+                    f"instance {row.get('name')!r} refused to connect with its "
+                    f"stored value ({message or 'no reason given'})",
+                    "liveness_rejected",
+                )
+        return ConsumerResult(
+            consumer, Status.LIVE,
+            detail=f"the holder's own test connected with the stored value for "
+            f"{len(rows)} instance(s); the value was not read back, so "
+            "equality with the saved value is not proven",
+            reason="live",
+            observed_count=len(rows),
+        )
+
     def _process_readback(
         self, consumer: Consumer, canonical: Secret, want: str
     ) -> ConsumerResult:
@@ -499,6 +633,61 @@ class Auditor:
                 "unreachable",
             )
 
+        if holder.readback_shape == "section":
+            if not isinstance(body, dict):
+                return unconfirmed(
+                    f"the {service} settings API returned an unexpected shape",
+                    "unreachable",
+                )
+            section = body.get(selector.row)
+            if not isinstance(section, dict) or not section:
+                return ConsumerResult(
+                    consumer, Status.MISSING,
+                    detail=f"the running service reports no {selector.row!r} "
+                    "entry carrying an API key",
+                    reason="row_missing",
+                    observed_count=0,
+                )
+            value = section.get(holder.readback_field)
+            if not isinstance(value, str) or not value or set(value) == {"*"}:
+                return unconfirmed(
+                    f"the {service} settings API returned no readable API key",
+                    "no_readback",
+                )
+            observation = Observation(
+                target=consumer.target.key,
+                label=selector.row,
+                secret=Secret(value),
+                field=holder.readback_field,
+            )
+            fingerprint = self._fp.of(observation.secret)
+            if consumer.count != 1:
+                return ConsumerResult(
+                    consumer, Status.DRIFT, (observation,), (fingerprint,),
+                    detail=f"the running service reports 1 {selector.row!r} "
+                    f"entry where {consumer.count} copies were declared",
+                    reason="count_mismatch",
+                    observed_count=1,
+                )
+            if fingerprint != want:
+                return ConsumerResult(
+                    consumer, Status.DRIFT, (observation,), (fingerprint,),
+                    detail="1 of 1 live copies differ from the saved value",
+                    reason="value_drift",
+                    mismatched=(
+                        Mismatch(label=selector.row,
+                                 field=holder.readback_field,
+                                 fingerprint=fingerprint),
+                    ),
+                    observed_count=1,
+                )
+            return ConsumerResult(
+                consumer, Status.MATCH, (observation,), (fingerprint,),
+                detail=f"the running {service} process reports the saved value",
+                reason="match",
+                observed_count=1,
+            )
+
         items = [body] if isinstance(body, dict) else body
         if not isinstance(items, list):
             return unconfirmed(
@@ -516,10 +705,8 @@ class Auditor:
                 reason="row_missing",
                 observed_count=0,
             )
-        # shortcut: the measured process_api holder (Seerr) reports `apiKey`;
-        # a second holder with another field needs that field on Holder.
         values = [
-            item.get("apiKey") for item in rows
+            item.get(holder.readback_field) for item in rows
         ]
         values = [
             value for value in values
@@ -536,7 +723,7 @@ class Auditor:
                 target=consumer.target.key,
                 label=selector.row,
                 secret=Secret(value),
-                field="apiKey",
+                field=holder.readback_field,
             )
             for value in values
         )
@@ -660,6 +847,10 @@ class Auditor:
             # manual copy by design. It is shown as `manual` and does not make
             # an otherwise measured credential look unhealthy.
             return ConsumerResult(consumer, Status.INDIRECT, reason="manual_copy")
+
+        qui = self._qui_test(consumer, canonical)
+        if qui is not None:
+            return qui
 
         missing = "no_readback"
         if holder.test_path:

@@ -40,6 +40,7 @@ def test_the_versions_are_pinned():
     assert provenance.measured_version("grafana") == "12.1.1"
     assert provenance.measured_version("arcane") == "2.17.0"
     assert provenance.measured_version("gitea") == "1.27.2"
+    assert provenance.measured_version("bazarr") == "1.6.2"
     # No capability at all, which is a different state from an unrecorded version.
     assert provenance.measured_version("homepage") is None
     assert provenance.measured_version("profilarr") is None
@@ -66,6 +67,7 @@ def test_the_images_are_pinned_only_where_a_live_run_recorded_one():
     assert provenance.measured_image("jellyfin").startswith("sha256:")
     assert provenance.measured_image("gitea").startswith("sha256:")
     assert provenance.measured_image("arcane").startswith("sha256:")
+    assert provenance.measured_image("bazarr").startswith("sha256:")
     assert provenance.measured_image("homepage") is None
     assert provenance.measured_image("no_such_service") is None
     # Every pinned image belongs to a target or mint this build has, so a
@@ -86,6 +88,7 @@ def test_the_text_is_generated_from_the_metadata(monkeypatch):
 
 def test_a_recorded_version_with_a_writer_may_display_managed():
     assert provenance.managed("seerr", "settings_json")
+    assert provenance.managed("bazarr", "settings")
     assert provenance.managed("prowlarr", "indexers")
     assert provenance.managed("sonarr", "indexers")
     assert provenance.managed("radarr", "indexers")

@@ -82,9 +82,13 @@ class Holder:
     ignores it, so a credential that arrives there never reaches the check -
     a 401 indistinguishable from a rejected credential.
 
-    strategy keys     "servarr_api" | "seerr_api" | "qui_api"
+    strategy keys     "servarr_api" | "seerr_api" | "bazarr_api" | "qui_api"
     readback keys     "process_api" | "qui_test"
     auth keys         "header" | "query" | "bearer"
+
+    `readback_shape` is the process API's shape: Seerr returns a list of rows,
+    Bazarr returns one object per service name. `readback_field` is the field
+    that carries the key in that shape.
     """
 
     system: str
@@ -98,11 +102,14 @@ class Holder:
     field: str = ""
     # readback-strategy data
     readback_path: str = ""
+    readback_shape: str = "list"       # "list" | "section"
+    readback_field: str = "apiKey"
     # The app's own connection-test route, relative to the API version, or
     # empty when no endpoint has been measured for this holder. Measured:
-    # Sonarr and Radarr `indexer/test`, Prowlarr `applications/test`, and
-    # Sonarr/Radarr `downloadclient/test` for qBittorrent API keys. A missing
-    # route is not a credential verdict.
+    # all five library managers' `indexer/test` (Prowlarr excluded: its own
+    # indexer rows are not a holder of its key), Prowlarr `applications/test`,
+    # and Sonarr/Radarr `downloadclient/test` for qBittorrent API keys. A
+    # missing route is not a credential verdict.
     test_path: str = ""
 
 
@@ -137,6 +144,11 @@ API_VERSIONS: dict[str, str | None] = {
     # Gitea's API is /api/v1; readiness and liveness use /api/v1/user, which
     # answers 200 for a live token and 401 otherwise.
     "gitea": "v1",
+    # Bazarr's routes are /api/... with no version prefix; its settings API
+    # authenticates with X-API-KEY.
+    "bazarr": None,
+    # SABnzbd's routes are /api?mode=... with no version prefix.
+    "sabnzbd": None,
 }
 
 # Where a service reports that it is up, when it is not the Servarr shape.
@@ -162,6 +174,12 @@ READINESS_PATHS: dict[str, str] = {
     "arcane": "/api/auth/me",
     # Gitea's /api/v1/user answers 200 for a live token and 401 otherwise.
     "gitea": "/user",
+    # Bazarr's /api/system/status is authenticated; /api/system/ping is
+    # public and cannot tell a live key from a dead one.
+    "bazarr": "/api/system/status",
+    # SABnzbd's version route is public and accepts a wrong key. `queue` is
+    # authenticated and answers 403 for a dead key (measured on 5.1.3).
+    "sabnzbd": "/api?mode=queue&output=json",
 }
 
 @dataclass(frozen=True)
@@ -249,6 +267,18 @@ _mint_source("arcane", "arcane_apikey", "header", "vault")
 # token list exposes token_last_eight (the last 8 characters of the secret).
 _mint_source("gitea", "gitea_token", "header", "vault")
 
+# SABnzbd's set_apikey returns a new key, but the running process may keep the
+# old one until a restart. The mint is therefore reset-then-restart, not a
+# simple rotate. Measured on 5.1.3: set_apikey returns `{"apikey": ...}` and
+# mode=restart settles the swap; after the restart the new key answers 200 and
+# the old key 403 on mode=queue.
+_mint_source("sabnzbd", "sabnzbd_rotate", "query", "vault")
+
+# Bazarr's own key is a chosen-value form write: settings-auth-apikey replaces
+# it in the running process with no restart. Measured on 1.6.2: the POST
+# answers 204, the new key answers 200 and the old key 401 immediately.
+_mint_source("bazarr", "bazarr_rotate", "header", "vault")
+
 
 def _holder(system: str, slot: str, **kwargs: str) -> None:
     HOLDERS[(system, slot)] = Holder(system=system, slot=slot, **kwargs)
@@ -262,12 +292,15 @@ def _servarr(system: str, slot: str, api_path: str, field: str,
 
 
 for _service in ("sonarr", "radarr", "prowlarr", "lidarr", "readarr", "whisparr"):
-    # The indexer test is measured on Sonarr and Radarr (README). The Servarr
-    # siblings share the route, but no live run has exercised it, so they stay
-    # exercise-unproven until measured. Prowlarr's own indexer rows are not a
-    # holder of its key in the measured topology.
+    # Measured 2026-10-30 (tests/live/servarr_indexer_test.py): Lidarr
+    # 3.1.0.4875, Readarr 0.4.19.2811 and Whisparr 2.2.0.231 answer
+    # indexer/test 2xx for the row's live key and non-2xx when the upstream
+    # rejects it. Prowlarr's own indexer rows are not a holder of its key, so
+    # its slot keeps no test route.
     _servarr(_service, "indexers", "indexer", "apiKey",
-             test_path="indexer/test" if _service in {"sonarr", "radarr"} else "")
+             test_path="indexer/test"
+             if _service in {"sonarr", "radarr", "lidarr", "readarr", "whisparr"}
+             else "")
     # Measured 2026-10-26: with a qBittorrent API key stored in Sonarr
     # 4.0.20.3014 or Radarr 6.4.4.10685, downloadclient/test answers 200 while
     # the key is live and 400 after qBittorrent revokes it. The other *arr
@@ -297,6 +330,24 @@ def _seerr() -> None:
 
 
 _seerr()
+
+
+# Bazarr holds Sonarr and Radarr keys in its settings. The write is a form POST
+# (`settings-sonarr-apikey`), and `GET /api/system/settings` returns the value
+# the running process holds under `sonarr.apikey` / `radarr.apikey`. Measured
+# 2026-10-30 on Bazarr 1.6.2: the new value is served immediately, and a
+# `settings-auth-apikey` change makes the old Bazarr key 401 with no restart.
+def _bazarr() -> None:
+    _holder("bazarr", "settings", write="bazarr_api",
+            readback="process_api", auth_transport="header",
+            auth_header_name="X-API-KEY",
+            api_path="/api/system/settings",
+            field="settings-{service}-apikey",
+            readback_path="/api/system/settings",
+            readback_shape="section", readback_field="apikey")
+
+
+_bazarr()
 
 
 # qui is an API-only holder of a qBittorrent API key. The write needs qui's own
