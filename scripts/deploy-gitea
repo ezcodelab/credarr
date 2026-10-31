@@ -99,7 +99,11 @@ if git -C "$apps" diff --quiet -- compose/credarr/compose.yaml; then
 else
     git -C "$apps" add compose/credarr/compose.yaml
     git -C "$apps" commit -m "credarr: deploy $tag" -- compose/credarr/compose.yaml
-    git -C "$apps" push origin main
 fi
+
+# Push unconditionally. An interrupted earlier run can leave the pin committed
+# locally and unpushed; skipping the push then made every later step report
+# success while Arcane kept deploying the old image.
+git -C "$apps" push origin main
 
 make -C "$apps" deploy SERVICES=credarr
