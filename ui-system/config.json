@@ -3,5 +3,6 @@
   "system": "docs/UI_SYSTEM.md",
   "tokens": "ui/src/app.css",
   "gallery": "ui/src/views/DesignSystem.svelte",
-  "readme": "ui-system/README.md"
+  "readme": "ui-system/README.md",
+  "script": "ui-system/bin/ui_system.py"
 }

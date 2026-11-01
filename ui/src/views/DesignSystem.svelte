@@ -8,7 +8,7 @@
 
 <svelte:head><title>credarr design system</title></svelte:head>
 
-<main class="ds-page">
+<main class="ds-page" data-ui-gallery>
   <header class="ds-head">
     <div>
       <p class="ds-kicker">Internal · development only</p>

@@ -20,9 +20,9 @@
   server are authoritative over prose.
 - UI changes use `docs/ui-contract.md`, `docs/UI_SYSTEM.md` and the dev gallery
   (`cd ui && npm run dev`, then `/?design`). Run
-  `python3 ~/Documents/homelab/brain/bin/ui_system.py audit .` and keep the
-  contract, system and gallery current. A new primitive or pattern updates all
-  three in the same change; do not add a second visual language.
+  `python3 ui-system/bin/ui_system.py audit .` and keep the contract, system and
+  gallery current. A new primitive or pattern updates all three in the same
+  change; do not add a second visual language.
 
 ## Publishing
 

@@ -13,15 +13,17 @@ the real token source is `ui/src/app.css`, including the generic audit aliases,
 and the gallery is `ui/src/views/DesignSystem.svelte` at `/?design`. There is no
 second token file or palette.
 
-Run the local harness from this directory:
+Run the project-local audit from this directory:
 
 ```sh
-python3 ~/Documents/homelab/brain/bin/ui_system.py audit .
+python3 ui-system/bin/ui_system.py audit .
 ```
 
-The audit checks the contract headings, the alias token names, the system doc,
-the gallery and the README. It does not judge taste; `/design-review` does that
-against the contract and the approved references.
+The audit checks the contract headings and the `unfilled` marker, the alias
+token names including the spacing and type scales, a non-empty system document
+and a non-empty gallery carrying `data-ui-gallery`. It is a schema check; it does
+not judge taste. `/design-review` does that against the contract and the
+approved references.
 
 ## Direction
 
@@ -90,7 +92,7 @@ Motion:
 - Every motion has a `prefers-reduced-motion` fallback.
 - Motion explains a state change; it never decorates an entrance.
 
-## Layout
+## Responsive
 
 The shell is a 244px sidebar and a fluid main column, capped at 1440px.
 Below 960px the sidebar becomes an off-canvas drawer with a sticky mobile bar.

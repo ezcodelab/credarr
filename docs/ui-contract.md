@@ -113,8 +113,8 @@ runner is evidence, not an excuse for a longer wait.
 
 ## Acceptance
 
-- `python3 ~/Documents/homelab/brain/bin/ui_system.py audit .` prints
-  `ui system: OK`.
+- `python3 ui-system/bin/ui_system.py audit .` prints
+  `ui system: schema OK (visual and taste review are separate)`.
 - `make check` and `make ui-smoke` pass.
 - `/design-review` on the Apps, App detail and Activity screens at 1440, 1024
   and 390 reports 0 blocking findings and at most one quick-win round.
