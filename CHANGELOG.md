@@ -9,8 +9,9 @@
   tiles as the app identity anchor.
 - Apps is now a ledger with a stack-health strip, one row per app, copies and
   an open affordance. It stacks into a card below 960px.
-- App detail starts with a summary strip and a sticky section nav; Activity
-  starts with a three-part summary. Settings keeps its anchored sections.
+- App detail starts with a summary strip and a quiet sticky section index;
+  Activity starts with a three-part summary. Settings keeps its anchored
+  sections.
 - Added `docs/UI_SYSTEM.md` and a development-only gallery at `/?design` under
   `npm run dev`.
 

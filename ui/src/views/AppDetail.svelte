@@ -842,7 +842,6 @@
     <a href="#check-history">Check history</a>
     <a href="#used-in">Used in</a>
     <a href="#auto-rotation">Auto-rotation</a>
-    <a href="#danger">Delete</a>
   </nav>
 
   <div id="rotation-card">

@@ -710,6 +710,35 @@ async function main() {
     await page.getByRole("heading", { name: "Sonarr API Key" }).waitFor();
     await scanA11y(page, "app-detail");
     check("the app detail names the selected app", true);
+
+    const detailNav = page.locator(".detail-nav");
+    check(
+      "the detail index has no destructive Delete jump",
+      (await detailNav.getByRole("link", { name: "Delete", exact: true }).count()) === 0,
+    );
+    await page.setViewportSize({ width: 390, height: 844 });
+    check(
+      "the detail index stays on one row at 390",
+      (await detailNav.locator("a").evaluateAll(
+        (links) =>
+          new Set(links.map((link) => Math.round(link.getBoundingClientRect().top)))
+            .size,
+      )) === 1,
+    );
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await detailNav.getByRole("link", { name: "Connection", exact: true }).click();
+    await page.waitForTimeout(100);
+    const jump = await page.evaluate(() => {
+      const nav = document.querySelector(".detail-nav").getBoundingClientRect();
+      const section = document.getElementById("connection").getBoundingClientRect();
+      return { navBottom: nav.bottom, sectionTop: section.top };
+    });
+    check(
+      "the sticky detail index does not cover the section it jumps to",
+      jump.sectionTop >= jump.navBottom - 1,
+      JSON.stringify(jump),
+    );
+
     check(
       "the key field is a password field, not a text field",
       (await page.getByLabel("API key").getAttribute("type")) === "password",

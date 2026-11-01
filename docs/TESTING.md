@@ -10,7 +10,7 @@ The numbers here are from the 2026-10-30 tree; re-measure when they move.
 | Engine + server unit tests | pytest, fake transport, some real HTTP fixtures | 971 passed, 2 skipped | ~3.5 min |
 | Property tests | hypothesis (inside the above) | 7 | ~1 s |
 | Console unit tests | `node --test` | 115 | ~3 s |
-| Console end-to-end | Playwright + Chromium + `@axe-core/playwright` against a real server | 216 checks | ~2 min |
+| Console end-to-end | Playwright + Chromium + `@axe-core/playwright` against a real server | 219 checks | ~2 min |
 | Container black box | pytest `-m integration`, testcontainers | 4 | ~9 s + image start |
 
 `make check` runs the first, second (same invocation) and third layers. The UI

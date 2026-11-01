@@ -104,7 +104,9 @@ Below 960px the sidebar becomes an off-canvas drawer with a sticky mobile bar.
 - Apps is a ledger, not a card wall: one row per app with identity, state,
   copies and an open affordance. The row becomes a stacked card below 960px.
 - App detail starts with a summary strip: key tile, state, value state, copies
-  and last observation, then a sticky section nav and the working sections.
+  and last observation, then a quiet sticky section index and the working
+  sections. The index omits destructive actions and stays on one row at narrow
+  widths.
 - Activity starts with a three-part summary (last audit, changes, delivery)
   before the ledger.
 - Settings remains a single page with anchored sections; the sidebar's Settings
