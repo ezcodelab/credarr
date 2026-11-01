@@ -1,5 +1,5 @@
 {
-  "contract": "docs/ui-contract.md",
+  "contract": "docs/UI_CONTRACT.md",
   "system": "docs/UI_SYSTEM.md",
   "tokens": "ui/src/app.css",
   "gallery": "ui/src/views/DesignSystem.svelte",
