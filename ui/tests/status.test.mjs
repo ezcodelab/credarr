@@ -77,7 +77,7 @@ test("a manual-only stack is healthy without claiming every copy was compared", 
   ]);
 
   assert.equal(result.tone, "ok");
-  assert.equal(result.label, "all clear");
+  assert.equal(result.label, "All clear");
   assert.equal(result.title, "No findings");
   assert.match(result.why, /manual copies are not compared/i);
   assert.doesNotMatch(result.why, /app cards/i);
@@ -90,7 +90,7 @@ test("a no-holder credential does not make the stack incomplete", () => {
   ]);
 
   assert.equal(result.tone, "ok");
-  assert.equal(result.label, "all clear");
+  assert.equal(result.label, "All clear");
 });
 
 test("a credential with holders and no status still needs an audit", () => {
@@ -176,7 +176,7 @@ test("a live holder at its ceiling reads ok, not a gap", () => {
     { name: "prowlarr_api_key", status: "live", consumers: [{}] },
   ]);
   assert.equal(result.tone, "ok");
-  assert.equal(result.label, "all clear");
+  assert.equal(result.label, "All clear");
 });
 
 test("a live run is all clear, not a stack warning", () => {
@@ -192,7 +192,7 @@ test("a live run is all clear, not a stack warning", () => {
     observed_run: {},
   });
   assert.equal(result.tone, "ok");
-  assert.equal(result.label, "all clear");
+  assert.equal(result.label, "All clear");
   assert.equal(result.title, "No findings");
   assert.match(result.why, /accepted by its service/i);
 });
@@ -213,7 +213,7 @@ test("a live run with a manual copy is all clear and names manual coverage", () 
     observed_run: {},
   });
   assert.equal(result.tone, "ok");
-  assert.equal(result.label, "all clear");
+  assert.equal(result.label, "All clear");
   assert.equal(result.title, "No findings");
   assert.match(result.why, /manual copies are not compared/i);
   assert.doesNotMatch(result.why, /app cards/i);

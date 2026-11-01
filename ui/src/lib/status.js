@@ -293,7 +293,7 @@ export function stackHealth(status, data) {
     return {
       tone: "ok",
       status: "match",
-      label: "all clear",
+      label: "All clear",
       title: "No findings",
       why:
         "No drift, missing copies or errors. Every readable copy matched; every " +
@@ -305,7 +305,7 @@ export function stackHealth(status, data) {
     return {
       tone: "ok",
       status: "match",
-      label: "all clear",
+      label: "All clear",
       title: manual.length ? "No findings" : "Every declared copy matches",
       why: manual.length
         ? "No drift, missing copies or errors. Manual copies are not compared."
