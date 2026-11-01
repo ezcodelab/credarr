@@ -2,9 +2,9 @@
   <img src=".github/assets/credarr-logo.png" alt="credarr" width="360">
 </p>
 
-**Find out which of your services hold each API key, whether the copies still match, and what can actually be rotated. Then rotate it.**
+---
 
-![The Apps ledger: stack health, one row per app, copies and their last audit](.github/assets/apps.png)
+**Find out which of your services hold each API key, whether the copies still match, and what can actually be rotated. Then rotate it.**
 
 Credarr keeps a holder map, audits every readable copy against the canonical value, and rotates the keys it can prove.
 
@@ -18,10 +18,6 @@ Credarr keeps a holder map, audits every readable copy against the canonical val
 - **Encrypted backups** of `app.db` (every working copy) in one AES-256-GCM file.
 
 ### The console
-
-![App detail: connection, check history, rotation, auto-rotation and every copy](.github/assets/app-detail.png)
-
-![Activity: the last audit summary plus the event ledger](.github/assets/activity.png)
 
 Values are write-only in the browser: a paste is sent once, the field is emptied, and no response echoes it. Nothing secret is kept in local storage.
 
