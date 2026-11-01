@@ -439,7 +439,7 @@
       <button onclick={() => (query = "")}>Show everything</button>
     </div>
   {:else}
-    <div class="apps-ledger" role="list" aria-label="Apps">
+    <div class="apps-ledger">
       <div class="apps-ledger-head" aria-hidden="true">
         <span>App</span>
         <span>State</span>
@@ -453,7 +453,6 @@
           class="card app-card"
           role="link"
           tabindex="0"
-          aria-label={`Open ${app.title}`}
           onclick={() => onopen(app.name)}
           onkeydown={(event) => {
             // A key pressed inside a nested button belongs to that button.
@@ -464,6 +463,7 @@
             }
           }}
         >
+          <span class="sr-only">Open </span>
           <div class="app-main">
             <KeyTile status={app.row.status ?? statusOf(app.row)} />
             <div class="app-title">

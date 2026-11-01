@@ -10,7 +10,7 @@ The numbers here are from the 2026-10-30 tree; re-measure when they move.
 | Engine + server unit tests | pytest, fake transport, some real HTTP fixtures | 971 passed, 2 skipped | ~3.5 min |
 | Property tests | hypothesis (inside the above) | 7 | ~1 s |
 | Console unit tests | `node --test` | 115 | ~3 s |
-| Console end-to-end | Playwright + Chromium against a real server | 207 checks | ~2 min |
+| Console end-to-end | Playwright + Chromium + `@axe-core/playwright` against a real server | 216 checks | ~2 min |
 | Container black box | pytest `-m integration`, testcontainers | 4 | ~9 s + image start |
 
 `make check` runs the first, second (same invocation) and third layers. The UI
@@ -27,7 +27,7 @@ and has its own command below.
 | **Reproduce a bug in a failing test first** | Practised, not enforced. | Process lessons record it; nothing mechanically checks that a fix arrives with a regression test. |
 | **Keep logic out of tests** | Mostly true. | A few tests build plans/statuses inline instead of using a fixture, which duplicates engine logic (`tests/test_exit_contract.py` builds a bare `RotationPlan`). |
 | **Mutation and property-based tests** | Was missing. | Added: `tests/test_properties.py` covers parser round-trips, plan ordering and redaction invariants under generated input. |
-| **Playwright for real user flows** | Present, one flow file. | `ui/tests/smoke.mjs` drives the built console end to end. Playwright MCP is **not available** in this harness; the committed Playwright + Chromium suite is the substitute and is the rule to follow. |
+| **Playwright for real user flows** | Present, one flow file. | `ui/tests/smoke.mjs` drives the built console end to end and runs `@axe-core/playwright` WCAG A/AA scans on setup, empty/populated Apps, Activity, App detail, Settings, login and the 390px Apps layout. Serious or critical violations fail the smoke. Playwright MCP is **not available** in this harness; the committed Playwright + Chromium suite is the substitute and is the rule to follow. |
 | **Assert from the user's point of view** | True at the UI layer, less so in Python. | The smoke asserts visible sentences and states; engine tests assert returned objects. Prefer the public API (`create_app`, `facade`, CLI exit codes) over internals when either would catch the bug. |
 
 ## Ranked gaps

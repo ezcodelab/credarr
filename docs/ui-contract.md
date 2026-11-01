@@ -97,8 +97,11 @@ in the design-system review (at least 4.5:1 for normal text); focus is a 2px
 accent ring; labels are persistent; status words accompany dots; the keyboard
 path follows reading order; dialogs trap focus and return it to the trigger;
 reduced motion removes non-essential animation; touch targets are at least
-44px at narrow widths. Automated axe and screen-reader runs are not yet part of
-the suite; record them as unproven when claiming accessibility.
+44px at narrow widths. `@axe-core/playwright` runs WCAG A/AA scans in
+`make ui-smoke` for setup, empty and populated Apps, Activity, App detail,
+Settings, login and the 390px Apps layout; serious or critical violations fail
+the smoke. Manual screen-reader and assistive-technology testing are still
+unproven.
 
 ## Performance
 

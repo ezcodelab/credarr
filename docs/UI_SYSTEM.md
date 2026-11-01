@@ -175,6 +175,10 @@ Every screen must design these before the happy path:
 - Labels are real labels. Placeholder text is not a label.
 - Status is a word plus a dot, not a colour alone.
 - Touch targets are 44px on small screens.
+- `make ui-smoke` runs `@axe-core/playwright` WCAG A/AA scans on setup, empty
+  and populated Apps, Activity, App detail, Settings, login and the 390px Apps
+  layout. Serious or critical violations fail the smoke.
+- Automated scans do not replace manual screen-reader and 200% zoom testing.
 - Test at 200% zoom and with a screen reader on the primary path.
 - Do not put a secret in a toast, a URL, a log or a screenshot.
 

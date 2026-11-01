@@ -25,6 +25,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import AxeBuilder from "@axe-core/playwright";
 import { chromium } from "playwright";
 
 const REPO = path.resolve(import.meta.dirname, "../..");
@@ -60,6 +61,43 @@ async function until(predicate, what, timeout = 30000) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`FAILED: timed out waiting for ${what}`);
+}
+
+// Automated WCAG A/AA checks. Axe catches contrast, names, roles and other
+// static issues; it cannot judge whether the screen makes sense, so this is a
+// floor alongside the design review, not a replacement for it.
+async function scanA11y(page, label) {
+  await page.waitForTimeout(250);
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  const blocking = results.violations.filter(
+    (violation) => violation.impact === "serious" || violation.impact === "critical",
+  );
+  if (results.violations.length) {
+    console.log(
+      `AXE ${label}: ${results.violations.length} total, ${blocking.length} serious/critical`,
+    );
+    for (const violation of results.violations) {
+      console.log(
+        `  ${violation.impact} ${violation.id}: ${violation.help} (${violation.nodes.length})`,
+      );
+      for (const node of violation.nodes) {
+        console.log(`    ${node.target.join(" ")} ${node.failureSummary}`);
+      }
+    }
+  }
+  check(
+    `axe ${label}: no serious/critical WCAG A/AA violations`,
+    blocking.length === 0,
+    JSON.stringify(
+      blocking.map((violation) => ({
+        id: violation.id,
+        impact: violation.impact,
+        nodes: violation.nodes.length,
+      })),
+    ),
+  );
 }
 
 const MANIFEST = `version: 1
@@ -274,7 +312,8 @@ async function main() {
   globalThis.__smokeServerLog = booted.log;
 
   const browser = await chromium.launch();
-  const page = await browser.newPage();
+  const context = await browser.newContext();
+  const page = await context.newPage();
   // A CI runner can be several times slower than a laptop, and a plan runs
   // preflight probes before it renders. The assertions are unchanged; only the
   // patience is. Override with CREDARR_SMOKE_TIMEOUT on a slower machine.
@@ -364,6 +403,7 @@ async function main() {
     await page.getByLabel("Repeat password", { exact: true }).fill(PASSWORD);
     await page.getByRole("button", { name: "Create the admin" }).click();
     await page.getByRole("heading", { name: "Set up your stack" }).waitFor();
+    await scanA11y(page, "setup");
     check("setup signs the admin in and opens the first-run wizard", true);
     check(
       "the wizard starts at Connect, with no automation-key step",
@@ -377,6 +417,7 @@ async function main() {
     // --- skip is a real door out, and the empty Apps hub is still honest -----
     await page.getByRole("button", { name: "Skip for now" }).click();
     await page.getByRole("button", { name: "Apps" }).waitFor();
+    await scanA11y(page, "apps-empty");
     check("skipping the wizard leaves the normal console reachable", true);
     check("an empty store is called what it is", await page.getByText("No apps yet").isVisible());
     check(
@@ -550,6 +591,7 @@ async function main() {
     await page.getByText(/replace import: 3 credentials/).waitFor();
     await page.getByRole("button", { name: "Apps", exact: true }).click();
     await page.locator(".app-card").getByText("Sonarr API Key").waitFor();
+    await scanA11y(page, "apps");
     check("the console's own session imports the topology from the form", true);
     check(
       "the declared apps are listed as cards",
@@ -639,6 +681,7 @@ async function main() {
     // --- Activity: a baseline is not a change --------------------------------
     await page.getByRole("button", { name: "Activity", exact: true }).click();
     await page.getByText("No changes yet").waitFor();
+    await scanA11y(page, "activity");
     check("the first status an audit records is a baseline, so Activity starts empty", true);
     check(
       "and the empty state says there is nowhere to send anything yet",
@@ -665,6 +708,7 @@ async function main() {
     await page
       .locator(".app-card h3", { hasText: "Sonarr API Key" }).click();
     await page.getByRole("heading", { name: "Sonarr API Key" }).waitFor();
+    await scanA11y(page, "app-detail");
     check("the app detail names the selected app", true);
     check(
       "the key field is a password field, not a text field",
@@ -1447,6 +1491,7 @@ async function main() {
 
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("heading", { name: "Settings" }).waitFor();
+    await scanA11y(page, "settings");
     await openMenu("Settings");
     const settingsMenu = await page.locator("aside .nav-sub button").allInnerTexts();
     check(
@@ -1986,6 +2031,7 @@ async function main() {
     // --- sign out, and back in with a wrong password first --------------------
     await page.getByRole("button", { name: "Sign out" }).click();
     await page.getByRole("button", { name: "Sign in" }).waitFor();
+    await scanA11y(page, "login");
     await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
     await page.getByRole("button", { name: "Sign in" }).click();
     await page.getByText("wrong password").waitFor();
@@ -2008,6 +2054,7 @@ async function main() {
     await page.screenshot({ path: shot, fullPage: true });
 
     await page.setViewportSize({ width: 390, height: 844 });
+    await scanA11y(page, "apps-390");
     await page.getByRole("button", { name: "Open navigation" }).click();
     check(
       "the sidebar becomes a drawer below tablet width",
