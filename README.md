@@ -17,10 +17,6 @@ Credarr keeps a holder map, audits every readable copy against the canonical val
 - **Notifications**: ntfy, webhook, Discord, Telegram and SMTP email. Events are status changes, never values.
 - **Encrypted backups** of `app.db` (every working copy) in one AES-256-GCM file.
 
-### The console
-
-Values are write-only in the browser: a paste is sent once, the field is emptied, and no response echoes it. Nothing secret is kept in local storage.
-
 ## Requirements
 
 - A Docker host (or any Linux host for the CLI) with network access to the services you want to audit.
