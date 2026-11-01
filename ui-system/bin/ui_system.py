@@ -17,6 +17,21 @@ SCRIPT_SOURCE = STARTER / SCRIPT_TARGET
 UNFILLED_MARKER = "<!-- ui-contract:unfilled -->"
 GALLERY_MARKER = "data-ui-gallery"
 
+CONTRACT_PLACEHOLDERS = (
+    "Fill each heading with the project's own answer.",
+    "Remove the `ui-contract:unfilled` comment",
+    "Name the product and the one problem",
+    "Describe who uses it",
+    "State the single job",
+    "Name the character, the world",
+    "Point to `ui-system/tokens.css`",
+    "Name two to four approved references",
+    "Design and list: empty, loading, error",
+    "Record contrast targets",
+    "Set a budget for initial script",
+    "List the runnable checks and viewport widths",
+)
+
 FILES = (
     ("ui-contract.md", "docs/ui-contract.md"),
     ("UI_SYSTEM.md", "docs/UI_SYSTEM.md"),
@@ -184,6 +199,9 @@ def audit_project(project: Path) -> int:
         text = contract.read_text(errors="replace")
         if UNFILLED_MARKER in text:
             problems.append(f"unfilled contract: remove {UNFILLED_MARKER} from {contract}")
+        for placeholder in CONTRACT_PLACEHOLDERS:
+            if placeholder in text:
+                problems.append(f"placeholder contract text: {placeholder!r} in {contract}")
         found = contract_headings(text)
         for heading in CONTRACT_HEADINGS:
             if heading not in found:
