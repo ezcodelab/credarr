@@ -7,9 +7,10 @@
 #   scripts/deploy-gitea --tag NAME     # use NAME instead of the short SHA
 #   scripts/deploy-gitea --dry-run      # print what would run
 #
-# The default tag is the commit's short SHA, so a pin always names the source it
-# was built from. A dirty tree is refused: an image that cannot be traced to a
-# commit cannot be rebuilt or reviewed later.
+# The default tag is the commit's short SHA on main, and <branch>-<sha> on any
+# other branch, so a branch deployment is identifiable and cannot be mistaken
+# for a main build. Only main moves :latest. A dirty tree is refused: an image
+# that cannot be traced to a commit cannot be rebuilt or reviewed later.
 #
 # This machine must already be logged in to git.ezcloud.casa for `docker push`.
 # The Gitea package is public, so Arcane pulls it without a registry credential.
@@ -39,27 +40,43 @@ if [ -n "$(git status --porcelain)" ]; then
     exit 1
 fi
 
+branch=$(git rev-parse --abbrev-ref HEAD)
+push_latest=0
+if [ "$branch" = "main" ]; then
+    push_latest=1
+fi
 if [ -z "$tag" ]; then
-    tag=$(git rev-parse --short HEAD)
+    if [ "$branch" = "main" ] || [ "$branch" = "HEAD" ]; then
+        # main keeps the bare SHA; a detached HEAD has no branch name to use.
+        tag=$(git rev-parse --short HEAD)
+    else
+        slug=$(printf '%s' "$branch" | tr '/' '-')
+        tag="$slug-$(git rev-parse --short HEAD)"
+    fi
 fi
 image=$registry:$tag
 
 if [ "$deploy" = 1 ]; then
     [ -f "$compose" ] || { echo "error: no $compose (set APPS_REPO)" >&2; exit 1; }
-    branch=$(git -C "$apps" rev-parse --abbrev-ref HEAD)
-    if [ "$branch" != "main" ]; then
-        echo "error: $apps is on '$branch', not main; GitOps deploys main" >&2
+    apps_branch=$(git -C "$apps" rev-parse --abbrev-ref HEAD)
+    if [ "$apps_branch" != "main" ]; then
+        echo "error: $apps is on '$apps_branch', not main; GitOps deploys main" >&2
         exit 1
     fi
 fi
 
 echo "source: $(git rev-parse HEAD)"
-echo "image:  $image (and :latest)"
+echo "branch: $branch"
+echo "image:  $image$( [ "$push_latest" = 1 ] && echo ' (and :latest)')"
 [ "$deploy" = 1 ] && echo "apps:   $compose"
 
 if [ "$dry_run" = 1 ]; then
     echo "  would run: make image"
-    echo "  would run: docker push $image and $registry:latest"
+    if [ "$push_latest" = 1 ]; then
+        echo "  would run: docker push $image and $registry:latest"
+    else
+        echo "  would run: docker push $image (no :latest from a branch)"
+    fi
     if [ "$deploy" = 1 ]; then
         echo "  would set $compose to $image"
         echo "  would commit and push $apps main"
@@ -71,9 +88,11 @@ fi
 # Build before publishing, so a broken build leaves the registry untouched.
 make image
 docker tag credarr:dev "$image"
-docker tag credarr:dev "$registry:latest"
 docker push "$image"
-docker push "$registry:latest"
+if [ "$push_latest" = 1 ]; then
+    docker tag credarr:dev "$registry:latest"
+    docker push "$registry:latest"
+fi
 
 if [ "$deploy" = 0 ]; then
     echo "pushed $image"
