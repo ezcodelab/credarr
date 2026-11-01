@@ -12,7 +12,6 @@ Start with `../README.md` (install, first boot, connect an app), then:
 | `ARCHITECTURE.md` | Engine / server / console layout, stores, load-bearing invariants |
 | `OPERATING.md` | Audit, rotation, Servarr routes, auto-rotation, notifications, backups, discovery, console map |
 | `UI_SYSTEM.md` | Console design system: tokens, components, states, accessibility, gallery, how to extend |
-| `ui-contract.md` | First-pass contract: product, audience, direction, tokens, references, states, acceptance |
 | `SERVICES.md` | Mint shapes and per-service coverage with measured versions |
 | `API.md` | `/api/v1` reference seed (full contract: the live `/openapi.json`) |
 | `LIMITATIONS.md` | Known v1 limits and troubleshooting. Read before exposing or trusting a rotation |

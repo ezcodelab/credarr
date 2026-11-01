@@ -7,11 +7,11 @@ change must fix one of them in the same commit.
 
 ## Portable audit
 
-The first-pass contract is [`docs/ui-contract.md`](ui-contract.md). The portable
-audit is pointed at this project by [`ui-system/config.json`](../ui-system/config.json):
-the real token source is `ui/src/app.css`, including the generic audit aliases,
-and the gallery is `ui/src/views/DesignSystem.svelte` at `/?design`. There is no
-second token file or palette.
+The first-pass contract is the local `docs/UI_CONTRACT.md` (ignored by git, so a
+fresh clone does not ship it). The portable audit is pointed at this project by
+`ui-system/config.json`: the real token source is `ui/src/app.css`, including the
+generic audit aliases, and the gallery is `ui/src/views/DesignSystem.svelte` at
+`/?design`. There is no second token file or palette.
 
 Run the project-local audit from this directory:
 

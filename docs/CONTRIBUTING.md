@@ -18,8 +18,9 @@
   `ADDING_A_SERVICE.md`.
 - Keep `docs/` truthful with the code in the same change. The engine and the
   server are authoritative over prose.
-- UI changes use `docs/ui-contract.md`, `docs/UI_SYSTEM.md` and the dev gallery
-  (`cd ui && npm run dev`, then `/?design`). Run
+- UI changes use `docs/UI_SYSTEM.md` and the dev gallery (`cd ui && npm run dev`,
+  then `/?design`). When the checkout keeps the local design notes
+  (`docs/UI_CONTRACT.md` and `ui-system/`, both ignored by git), run
   `python3 ui-system/bin/ui_system.py audit .` and keep the contract, system and
   gallery current. A new primitive or pattern updates all three in the same
   change; do not add a second visual language.

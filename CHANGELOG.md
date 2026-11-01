@@ -1,6 +1,26 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
+
+The console becomes a graphite ledger, and every credential the setup wizard
+offers now rotates unattended on a measured path.
+
+### Rotation
+
+- **SABnzbd's own key** rotates through `mode=config&name=set_apikey` and
+  `mode=restart`: the old key answers 403, the new key 200, and Sonarr's
+  SABnzbd download-client row is exercised by its own test.
+- **Bazarr's own key** rotates through the measured `settings-auth-apikey`
+  form write with no restart. A value the service rejects with 406/422 is
+  re-chosen up to three times, after re-proving the old key live, and the run
+  fails closed with nothing parked.
+- **Every setup-wizard mint has a server auto-rotation run**: the five Servarr
+  apps through backup/restore (Prowlarr application rows, Sonarr indexer rows),
+  Jellyfin held by Seerr's settings section, qBittorrent held by qui's
+  connection test, and Seerr, Grafana, Arcane and Gitea with a deploy-time
+  Homepage copy recorded as `auto_manual`.
+- The audit exercises a qui instance through qui's own connection test, so a
+  qui-held qBittorrent key can reach `live` instead of `unverifiable`.
 
 ### Console
 
@@ -13,7 +33,28 @@
   Activity starts with a three-part summary. Settings keeps its anchored
   sections.
 - Added `docs/UI_SYSTEM.md` and a development-only gallery at `/?design` under
-  `npm run dev`.
+  `npm run dev`, and axe-core WCAG scans in the browser smoke.
+- Breakpoint, section-index and status-label polish after the first pass.
+
+### Ship and packaging
+
+- `make ship` builds the image, pushes it to the Gitea registry, pins the tag
+  in `homelab-applications`, and deploys through Arcane. A branch checkout is
+  tagged `<branch>-<sha>` and never moves `:latest`; the apps pin is pushed
+  even when the compose file already names the tag, and the deploy report
+  prints the running image.
+- The package version is `1.1.0`.
+
+### Docs
+
+- README rewritten around the ledger screens, with the screenshots and logo
+  regenerated from the shipped console.
+- `docs/ROTATION.md` records auto-e2e coverage per mint; `docs/SERVICES.md`
+  and `docs/TESTING.md` carry the measured versions and live-harness table.
+
+### CI and release
+
+- The image is published as `ghcr.io/ezcodelab/credarr:1.1.0` and `:latest`.
 
 ## 1.0.0
 

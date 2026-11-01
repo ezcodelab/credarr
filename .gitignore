@@ -57,3 +57,8 @@ scripts/deploy-github
 
 # pytest-testmon state (an experiment; not used by CI)
 .testmondata*
+
+# The first-pass UI contract and the portable audit harness are local design
+# notes: ignored like the live fixtures, not part of the published tree.
+docs/UI_CONTRACT.md
+ui-system/
