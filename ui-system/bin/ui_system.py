@@ -13,6 +13,7 @@ from pathlib import Path
 STARTER = Path(__file__).resolve().parent.parent / "references/ui/starter"
 CONFIG = "ui-system/config.json"
 SCRIPT_TARGET = "ui-system/bin/ui_system.py"
+SCRIPT_SOURCE = STARTER / SCRIPT_TARGET
 UNFILLED_MARKER = "<!-- ui-contract:unfilled -->"
 GALLERY_MARKER = "data-ui-gallery"
 
@@ -99,7 +100,7 @@ def init_project(project: Path) -> int:
         )
         return 2
     targets = [(STARTER / source, project / destination) for source, destination in FILES]
-    targets.append((Path(__file__).resolve(), project / SCRIPT_TARGET))
+    targets.append((SCRIPT_SOURCE, project / SCRIPT_TARGET))
     existing = [target for _, target in targets if target.exists()]
     if existing:
         for target in existing:
