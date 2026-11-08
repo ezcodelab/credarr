@@ -284,7 +284,7 @@ def test_a_credential_with_an_unfinished_rotation_cannot_be_deleted(
             "/api/v1/credentials/sonarr_api_key?confirm=sonarr_api_key"
         )
         assert refused.status_code == 409
-        assert "resume or take it over" in refused.json()["detail"]
+        assert "take it over" in refused.json()["detail"]
         names = {
             row["name"]
             for row in client.get("/api/v1/credentials").json()["credentials"]
@@ -977,6 +977,7 @@ def test_the_openapi_contract_is_pinned(server) -> None:
         "/api/v1/credentials/{name}/value",
         "/api/v1/credentials/{name}/plan",
         "/api/v1/credentials/{name}/rotate",
+        "/api/v1/credentials/{name}/rotation/abandon",
         "/api/v1/credentials/{name}/rotation-options",
         "/api/v1/topology/export",
         "/api/v1/topology/import",
@@ -1018,6 +1019,7 @@ def test_the_openapi_contract_is_pinned(server) -> None:
         "/api/v1/credentials/{name}/value",
         "/api/v1/credentials/{name}/plan",
         "/api/v1/credentials/{name}/rotate",
+        "/api/v1/credentials/{name}/rotation/abandon",
         "/api/v1/credentials/{name}/rotation-options",
         "/api/v1/topology/export",
         "/api/v1/topology/import",

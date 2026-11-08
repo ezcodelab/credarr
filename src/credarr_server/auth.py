@@ -294,6 +294,26 @@ class AdminAuth:
         session_id: int | None = None,
         now: float | None = None,
     ) -> IssuedSession | None:
+        """Replace the password under the same lock that serialises sign-in.
+
+        Without the lock a sign-in that read the old digest can finish its
+        argon2 check after the change commits and still succeed with the old
+        password. Whichever operation gets the lock first wins; after the change
+        commits, no sign-in can be verifying the old digest.
+        """
+        with self._login_lock:
+            return self._change_password_locked(
+                current, new, session_id=session_id, now=now
+            )
+
+    def _change_password_locked(
+        self,
+        current: str,
+        new: str,
+        *,
+        session_id: int | None = None,
+        now: float | None = None,
+    ) -> IssuedSession | None:
         """Replace the password, revoke the other sessions, rotate the caller's.
 
         One transaction: the digest, the revocations and the rotation commit

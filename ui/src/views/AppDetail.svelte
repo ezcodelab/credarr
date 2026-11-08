@@ -848,6 +848,7 @@
     <RotationPanel
       {row}
       pending={rotation?.pending ?? []}
+      attempts={rotation?.open_attempts ?? []}
       bind:armed={rotationArmed}
       bind:planBusy
       bind:runBusy

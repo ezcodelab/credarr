@@ -445,6 +445,26 @@ def test_a_due_in_the_past_does_not_turn_the_loop_into_a_spin(app) -> None:
     assert scheduler._wait_seconds(now, woken=True) == 0.0
 
 
+def test_a_disabled_schedule_still_retries_a_blocked_due(app) -> None:
+    """Auto is not part of the audit switch.
+
+    With scheduled audits off, a due rotation still gets its own audit. If that
+    audit finds the rotation blocked, the worker must be retried on the
+    configured interval; waiting forever leaves the policy frozen until an
+    unrelated wake.
+    """
+    scheduler = Scheduler(
+        app.store,
+        AuditLog(app.store.path),
+        app.config,
+        interval=60.0,
+        enabled=False,
+        registry=REGISTRY,
+        next_due=lambda _now: 0.0,
+    )
+    assert scheduler._wait_seconds(time.time(), woken=False) == 60.0
+
+
 def test_set_interval_wakes_the_wait_without_a_restart(app) -> None:
     calls: list[float] = []
     scheduler = _scheduler(app, interval=60.0)

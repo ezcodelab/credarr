@@ -1793,6 +1793,192 @@ def test_a_partially_propagated_database_does_not_block_the_resume(tmp_path):
     )
 
 
+def test_a_transient_write_exhaustion_names_the_row_that_failed(tmp_path):
+    """The per-holder record is the answer to "which of the sixteen did we
+    already write". A retry that gives up must leave a row for the one it could
+    not write, not only a step-level failure."""
+    state = FakeState()
+    state.api_accepts_write = False
+    state.put_status = 500
+    executor, _ = _executor(tmp_path, state)
+
+    result = executor.execute(_plan())
+
+    assert result.failed == "sonarr.indexers"
+    failed = [
+        holder for holder in result.holders
+        if holder.target == "sonarr.indexers" and holder.outcome == "failed"
+    ]
+    assert [(holder.label, holder.outcome) for holder in failed] == [("0", "failed")]
+    recorded = executor._ctx.journal.holders(result.attempt)
+    assert [
+        (row["label"], row["outcome"]) for row in recorded
+        if row["target"] == "sonarr.indexers"
+    ] == [("0", "failed")]
+
+
+def _record_plan():
+    """A plan that records the value, so a crash after RECORD can be modelled."""
+    credential = _credential()
+    plan = RotationPlan(credential=credential, host=HOST)
+    plan.add(StepKind.MINT, "prowlarr", "backup/restore + restart", reversible=False)
+    plan.add(StepKind.PROPAGATE, "sonarr.indexers", "PUT 2 rows")
+    plan.add(StepKind.PROPAGATE, "radarr.indexers", "PUT 1 row")
+    plan.add(StepKind.MANUAL, "homepage.label", "redeploy")
+    plan.add(StepKind.RECORD, "a.b", "write the new value to the vault")
+    return plan
+
+
+def _record_executor(tmp_path, state, *, canonical, parked):
+    pending = FilePending(tmp_path / "pending.db")
+    if parked is not None:
+        pending.set("prowlarr_api_key", Secret(parked))
+    canonical_box = {"value": canonical}
+
+    def set_vault(value):
+        canonical_box["value"] = value.reveal()
+
+    ctx = RotationContext(
+        credential=_credential(), host=HOST, transport=FakeTransport(state),
+        journal=Journal(tmp_path / "j.db", stale_after=900.0),
+        vault_value=canonical, pending=pending, settle_timeout=0.0,
+        write_backoff=0.0, write_interval=0.0, vault_setter=set_vault,
+        take_over=True,
+    )
+
+    def backup(host, service, *, key, transport):
+        state.backup_calls += 1
+        return _api_xml(state.service_key[service]), "backup.zip"
+
+    def restore(host, service, *, key, xml, transport):
+        state.service_key[service] = _config_xml_api_key(xml.decode())
+        return 200, None
+
+    executor = Executor(
+        ctx, servarr_call=_servarr_call(state),
+        servarr_backup=backup, servarr_restore=restore,
+    )
+    return executor, ctx, pending, canonical_box
+
+
+def _seed_reached_record(ctx, *, finish_record: bool) -> int:
+    journal = ctx.journal
+    prior = journal.begin("prowlarr_api_key")
+    journal.step_started(prior, 0, "mint", "prowlarr", "backup/restore")
+    journal.step_finished(prior, 0, "ok")
+    for ordinal, target in enumerate(("sonarr.indexers", "radarr.indexers"), start=1):
+        journal.step_started(prior, ordinal, "propagate", target, "PUT")
+        journal.step_finished(prior, ordinal, "ok")
+    journal.step_started(prior, 3, "manual", "homepage.label", "redeploy")
+    journal.step_finished(prior, 3, "noted")
+    journal.step_started(prior, 4, "record", "a.b", "write the new value")
+    if finish_record:
+        journal.step_finished(prior, 4, "written")
+    for label in ("0", "1"):
+        journal.record_holder(prior, "sonarr.indexers", label, "confirmed", "read-equal")
+    journal.record_holder(prior, "radarr.indexers", "0", "confirmed", "read-equal")
+    return prior
+
+
+def _already_recorded_state():
+    state = FakeState()
+    state.service_key["prowlarr"] = NEW_KEY
+    state.rows = {"sonarr": [NEW_KEY, NEW_KEY], "radarr": [NEW_KEY]}
+    return state
+
+
+def test_a_crash_after_record_resumes_without_minting_again(tmp_path):
+    """The window between the canonical write and `finish` must not re-mint.
+
+    A resume sees the new key as the canonical value and the service already
+    accepting it. Treating that as the *old* key would mint a third key and
+    revoke the one every holder just received. The dead attempt's holder rows
+    are the proof that propagation completed, so the run finishes from RECORD.
+    """
+    state = _already_recorded_state()
+    executor, ctx, _pending, canonical = _record_executor(
+        tmp_path, state, canonical=NEW_KEY, parked=None
+    )
+    prior = _seed_reached_record(ctx, finish_record=True)
+
+    result = executor.execute(_record_plan())
+
+    assert result.ok, result.detail
+    assert result.resumed
+    assert result.manual == ["homepage.label"]
+    assert {holder.outcome for holder in result.holders} == {"confirmed"}
+    assert state.backup_calls == 0, "the resume minted a second key"
+    assert state.service_key["prowlarr"] == NEW_KEY
+    assert canonical["value"] == NEW_KEY
+    assert ctx.journal.attempt_outcome(result.attempt) == "completed"
+    assert ctx.journal.attempt_outcome(prior).startswith("abandoned")
+    steps = ctx.journal.steps(result.attempt)
+    assert [step["kind"] for step in steps] == [
+        "mint", "propagate", "propagate", "manual", "record",
+    ]
+    assert all(step["finished_at"] is not None for step in steps)
+    assert steps[0]["outcome"].startswith("not re-run")
+    assert ctx.journal.pending() == []
+
+
+def test_a_plain_run_after_an_abandoned_record_still_mints(tmp_path):
+    """An abandoned attempt is history unless the operator takes it over.
+
+    The resume rule must not turn every later Rotate click into a no-op just
+    because the last attempt happened to finish RECORD before it was abandoned.
+    """
+    state = _already_recorded_state()
+    executor, ctx, _pending, canonical = _record_executor(
+        tmp_path, state, canonical=NEW_KEY, parked=None
+    )
+    _seed_reached_record(ctx, finish_record=True)
+    ctx.journal.take_over("prowlarr_api_key", "admin")
+    ctx.take_over = False
+
+    result = executor.execute(_record_plan())
+
+    assert result.ok, result.detail
+    assert state.backup_calls == 1, "the explicit new rotation did not mint"
+    assert state.service_key["prowlarr"] != NEW_KEY
+    assert canonical["value"] == state.service_key["prowlarr"]
+
+
+def test_a_crash_before_record_completes_the_parked_key_without_a_backup(tmp_path):
+    """The other side of the window: RECORD had not written, so the parked key is
+    still the successor. It must be resumed, not replaced by a second mint."""
+    state = _already_recorded_state()
+    executor, ctx, pending, canonical = _record_executor(
+        tmp_path, state, canonical=OLD_KEY, parked=NEW_KEY
+    )
+    _seed_reached_record(ctx, finish_record=False)
+
+    result = executor.execute(_record_plan())
+
+    assert result.ok, result.detail
+    assert result.resumed
+    assert state.backup_calls == 0, "the parked key was not resumed"
+    assert state.service_key["prowlarr"] == NEW_KEY
+    assert canonical["value"] == NEW_KEY
+    assert pending.get("prowlarr_api_key") is None
+    assert ctx.journal.attempt_outcome(result.attempt) == "completed"
+
+
+def test_a_crash_after_record_with_the_parked_key_clears_it_without_minting(tmp_path):
+    """RECORD wrote the canonical value but the pending clear did not land."""
+    state = _already_recorded_state()
+    executor, ctx, pending, canonical = _record_executor(
+        tmp_path, state, canonical=NEW_KEY, parked=NEW_KEY
+    )
+    _seed_reached_record(ctx, finish_record=False)
+
+    result = executor.execute(_record_plan())
+
+    assert result.ok, result.detail
+    assert state.backup_calls == 0
+    assert canonical["value"] == NEW_KEY
+    assert pending.get("prowlarr_api_key") is None
+
+
 ROW_NAMES = ["1337x (Prowlarr)", "Nyaa.si (Prowlarr)", "Knaben (Prowlarr)"]
 QUALIFIED = "sonarr.indexers[1337x (Prowlarr)]"
 # Deliberately not row 0. The executor labels a holder by the API `id` and matches

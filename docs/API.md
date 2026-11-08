@@ -13,7 +13,7 @@ the caller's own in the same transaction, so the browser that made the change
 stays signed in.
 
 Groups: `/status`, `/services` (+ `/test`), `/credentials` (declare, holders,
-value write-only, plan, rotation-options, auto-rotation, rotate), `/audit`
+value write-only, plan, rotation-options, auto-rotation, rotate, abandon), `/audit`
 (+ background jobs, scoped checks), `/topology/export|import` (raw-YAML
 replace requires `?confirm=replace`), `/notifications/services` (CRUD +
 per-service test, plus a no-write draft `POST .../services/test`),

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import threading
 from pathlib import Path
 
 import pytest
@@ -238,6 +239,90 @@ def test_too_many_failures_lock_the_one_account_temporarily(tmp_path: Path) -> N
         ).fetchone()[0]
     assert failures == 1
     auth.login(PASSWORD, now=now + LOGIN_LOCKOUT_SECONDS + 2)
+
+
+def test_a_password_change_cannot_race_a_sign_in_that_is_verifying(
+    tmp_path: Path,
+) -> None:
+    """The old password must stop working the moment the change commits.
+
+    Argon2 verification is slow enough for a sign-in to read the old digest,
+    lose the CPU, and return success after a concurrent change has stored the
+    new one. Both operations take the same lock, so a sign-in that has not
+    finished verifying when the change starts blocks the change instead.
+    """
+    auth = AdminAuth(tmp_path / "app.db")
+    auth.set_password(PASSWORD)
+    entered = threading.Event()
+    release = threading.Event()
+    change_verified = threading.Event()
+    real_verify = auth.verify_password
+    calls = 0
+
+    def slow_verify(password: str) -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            entered.set()
+            assert release.wait(10)
+        else:
+            change_verified.set()
+        return real_verify(password)
+
+    auth.verify_password = slow_verify  # type: ignore[method-assign]
+    errors: list[BaseException] = []
+    login = threading.Thread(
+        target=lambda: _login_or_record(auth, PASSWORD, errors), daemon=True
+    )
+    login.start()
+    assert entered.wait(5), "the sign-in never reached verification"
+
+    changed = threading.Event()
+    change = threading.Thread(
+        target=lambda: _change_or_record(
+            auth, PASSWORD, "a-new-correct-horse", changed, errors
+        ),
+        daemon=True,
+    )
+    change.start()
+    assert not change_verified.wait(0.5), (
+        "the password change verified the old digest while a sign-in was "
+        "still verifying it"
+    )
+    release.set()
+    login.join(5)
+    change.join(5)
+
+    assert not errors, errors
+    assert change_verified.is_set()
+    assert changed.is_set()
+    with pytest.raises(InvalidCredentials):
+        auth.login(PASSWORD)
+    auth.login("a-new-correct-horse")
+
+
+def _login_or_record(
+    auth: AdminAuth, password: str, errors: list[BaseException]
+) -> None:
+    try:
+        auth.login(password)
+    except BaseException as exc:  # recorded, not swallowed by the thread
+        errors.append(exc)
+
+
+def _change_or_record(
+    auth: AdminAuth,
+    current: str,
+    new: str,
+    changed: threading.Event,
+    errors: list[BaseException],
+) -> None:
+    try:
+        auth.change_password(current, new)
+    except BaseException as exc:
+        errors.append(exc)
+    finally:
+        changed.set()
 
 
 def test_changing_the_password_rotates_the_callers_session_in_place(

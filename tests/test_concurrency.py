@@ -24,6 +24,7 @@ import pytest
 from credarr.executor import Executor, RotationContext
 from credarr.journal import Journal, JournalLocked
 from credarr.pending import FilePending
+from credarr.rotate import StepKind
 from test_executor import (
     HOST,
     OLD_KEY,
@@ -233,6 +234,37 @@ def test_the_executor_stops_when_its_lease_is_gone(tmp_path):
     assert not result.ok
     assert state.backup_calls == 0, "kept going after losing the lock"
     assert state.api_writes == 0, "wrote to services it no longer owned"
+
+
+def test_a_lease_lost_after_the_last_step_is_not_reported_as_success(tmp_path):
+    """The report is part of the run's work.
+
+    A run that loses the lease after its final side effect but before `finish`
+    used to close the attempt as completed and tell the operator it succeeded.
+    The final fence returns a failed result and leaves the attempt open for the
+    process that actually owns it.
+    """
+    journal = Journal(tmp_path / "j.db", stale_after=900.0)
+    token = journal.try_acquire("cred")
+    state = FakeState()
+    executor = _lease_executor(journal, state, token)
+    original = executor._dispatch
+
+    def dispatch(step):
+        detail = original(step)
+        if step.kind is StepKind.MANUAL:
+            _reclaim_as(journal, "cred")
+        return detail
+
+    executor._dispatch = dispatch
+    result = executor.execute(_plan())
+
+    assert not result.ok
+    assert result.failed == "the credential lease"
+    assert state.api_writes == 3, "the fixture changed; the writes should have run"
+    assert "prowlarr_api_key" in journal.open_attempts(), (
+        "the run closed an attempt its lease no longer owned"
+    )
 
 
 def test_the_fence_is_invisible_when_the_lease_is_held(tmp_path):

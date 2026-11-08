@@ -42,15 +42,21 @@ export function credentialSlug(title) {
   return slugPart(text).slice(0, 64);
 }
 
-// One sentence per imported key that will not rotate even though its service
-// can mint. The server sends the names and services; the console owns the
-// labels and the class-A hint.
+// One sentence per imported declaration that needs attention. The server sends
+// the facts; the console owns the labels. `audit_only` keys will not rotate
+// even though their service can mint; `issuer_changed` keys still hold the old
+// service's stored value because import preserves working copies by name.
 export function importWarningLines(warnings) {
   return (warnings ?? [])
     .filter((warning) => warning?.credential)
     .map((warning) => {
       const name = credentialTitle(warning.credential);
       const service = serviceById(warning.service)?.label ?? warning.service;
+      if (warning.kind === "issuer_changed") {
+        const was =
+          serviceById(warning.previous_service)?.label ?? warning.previous_service;
+        return `${name} changed issuer from ${was || "another service"} to ${service || "another service"}, but its stored value is still the old service's. Paste the new key or clear the stored value before rotating.`;
+      }
       return `${name} is marked audit-only, but ${service || "its service"} supports rotation. Set its class to A if it should rotate.`;
     });
 }

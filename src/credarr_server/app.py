@@ -42,7 +42,7 @@ from credarr.audit import CredentialResult, Status
 from credarr.config import Config, HostConfig, load_config
 from credarr.errors import ConfigError, CredctlError, ExitCode, ManifestError
 from credarr.instance import DEFAULT_CONFIG_DIR, InstanceLock
-from credarr.journal import STACK_LOCK, JournalLocked
+from credarr.journal import STACK_LOCK, Journal, JournalLocked
 from credarr.model import (
     MAX_EXACT_INT,
     NAME_RE,
@@ -427,6 +427,13 @@ class HoldersBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     consumers: list[HolderBody] = Field(default_factory=list)
+
+
+# CredentialPatch fields that change the rotation plan a resume would follow.
+# Metadata (description, provisioned, max_age_days) is deliberately absent.
+_ROTATION_FIELDS = frozenset(
+    {"credential_class", "never_rotate", "canonical", "write", "vault", "consumers"}
+)
 
 
 class ImportBody(BaseModel):
@@ -890,24 +897,44 @@ def _stored_service_credentials(
     ]
 
 
-def _import_warnings(manifest: Manifest) -> list[dict[str, str]]:
-    """Name API keys that were imported as audit-only despite a mint source.
+def _import_warnings(
+    manifest: Manifest,
+    previous: Manifest | None = None,
+    stored: set[str] | None = None,
+) -> list[dict[str, str]]:
+    """Name imported declarations that need an operator's attention.
 
-    This is a warning, not a refusal: a password or a deliberately frozen key
-    is legitimately class B. The `_api_key` name and a service with a mint are
-    the two facts that make the declaration surprising enough to mention.
+    Audit-only API keys: a warning, not a refusal, because a password or a
+    deliberately frozen key is legitimately class B. The `_api_key` name and a
+    service with a mint are the two facts that make the declaration surprising
+    enough to mention.
+
+    Issuer changes: import preserves working copies by name, so a surviving
+    name that now derives a different service still holds the old service's
+    key. The copy is kept (clearing it is destructive); the warning says so.
     """
     mintable = known_systems()
     warnings: list[dict[str, str]] = []
     for name, credential in manifest.credentials.items():
-        if credential.credential_class != "B" and not credential.never_rotate:
-            continue
-        if not name.endswith("_api_key"):
-            continue
-        service = service_for(credential)
-        if service not in mintable:
-            continue
-        warnings.append({"credential": name, "service": service})
+        if (
+            (credential.credential_class == "B" or credential.never_rotate)
+            and name.endswith("_api_key")
+        ):
+            service = service_for(credential)
+            if service in mintable:
+                warnings.append(
+                    {"credential": name, "service": service, "kind": "audit_only"}
+                )
+        old = previous.credentials.get(name) if previous is not None else None
+        if old is not None and name in (stored or ()):
+            was, now = service_for(old), service_for(credential)
+            if was != now:
+                warnings.append({
+                    "credential": name,
+                    "service": now,
+                    "previous_service": was,
+                    "kind": "issuer_changed",
+                })
     return warnings
 
 
@@ -925,6 +952,55 @@ def _mount(app: FastAPI) -> None:
     config: Config = app.state.config
     scheduler = loop.scheduler
     registry: TargetRegistry = scheduler.registry
+
+    def unfinished_rotation(name: str, journal: Journal) -> str | None:
+        """Why this credential cannot be edited yet, or None when it is clear."""
+        unfinished = sorted(
+            {step.target for step in journal.unfinished()
+             if step.credential == name}
+        )
+        attempt = journal.open_attempts().get(name)
+        if not unfinished and attempt is None:
+            return None
+        return (
+            f"attempt {attempt} did not finish"
+            if attempt is not None
+            else "an unfinished step remains"
+        )
+
+    def value_change_guard(name: str, journal: Journal) -> None:
+        """Refuse changing the recovery baseline while a run is unfinished.
+
+        A stale lock lets a paste proceed even though the dead run's steps are
+        still open. That can replace the canonical value the resume compares
+        against, turning a mid-mint recovery into a second mint. The operator
+        resumes or takes the run over first; the value is not the recovery
+        mechanism.
+        """
+        detail = unfinished_rotation(name, journal)
+        if detail is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{name}: {detail}; resume, take it over or abandon it "
+                "before changing the stored value",
+            )
+
+    def rotation_edit_guard(name: str, journal: Journal, action: str) -> None:
+        """Refuse a change to the recovery plan while a run is unfinished.
+
+        The value guard protects the baseline; holders, class, vault and the
+        mint mechanism are the other half of the same plan. A resume reads them
+        from the current declaration, so editing one mid-recovery changes what
+        the parked value is delivered to. Metadata (description, notes) is not
+        guarded because it changes no step.
+        """
+        detail = unfinished_rotation(name, journal)
+        if detail is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{name}: {detail}; resume, take it over or abandon it "
+                f"before {action}",
+            )
 
     @contextlib.contextmanager
     def stack_write(actor: str) -> Iterator[None]:
@@ -1216,6 +1292,14 @@ def _mount(app: FastAPI) -> None:
                     for step in journal.unfinished()
                 ],
                 "stale_after_seconds": journal.stale_after,
+                # An attempt can be open with every step finished: the kill
+                # landed between the last step and `finish`. It blocks edits
+                # the same way, so the console needs it to offer Abandon even
+                # when no step is listed above.
+                "open_attempts": [
+                    {"credential": name, "attempt": attempt}
+                    for name, attempt in journal.open_attempts().items()
+                ],
             },
         }
 
@@ -1463,6 +1547,11 @@ def _mount(app: FastAPI) -> None:
             document = yaml.safe_load(store.export_text()) or {}
             spec = dict(document["credentials"][name])
             fields = body.model_fields_set
+            if fields & _ROTATION_FIELDS:
+                rotation_edit_guard(
+                    name, facade.journal_for(config),
+                    "changing its holders, class, vault or mint mechanism",
+                )
             if "description" in fields:
                 spec["description"] = body.description or ""
             if "credential_class" in fields:
@@ -1529,6 +1618,9 @@ def _mount(app: FastAPI) -> None:
             manifest = store.load_manifest()
             if name not in manifest.credentials:
                 raise HTTPException(status_code=404, detail=f"no credential named {name}")
+            rotation_edit_guard(
+                name, facade.journal_for(config), "changing its holders"
+            )
             document = yaml.safe_load(store.export_text()) or {}
             spec = dict(document["credentials"][name])
             if body.consumers:
@@ -1565,23 +1657,7 @@ def _mount(app: FastAPI) -> None:
         with stack_write(actor):
             if name not in store.load_manifest().credentials:
                 raise HTTPException(status_code=404, detail=f"no credential named {name}")
-            journal = facade.journal_for(config)
-            pending = sorted(
-                {str(step.target) for step in journal.unfinished()
-                 if step.credential == name}
-            )
-            attempt = journal.open_attempts().get(name)
-            if pending or attempt is not None:
-                detail = (
-                    f"attempt {attempt} did not finish"
-                    if attempt is not None
-                    else "an unfinished step remains"
-                )
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"{name}: {detail}; resume or take it over before "
-                    "deleting the credential",
-                )
+            rotation_edit_guard(name, facade.journal_for(config), "deleting the credential")
             if not store.delete_credential(name):
                 raise HTTPException(status_code=404, detail=f"no credential named {name}")
             loop.wake()
@@ -1591,9 +1667,11 @@ def _mount(app: FastAPI) -> None:
     def clear_value(name: str, actor: str = Depends(_actor)) -> dict[str, bool]:
         """Forget the app's copy. This never touches the service's live value."""
         try:
-            with stack_write(actor), facade.journal_for(config).lock(name, actor):
+            journal = facade.journal_for(config)
+            with stack_write(actor), journal.lock(name, actor):
                 if name not in store.load_manifest().credentials:
                     raise HTTPException(status_code=404, detail=f"no credential named {name}")
+                value_change_guard(name, journal)
                 store.clear_value(name)
         except JournalLocked as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
@@ -1697,7 +1775,9 @@ def _mount(app: FastAPI) -> None:
         record over, so it is refused until the run finishes.
         """
         try:
-            with stack_write(actor), facade.journal_for(config).lock(name, actor):
+            journal = facade.journal_for(config)
+            with stack_write(actor), journal.lock(name, actor):
+                value_change_guard(name, journal)
                 store.set_value(name, Secret(body.value))
         except JournalLocked as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
@@ -1980,6 +2060,32 @@ def _mount(app: FastAPI) -> None:
                 "run": report.execution_json(result),
             }
 
+    @authed.post("/credentials/{name}/rotation/abandon")
+    def abandon_rotation(name: str, actor: str = Depends(_actor)) -> dict[str, Any]:
+        """Close an unfinished rotation without starting a replacement.
+
+        The recovery-baseline guards refuse value, holder and URL edits while a
+        run is unfinished. When the service is unreachable no takeover can run,
+        so this is the only way to clear the record and let the operator fix the
+        service first. It touches the journal only: stored and parked values
+        stay exactly as they are, and the next rotation is a new run.
+        """
+        try:
+            with stack_write(actor), facade.journal_for(config).lock(name, actor):
+                if name not in store.load_manifest().credentials:
+                    raise HTTPException(
+                        status_code=404, detail=f"no credential named {name}"
+                    )
+                closed = facade.journal_for(config).abandon(name, actor)
+        except JournalLocked as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {
+            "ok": True,
+            "abandoned": [
+                {"target": step.target, "kind": step.kind} for step in closed
+            ],
+        }
+
     @authed.get("/services")
     def services(observe: bool = True) -> dict[str, Any]:
         """Every service the topology names: what it needs, what is missing.
@@ -2140,6 +2246,7 @@ def _mount(app: FastAPI) -> None:
                         detail=f"no stored API key for {body.credential} "
                         "belongs to this service",
                     )
+                value_change_guard(body.credential, facade.journal_for(config))
                 store.set_value(body.credential, Secret(body.key))
                 service = store.update_service(
                     name, kind=kind, url=url, notes=notes
@@ -2162,6 +2269,19 @@ def _mount(app: FastAPI) -> None:
                         detail="an unfinished rotation has a parked key for "
                         + ", ".join(sorted(pending))
                         + "; resume or abandon it before moving the URL",
+                    )
+                journal = facade.journal_for(config)
+                held = set(service_credentials)
+                busy = sorted(
+                    ({step.credential for step in journal.unfinished()}
+                     | set(journal.open_attempts())) & held
+                )
+                if busy:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="an unfinished rotation exists for "
+                        + ", ".join(busy)
+                        + "; resume, take it over or abandon it before moving the URL",
                     )
                 stored = _stored_service_credentials(store, manifest, name)
                 if len(stored) > 1:
@@ -2322,12 +2442,15 @@ def _mount(app: FastAPI) -> None:
         except ManifestError as exc:
             raise HTTPException(status_code=400, detail=exc.render()) from None
         with stack_write(actor):
+            previous = store.load_manifest()
             summary = store.import_model(manifest, mode=mode, prune=prune)
             loop.wake()
             return {
                 "ok": True,
                 **asdict(summary),
-                "warnings": _import_warnings(manifest),
+                "warnings": _import_warnings(
+                    manifest, previous, set(store.working_copy_times())
+                ),
             }
 
     # -- notification services -----------------------------------------------

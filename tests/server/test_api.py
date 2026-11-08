@@ -230,8 +230,35 @@ credentials:
         response = _raw_import(client, manifest)
     assert response.status_code == 200, response.text
     assert response.json()["warnings"] == [
-        {"credential": "seerr_api_key", "service": "seerr"}
+        {"credential": "seerr_api_key", "service": "seerr", "kind": "audit_only"}
     ]
+
+
+def test_import_warns_when_a_surviving_name_changes_issuer(app, tmp_path) -> None:
+    """Import preserves a working copy by name, so an issuer change leaves the
+    old service's key behind. The copy is kept; the warning says why."""
+    before = """
+version: 1
+credentials:
+  shared_key:
+    class: A
+    max_age_days: 90
+    canonical: {service: sonarr}
+"""
+    after = before.replace("service: sonarr", "service: prowlarr")
+    with TestClient(make_server(app, tmp_path)) as client:
+        setup_admin(client)
+        assert _raw_import(client, before).status_code == 200
+        app.store.set_value("shared_key", Secret("k" * 32))
+        response = _raw_import(client, after)
+        assert response.status_code == 200, response.text
+        assert response.json()["warnings"] == [{
+            "credential": "shared_key",
+            "service": "prowlarr",
+            "previous_service": "sonarr",
+            "kind": "issuer_changed",
+        }]
+        assert app.store.get_value("shared_key") is not None
 
 
 def test_raw_yaml_replace_requires_the_typed_confirmation(app, tmp_path) -> None:
@@ -1149,6 +1176,148 @@ def test_a_url_move_refuses_a_parked_rotation_key(server, app) -> None:
     assert "seerr_api_key" in refused.json()["detail"]
 
 
+def test_a_url_move_refuses_an_unfinished_rotation_without_a_parked_key(server, app) -> None:
+    """The journal, not only the pending store, knows a recovery is in flight.
+
+    A run killed before the mint parked a value still owns an unfinished step.
+    Moving the URL would make the resume target a different service, and the
+    pending check alone cannot see it.
+    """
+    journal = facade.journal_for(app.config)
+    attempt = journal.begin("seerr_api_key")
+    journal.step_started(attempt, 0, "mint", "seerr", "fake mint")
+    with TestClient(server) as client:
+        setup_admin(client)
+        refused = client.patch(
+            "/api/v1/services/seerr",
+            json={
+                "url": "http://elsewhere:5055",
+                "credential": "seerr_api_key",
+                "key": "new-seerr-key-0123456789",
+            },
+        )
+    assert refused.status_code == 400
+    assert "unfinished rotation" in refused.json()["detail"]
+    assert "seerr_api_key" in refused.json()["detail"]
+
+
+def test_a_value_change_is_refused_while_an_unfinished_rotation_exists(server, app) -> None:
+    """The canonical value is the resume's baseline, not a repair tool.
+
+    The lock goes stale after a crash, so the lease alone would let a paste
+    through and change what the next run compares against. The unfinished
+    attempt is the durable fact, and it must win even when nobody holds the lock.
+    """
+    journal = facade.journal_for(app.config)
+    attempt = journal.begin("sonarr_api_key")
+    journal.step_started(attempt, 0, "mint", "sonarr", "fake mint")
+    before = app.store.get_value("sonarr_api_key")
+    with TestClient(server) as client:
+        setup_admin(client)
+        pasted = client.put(
+            "/api/v1/credentials/sonarr_api_key/value",
+            json={"value": "pasted-after-crash-0123456789"},
+        )
+        cleared = client.delete("/api/v1/credentials/sonarr_api_key/value")
+    assert pasted.status_code == 409
+    assert cleared.status_code == 409
+    assert "did not finish" in pasted.json()["detail"]
+    assert app.store.get_value("sonarr_api_key") == before
+
+
+def test_a_service_key_resend_is_refused_while_a_rotation_is_unfinished(server, app) -> None:
+    """The retry branch is a value write too. A re-sent key must not overwrite
+    the baseline a parked rotation resumes against."""
+    journal = facade.journal_for(app.config)
+    attempt = journal.begin("seerr_api_key")
+    journal.step_started(attempt, 0, "mint", "seerr", "fake mint")
+    before = app.store.get_value("seerr_api_key")
+    with TestClient(server) as client:
+        setup_admin(client)
+        response = client.patch(
+            "/api/v1/services/seerr",
+            json={
+                "key": "resent-after-crash-0123456789",
+                "credential": "seerr_api_key",
+            },
+        )
+    assert response.status_code == 409
+    assert "did not finish" in response.json()["detail"]
+    assert app.store.get_value("seerr_api_key") == before
+
+
+def test_a_plan_change_is_refused_while_an_unfinished_rotation_exists(server, app) -> None:
+    """Holders and mint settings are the other half of the recovery baseline.
+
+    A resume reads them from the current declaration, so editing one while a
+    dead run's steps are open changes what the parked value is delivered to.
+    Metadata that changes no step stays editable.
+    """
+    journal = facade.journal_for(app.config)
+    attempt = journal.begin("sonarr_api_key")
+    journal.step_started(attempt, 0, "mint", "sonarr", "fake mint")
+    with TestClient(server) as client:
+        setup_admin(client)
+        holders = client.put(
+            "/api/v1/credentials/sonarr_api_key/holders",
+            json={"consumers": [{"target": "sonarr.indexers", "count": 2}]},
+        )
+        patched = client.patch(
+            "/api/v1/credentials/sonarr_api_key", json={"class": "B"}
+        )
+        metadata = client.patch(
+            "/api/v1/credentials/sonarr_api_key",
+            json={"description": "edited while a run is parked"},
+        )
+    assert holders.status_code == 409
+    assert patched.status_code == 409
+    assert "did not finish" in holders.json()["detail"]
+    assert metadata.status_code == 200
+
+
+def test_an_unfinished_rotation_can_be_abandoned_without_a_new_run(server, app) -> None:
+    """The escape when no resume can run: close the record, touch nothing.
+
+    The recovery guards refuse edits until the run is resolved. If the service
+    is unreachable no takeover can run either, so Abandon clears the record and
+    the value paste becomes available again. Stored and parked values survive.
+    """
+    journal = facade.journal_for(app.config)
+    attempt = journal.begin("sonarr_api_key")
+    journal.step_started(attempt, 0, "mint", "sonarr", "fake mint")
+    before = app.store.get_value("sonarr_api_key")
+    with TestClient(server) as client:
+        setup_admin(client)
+        first = client.post("/api/v1/credentials/sonarr_api_key/rotation/abandon")
+        assert app.store.get_value("sonarr_api_key") == before
+        second = client.post("/api/v1/credentials/sonarr_api_key/rotation/abandon")
+        pasted = client.put(
+            "/api/v1/credentials/sonarr_api_key/value",
+            json={"value": "pasted-after-abandon-0123456789"},
+        )
+    assert first.status_code == 200, first.text
+    assert first.json()["abandoned"] == [{"target": "sonarr", "kind": "mint"}]
+    assert second.status_code == 200 and second.json()["abandoned"] == []
+    assert journal.unfinished() == [] and journal.open_attempts() == {}
+    assert journal.attempt_outcome(attempt).startswith("abandoned: abandoned by")
+    assert pasted.status_code == 200, "the recovery guard must clear with the record"
+
+
+def test_abandon_refuses_a_live_rotation(server, app) -> None:
+    """A live run owns its record; only a stale one can be abandoned."""
+    journal = facade.journal_for(app.config)
+    attempt = journal.begin("sonarr_api_key")
+    journal.step_started(attempt, 0, "mint", "sonarr", "fake mint")
+    journal.try_acquire("sonarr_api_key", "a live run")
+    with TestClient(server) as client:
+        setup_admin(client)
+        response = client.post(
+            "/api/v1/credentials/sonarr_api_key/rotation/abandon"
+        )
+    assert response.status_code == 409
+    assert journal.unfinished() != []
+
+
 def test_configuration_writes_are_refused_while_a_rotation_holds_the_stack(
     app, tmp_path, monkeypatch
 ) -> None:
@@ -1539,6 +1708,23 @@ def test_status_names_an_unfinished_rotation_and_when_it_can_resume(app, tmp_pat
     assert step["detail"] == "POST /api/v3/command"
     assert step["seconds_ago"] >= 10_000
     assert step["started_at"] > 0
+
+
+def test_status_names_an_open_attempt_with_no_unfinished_step(app, tmp_path) -> None:
+    """A kill between the last step and `finish` leaves no step to list, but the
+    credential is still blocked. The console needs the attempt to offer Abandon."""
+    journal = facade.journal_for(app.config)
+    attempt = journal.begin("sonarr_api_key")
+    journal.step_started(attempt, 0, "mint", "sonarr", "done")
+    journal.step_finished(attempt, 0, "ok")
+
+    with TestClient(make_server(app, tmp_path)) as client:
+        setup_admin(client)
+        rotation = client.get("/api/v1/status").json()["rotation"]
+    assert rotation["pending"] == []
+    assert rotation["open_attempts"] == [
+        {"credential": "sonarr_api_key", "attempt": attempt}
+    ]
 
 
 def test_rotation_options_name_the_fallback_without_touching_the_stack(app, tmp_path) -> None:

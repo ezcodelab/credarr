@@ -287,6 +287,24 @@ def test_last_rotation_counts_a_finished_manual_step(journal):
     assert journal.last_rotation("prowlarr_api_key") is not None
 
 
+def test_an_abandoned_attempt_that_finished_record_counts_as_a_rotation(journal):
+    """RECORD is the key-change proof. A kill between it and `finish` must not
+    make auto believe the credential is still due and mint a second key."""
+    attempt = journal.begin("prowlarr_api_key")
+    journal.step_started(attempt, 0, "mint", "prowlarr", "backup/restore")
+    journal.step_finished(attempt, 0, "ok")
+    journal.step_started(attempt, 1, "record", "a.b", "write the new value")
+    journal.step_finished(attempt, 1, "written")
+    journal.take_over("prowlarr_api_key", "admin")
+
+    assert journal.attempt_outcome(attempt).startswith("abandoned")
+    assert journal.last_rotation("prowlarr_api_key") is not None
+    assert journal.last_rotations()["prowlarr_api_key"] is not None
+    # The strict answer still says the run did not finish; only the due clock
+    # uses the recorded fact.
+    assert journal.last_success("prowlarr_api_key") is None
+
+
 def test_last_rotations_answers_the_whole_ledger_in_one_read(journal):
     """The credentials list needs every watermark; asking once per credential
     made one screen open N database connections."""
@@ -366,3 +384,61 @@ def test_a_no_step_attempt_is_closed_by_reclaim(journal):
     open_attempts = journal.open_attempts()
     assert "prowlarr_api_key" not in open_attempts
     assert open_attempts["sonarr_api_key"] == fresh
+
+
+def test_a_takeover_cannot_be_overwritten_by_the_run_it_replaced(journal):
+    """Terminal journal rows are immutable, even when their old owner wakes up.
+
+    A run whose lease was reclaimed can still be alive. Without the
+    `finished_at IS NULL` guard its next `step_finished`/`finish` would turn the
+    takeover's `abandoned` verdict into `ok`/`completed`, making
+    `last_rotation` report a rotation that was superseded and letting the next
+    due decision treat an unfinished run as delivered.
+    """
+    attempt = journal.begin("prowlarr_api_key")
+    journal.step_started(attempt, 0, "mint", "prowlarr", "backup/restore")
+    journal.take_over("prowlarr_api_key", "admin")
+
+    # The zombie owner finishes after the takeover.
+    journal.step_finished(attempt, 0, "ok")
+    journal.finish(attempt, "completed")
+
+    with journal._connect() as db:
+        step = db.execute(
+            "SELECT outcome FROM steps WHERE attempt_id = ?", (attempt,)
+        ).fetchone()
+        row = db.execute(
+            "SELECT outcome FROM attempts WHERE id = ?", (attempt,)
+        ).fetchone()
+    assert step["outcome"].startswith("abandoned"), step["outcome"]
+    assert row["outcome"].startswith("abandoned"), row["outcome"]
+    assert journal.last_rotation("prowlarr_api_key") is None
+
+
+def test_a_zombie_cannot_open_a_step_in_a_closed_attempt(journal):
+    """A reclaimed process records its next step before checking the lease.
+
+    If that step could be inserted into the attempt a takeover already closed,
+    the credential would look interrupted again with a step no live run owns,
+    and every later run would have to reclaim it.
+    """
+    attempt = journal.begin("prowlarr_api_key")
+    journal.step_started(attempt, 0, "mint", "prowlarr", "backup/restore")
+    journal.take_over("prowlarr_api_key", "admin")
+
+    with pytest.raises(JournalLocked):
+        journal.step_started(attempt, 1, "propagate", "sonarr.indexers", "PUT")
+
+    assert journal.pending() == []
+    assert journal.unfinished() == []
+
+
+def test_a_closed_attempt_rejects_holder_rows(journal):
+    """A zombie that lost a takeover must not describe work it no longer owns."""
+    attempt = journal.begin("prowlarr_api_key")
+    journal.step_started(attempt, 0, "propagate", "sonarr.indexers", "PUT")
+    journal.take_over("prowlarr_api_key", "admin")
+
+    journal.record_holder(attempt, "sonarr.indexers", "all", "confirmed", "stale")
+
+    assert journal.holders(attempt) == []

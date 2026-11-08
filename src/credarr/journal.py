@@ -82,6 +82,8 @@ CREATE TABLE IF NOT EXISTS steps (
     kind          TEXT    NOT NULL,
     target        TEXT    NOT NULL,
     detail        TEXT,
+    handle        TEXT,
+    predecessor   TEXT,
     started_at    REAL    NOT NULL,
     finished_at   REAL,
     outcome       TEXT,
@@ -186,6 +188,20 @@ class Journal:
                 )
             if "actor" not in columns:
                 connection.execute("ALTER TABLE locks ADD COLUMN actor TEXT")
+            step_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(steps)")
+            }
+            if "handle" not in step_columns:
+                # The reissue mint's row handle: written before RECORD so a
+                # crash after it can revoke the predecessor without minting a
+                # third secret.
+                connection.execute("ALTER TABLE steps ADD COLUMN handle TEXT")
+            if "predecessor" not in step_columns:
+                # The predecessor row's id, so a resumed revoke still finds it
+                # after an operator rename. An id, never a secret.
+                connection.execute(
+                    "ALTER TABLE steps ADD COLUMN predecessor TEXT"
+                )
             # One-time migration, guarded so the common case writes nothing.
             if connection.execute(
                 "SELECT 1 FROM locks WHERE token = '' LIMIT 1"
@@ -389,21 +405,84 @@ class Journal:
         Written *before* the step runs. That ordering is the whole point: a
         record with no matching finish means the process died inside the step,
         which is exactly the case an operator needs to be told about.
+
+        A closed attempt is immutable. A process whose lock was reclaimed can
+        still be alive and reach its next step; without this guard it would
+        insert a fresh unfinished step into an attempt a takeover already
+        closed, re-blocking the credential with a step no live run owns.
+        """
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute(
+                    "SELECT finished_at FROM attempts WHERE id = ?", (attempt,)
+                ).fetchone()
+                if row is None or row["finished_at"] is not None:
+                    raise JournalLocked(
+                        f"attempt {attempt} is already closed",
+                        hint="the run that owned it was taken over or reclaimed; "
+                        "this step belongs to no live rotation",
+                    )
+                cursor = db.execute(
+                    "INSERT OR IGNORE INTO steps "
+                    "(attempt_id, ordinal, kind, target, detail, started_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (attempt, ordinal, kind, target, detail, time.time()),
+                )
+                if cursor.rowcount == 0:
+                    raise JournalLocked(
+                        f"step {ordinal} of attempt {attempt} already exists",
+                        hint="a step is recorded once; retrying the same ordinal "
+                        "would erase the evidence of the first attempt",
+                    )
+                db.execute("COMMIT")
+            except BaseException:
+                db.execute("ROLLBACK")
+                raise
+
+    def step_handle(self, attempt: int, ordinal: int, handle: str) -> None:
+        """Record a step's service-side row handle while the step is still open.
+
+        A create-alongside mint knows the row id as soon as the create answers.
+        Writing it here, before the step finishes, means a kill in the gap
+        still leaves the handle the next run needs to adopt the successor it
+        parked instead of minting a third secret.
         """
         with self._connect() as db:
             db.execute(
-                "INSERT OR REPLACE INTO steps "
-                "(attempt_id, ordinal, kind, target, detail, started_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (attempt, ordinal, kind, target, detail, time.time()),
+                "UPDATE steps SET handle = ? "
+                "WHERE attempt_id = ? AND ordinal = ? AND finished_at IS NULL",
+                (handle, attempt, ordinal),
             )
 
-    def step_finished(self, attempt: int, ordinal: int, outcome: str) -> None:
+    def step_predecessor(self, attempt: int, ordinal: int, row_id: str) -> None:
+        """Record the row id this mint will replace, before it creates anything."""
         with self._connect() as db:
             db.execute(
-                "UPDATE steps SET finished_at = ?, outcome = ? "
-                "WHERE attempt_id = ? AND ordinal = ?",
-                (time.time(), outcome, attempt, ordinal),
+                "UPDATE steps SET predecessor = ? "
+                "WHERE attempt_id = ? AND ordinal = ? AND finished_at IS NULL",
+                (row_id, attempt, ordinal),
+            )
+
+    def step_finished(self, attempt: int, ordinal: int, outcome: str,
+                      handle: str | None = None) -> None:
+        """Close a started step once. A takeover already closed it wins.
+
+        The conditional update is the takeover's precedence rule: a run whose
+        lease was reclaimed must not turn an `abandoned` step into `ok` after
+        the fact, because `last_rotation` reads those outcomes to decide
+        whether a key was really delivered.
+
+        `handle` is the row id a reissue mint created. It is recorded with the
+        mint step, before RECORD, so a crash after RECORD can finish the run
+        without minting again. It is a row id, never a secret.
+        """
+        with self._connect() as db:
+            db.execute(
+                "UPDATE steps SET finished_at = ?, outcome = ?, "
+                "handle = COALESCE(?, handle) "
+                "WHERE attempt_id = ? AND ordinal = ? AND finished_at IS NULL",
+                (time.time(), outcome, handle, attempt, ordinal),
             )
 
     def attempt_outcome(self, attempt: int) -> str | None:
@@ -418,7 +497,8 @@ class Journal:
         after the fact without exposing any value."""
         with self._connect() as db:
             rows = db.execute(
-                "SELECT ordinal, kind, target, detail, finished_at, outcome "
+                "SELECT ordinal, kind, target, detail, handle, predecessor, "
+                "       finished_at, outcome "
                 "FROM steps WHERE attempt_id = ? ORDER BY ordinal",
                 (attempt,),
             ).fetchall()
@@ -432,14 +512,17 @@ class Journal:
         lives on the machine being changed. This is the controller's record of
         what it *did*, which is what an operator needs after a crash: the answer
         to "which of the sixteen did we already write" cannot come from the
-        thing that may be half-changed.
+        thing that may be half-changed. A closed attempt (taken over or
+        reclaimed) accepts no new rows: the zombie that closed it no longer owns
+        the record.
         """
         with self._connect() as db:
             db.execute(
                 "INSERT OR REPLACE INTO holders "
                 "(attempt_id, target, label, outcome, detail, recorded_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (attempt, target, label, outcome, detail, time.time()),
+                "SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS ("
+                "  SELECT 1 FROM attempts WHERE id = ? AND finished_at IS NULL)",
+                (attempt, target, label, outcome, detail, time.time(), attempt),
             )
 
     def holders(self, attempt: int) -> list[dict]:
@@ -466,9 +549,11 @@ class Journal:
         return int(row["id"]) if row else None
 
     def finish(self, attempt: int, outcome: str) -> None:
+        """Close an attempt once; a takeover or reclaim that already closed it wins."""
         with self._connect() as db:
             db.execute(
-                "UPDATE attempts SET finished_at = ?, outcome = ? WHERE id = ?",
+                "UPDATE attempts SET finished_at = ?, outcome = ? "
+                "WHERE id = ? AND finished_at IS NULL",
                 (time.time(), outcome, attempt),
             )
 
@@ -524,12 +609,23 @@ class Journal:
         could run did run, an outstanding manual copy must not make the worker
         retry on the next audit. A holder written but not read back is the same
         case - the key changed, the copy is unproven, and the operator has been
-        told. Failed/abandoned/unfinished steps still do not count.
+        told. Failed/unfinished steps still do not count. An abandoned attempt
+        whose RECORD step finished did rotate; counting it stops auto from
+        minting a second key just because the process died before `finish`.
         """
         with self._connect() as db:
             row = db.execute(
                 "SELECT a.finished_at FROM attempts a "
-                "WHERE a.credential = ? AND a.outcome = 'completed' "
+                "WHERE a.credential = ? AND ("
+                "  a.outcome = 'completed' OR ("
+                "    a.outcome LIKE 'abandoned%' AND EXISTS ("
+                "      SELECT 1 FROM steps r WHERE r.attempt_id = a.id "
+                "        AND r.kind = 'record' AND r.finished_at IS NOT NULL "
+                "        AND r.outcome NOT LIKE 'failed%' "
+                "        AND r.outcome NOT LIKE 'abandoned%'"
+                "    )"
+                "  )"
+                ") "
                 "  AND a.finished_at IS NOT NULL "
                 "  AND NOT EXISTS ("
                 "    SELECT 1 FROM steps s WHERE s.attempt_id = a.id AND ("
@@ -558,7 +654,16 @@ class Journal:
                 "WITH eligible AS ("
                 "  SELECT a.id, a.credential, a.finished_at "
                 "  FROM attempts a "
-                "  WHERE a.finished_at IS NOT NULL AND a.outcome = 'completed' "
+                "  WHERE a.finished_at IS NOT NULL AND ("
+                "    a.outcome = 'completed' OR ("
+                "      a.outcome LIKE 'abandoned%' AND EXISTS ("
+                "        SELECT 1 FROM steps r WHERE r.attempt_id = a.id "
+                "          AND r.kind = 'record' AND r.finished_at IS NOT NULL "
+                "          AND r.outcome NOT LIKE 'failed%' "
+                "          AND r.outcome NOT LIKE 'abandoned%'"
+                "      )"
+                "    )"
+                "  ) "
                 "    AND NOT EXISTS ("
                 "      SELECT 1 FROM steps s WHERE s.attempt_id = a.id AND ("
                 "        s.finished_at IS NULL "
@@ -666,6 +771,26 @@ class Journal:
             )
         return [_pending(r) for r in rows]
 
+    def _close_unfinished(self, credential: str, outcome: str) -> list[PendingStep]:
+        """Close every unfinished step and attempt of one credential."""
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT s.attempt_id, a.credential, s.ordinal, s.kind, s.target, "
+                "       s.detail, s.started_at "
+                "FROM steps s JOIN attempts a ON a.id = s.attempt_id "
+                "WHERE s.finished_at IS NULL AND a.credential = ? "
+                "ORDER BY s.started_at",
+                (credential,),
+            ).fetchall()
+            db.execute(
+                "UPDATE steps SET finished_at = ?, outcome = ? "
+                "WHERE finished_at IS NULL AND attempt_id IN "
+                "      (SELECT id FROM attempts WHERE credential = ?)",
+                (time.time(), outcome, credential),
+            )
+            self._close_reclaimed_attempts(db, credential, outcome)
+        return [_pending(r) for r in rows]
+
     def take_over(self, credential: str, actor: str | None) -> list[PendingStep]:
         """Close a credential's unfinished steps now, because a human said so.
 
@@ -680,25 +805,18 @@ class Journal:
         never gets here without the lock.
         """
         who = actor or "an unnamed caller"
-        with self._connect() as db:
-            rows = db.execute(
-                "SELECT s.attempt_id, a.credential, s.ordinal, s.kind, s.target, "
-                "       s.detail, s.started_at "
-                "FROM steps s JOIN attempts a ON a.id = s.attempt_id "
-                "WHERE s.finished_at IS NULL AND a.credential = ? "
-                "ORDER BY s.started_at",
-                (credential,),
-            ).fetchall()
-            db.execute(
-                "UPDATE steps SET finished_at = ?, outcome = ? "
-                "WHERE finished_at IS NULL AND attempt_id IN "
-                "      (SELECT id FROM attempts WHERE credential = ?)",
-                (time.time(), f"abandoned: taken over by {who}", credential),
-            )
-            self._close_reclaimed_attempts(
-                db, credential, f"abandoned: taken over by {who}"
-            )
-        return [_pending(r) for r in rows]
+        return self._close_unfinished(credential, f"abandoned: taken over by {who}")
+
+    def abandon(self, credential: str, actor: str | None) -> list[PendingStep]:
+        """Close the record without authorising a replacement run.
+
+        A takeover starts a new run; an abandon does not. It exists for the case
+        a takeover cannot serve: the service is unreachable, so no plan can run,
+        and the credential must stop looking "in progress" before it can be
+        fixed. Stored and parked values are left exactly as they are.
+        """
+        who = actor or "an unnamed caller"
+        return self._close_unfinished(credential, f"abandoned: abandoned by {who}")
 
     def pending(self) -> list[PendingStep]:
         """Steps that started and never finished and are still recent enough to

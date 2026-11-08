@@ -111,8 +111,13 @@ class Scheduler:
             return audit_wait
         if due <= now:
             # A due still in the past after the audit that covered it is
-            # blocked; retry on the normal cadence.
-            return 0.0 if woken else audit_wait
+            # blocked; retry on the normal cadence. With scheduled audits off
+            # there is no audit wait to borrow, but the configured interval is
+            # still the only retry cadence the worker has - returning None here
+            # would sleep until an unrelated wake.
+            return 0.0 if woken else (
+                audit_wait if audit_wait is not None else self.interval
+            )
         if audit_wait is None:
             return due - now
         return min(audit_wait, due - now)

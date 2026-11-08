@@ -10,6 +10,7 @@ Start with `../README.md` (install, first boot, connect an app), then:
 | --- | --- |
 | `CONCEPTS.md` | Holder map, audit statuses and reason codes, classes, exit codes |
 | `ARCHITECTURE.md` | Engine / server / console layout, stores, load-bearing invariants |
+| `STATE_MACHINES.md` | Explicit and implicit lifecycle states, invariants, transition tables, and the confirmed invalid transitions |
 | `OPERATING.md` | Audit, rotation, Servarr routes, auto-rotation, notifications, backups, discovery, console map |
 | `UI_SYSTEM.md` | Console design system: tokens, components, states, accessibility, gallery, how to extend |
 | `SERVICES.md` | Mint shapes and per-service coverage with measured versions |

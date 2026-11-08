@@ -211,13 +211,35 @@ class FakeAPI:
         return 404, None
 
 
-def _executor(tmp_path: Path, api: FakeAPI, text: str, vault_value: str):
+class FakePending:
+    """An in-memory pending store, enough for the park-and-adopt path."""
+
+    def __init__(self) -> None:
+        self.values: dict[str, Secret] = {}
+
+    def get(self, credential: str) -> Secret | None:
+        return self.values.get(credential)
+
+    def set(self, credential: str, value: Secret) -> None:
+        self.values[credential] = value
+
+    def clear(self, credential: str) -> None:
+        self.values.pop(credential, None)
+
+
+def _executor(tmp_path: Path, api: FakeAPI, text: str, vault_value: str,
+              *, recorded: dict | None = None, pending=None):
     ctx = RotationContext(
         credential=_credential(text),
         host=HOST,
         transport=None,  # not reached: every call is the fake
         journal=Journal(tmp_path / "j.db"),
         vault_value=vault_value,
+        vault_setter=(
+            (lambda secret: recorded.update(value=secret))
+            if recorded is not None else None
+        ),
+        pending=pending,
         settle_timeout=0.0,
     )
     return Executor(ctx, servarr_call=api), ctx
@@ -363,6 +385,94 @@ def test_grafana_revoke_deletes_the_predecessor_and_its_strays(tmp_path):
 
     assert "revoked 2" in detail
     assert [record["value"] for record in api.grafana_tokens.values()] == [GRAFANA_NEW]
+
+
+def test_a_crash_after_record_resumes_a_reissue_without_minting(tmp_path):
+    """The handle recorded on the mint step lets the resume revoke the
+    predecessor without creating a third token."""
+    api = FakeAPI()
+    recorded = {}
+    executor, ctx = _executor(
+        tmp_path, api, GRAFANA_MANIFEST, GRAFANA_NEW, recorded=recorded
+    )
+    # What the dead run left: the successor is live and canonical, and the
+    # predecessor survives because the revoke runs last.
+    api.grafana_tokens["12"] = {
+        "name": GRAFANA_NAME + ".credarr.1700000000", "value": GRAFANA_NEW,
+    }
+    prior = ctx.journal.begin("grafana_api_token")
+    ctx.journal.step_started(prior, 0, "mint", "grafana", "create")
+    ctx.journal.step_handle(prior, 0, "12")
+    ctx.journal.step_predecessor(prior, 0, "11")
+    ctx.journal.step_finished(prior, 0, "ok", handle="12")
+    ctx.journal.step_started(prior, 1, "record", "a.b", "write")
+    ctx.journal.step_finished(prior, 1, "written")
+    # Renamed after the crash, outside the base/namespace the sweep matches: the
+    # recorded id is the only way to find it.
+    api.grafana_tokens["11"]["name"] = "renamed-by-the-operator"
+
+    result = executor.execute(plan_rotation(_credential(GRAFANA_MANIFEST), HOST))
+
+    assert result.ok, result.detail
+    assert result.resumed
+    assert not [call for call in api.calls if call[1] == "POST"], "minted again"
+    assert "11" not in api.grafana_tokens
+    assert api.grafana_tokens["12"]["value"] == GRAFANA_NEW
+    assert recorded["value"] == Secret(GRAFANA_NEW)
+    assert ctx.journal.steps(prior)[0]["handle"] == "12"
+    assert ctx.journal.attempt_outcome(result.attempt) == "completed"
+
+
+def test_a_reissue_without_a_recorded_handle_re_mints(tmp_path):
+    """The handle is the proof the successor exists. Without it the resume
+    cannot identify the row to keep, so the measured re-mint path runs."""
+    api = FakeAPI()
+    recorded = {}
+    executor, ctx = _executor(
+        tmp_path, api, GRAFANA_MANIFEST, GRAFANA_OLD, recorded=recorded
+    )
+    prior = ctx.journal.begin("grafana_api_token")
+    ctx.journal.step_started(prior, 0, "mint", "grafana", "create")
+    ctx.journal.step_finished(prior, 0, "ok")
+    ctx.journal.step_started(prior, 1, "record", "a.b", "write")
+    ctx.journal.step_finished(prior, 1, "written")
+
+    result = executor.execute(plan_rotation(_credential(GRAFANA_MANIFEST), HOST))
+
+    assert result.ok, result.detail
+    assert not result.resumed
+    assert [call for call in api.calls if call[1] == "POST"], "did not re-mint"
+
+
+def test_a_mint_that_died_before_its_step_adopts_the_parked_row(tmp_path):
+    """The create returned the only copy of the value, then the process died
+    before the mint step finished. The parked value plus the handle recorded on
+    the open step let the next run finish without a third secret."""
+    api = FakeAPI()
+    pending = FakePending()
+    recorded = {}
+    executor, ctx = _executor(
+        tmp_path, api, GRAFANA_MANIFEST, GRAFANA_OLD,
+        recorded=recorded, pending=pending,
+    )
+    api.grafana_tokens["12"] = {
+        "name": GRAFANA_NAME + ".credarr.1700000000", "value": GRAFANA_NEW,
+    }
+    pending.values["grafana_api_token"] = Secret(GRAFANA_NEW)
+    prior = ctx.journal.begin("grafana_api_token")
+    ctx.journal.step_started(prior, 0, "mint", "grafana", "create")
+    ctx.journal.step_handle(prior, 0, "12")
+    ctx.take_over = True
+
+    result = executor.execute(plan_rotation(_credential(GRAFANA_MANIFEST), HOST))
+
+    assert result.ok, result.detail
+    assert result.resumed
+    assert not [call for call in api.calls if call[1] == "POST"], "minted again"
+    assert "11" not in api.grafana_tokens
+    assert api.grafana_tokens["12"]["value"] == GRAFANA_NEW
+    assert recorded["value"] == Secret(GRAFANA_NEW)
+    assert pending.values == {}, "RECORD did not clear the parked copy"
 
 
 def test_grafana_revoke_fails_closed_when_the_old_token_survives(tmp_path):

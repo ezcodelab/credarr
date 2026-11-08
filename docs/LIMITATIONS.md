@@ -18,13 +18,19 @@ v1 limit, not a roadmap promise.
   crash can leave a temporary full-backup archive on the service (delete
   before retrying); a supervisor that restarts the service is required.
   Reconstructed restore may reset unexposed fields and refuses PostgreSQL.
-  Reissue mints can leave residue on a crash (no pending-value coverage).
+  Reissue mints park the created value and its row ids before RECORD, so a
+  later run adopts the successor instead of minting a third; a kill between
+  the create response and that write can still leave a stray row, which the
+  revoke's name sweep removes.
   `live` is not savability. A content-broken indexer row can pass its test
   yet refuse the holder save after revocation. Fix or remove that row before
   rotating the issuer.
-- **Recovery posture:** no Abandon button and no snapshots. Resume is the
-  convergence path. Deletion is refused while steps or attempts are open. The
-  manual-copy reminder lives in per-browser localStorage and is never verification.
+- **Recovery posture:** no snapshots or undo. Resume is the convergence path.
+  When the service is unreachable, Abandon (console, `POST
+  /credentials/{name}/rotation/abandon`, `credarr rotate <name> --abandon`)
+  closes the record without touching the service or the values. Deletion is
+  refused while steps or attempts are open. The manual-copy reminder lives in
+  per-browser localStorage and is never verification.
 - **Unproven stays unproven:** no wording lifts Lidarr/Readarr/Whisparr
   indexer rows, Basic auth, the manual mint's full run, and SMTP TLS modes
   stay unproven. All remain `[T]`.

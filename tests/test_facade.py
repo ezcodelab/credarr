@@ -453,8 +453,54 @@ def test_rotate_reports_a_missing_manifest_like_audit(tmp_path, capsys):
     assert "Traceback" not in audit_err
 
 
-# -- 8. rotate load resolution ------------------------------------------------
+def test_the_cli_abandons_an_unfinished_rotation_without_a_plan(tmp_path, capsys):
+    """The server-down exit: close the record, mint nothing, change no value."""
+    (tmp_path / "credentials.yaml").write_text("version: 1\n", encoding="utf-8")
+    config_path = tmp_path / "credarr.yaml"
+    config_path.write_text(
+        "version: 1\n"
+        "default_host: local\n"
+        "manifest: credentials.yaml\n"
+        "hosts:\n"
+        "  local: {}\n",
+        encoding="utf-8",
+    )
+    journal = facade.journal_for(load_config(config_path))
+    attempt = journal.begin("sonarr_api_key")
+    journal.step_started(attempt, 0, "mint", "sonarr", "test step")
 
+    code = cli.main(
+        ["-c", str(config_path), "rotate", "sonarr_api_key", "--abandon"]
+    )
+
+    assert code == ExitCode.OK
+    assert "Abandoned 1 unfinished step(s)" in capsys.readouterr().out
+    assert journal.unfinished() == []
+    assert journal.attempt_outcome(attempt).startswith("abandoned: abandoned by")
+
+
+def test_abandon_is_its_own_action(tmp_path, capsys):
+    """It closes a record rather than rotating, so it cannot carry a run's flags."""
+    (tmp_path / "credentials.yaml").write_text("version: 1\n", encoding="utf-8")
+    config_path = tmp_path / "credarr.yaml"
+    config_path.write_text(
+        "version: 1\n"
+        "default_host: local\n"
+        "manifest: credentials.yaml\n"
+        "hosts:\n"
+        "  local: {}\n",
+        encoding="utf-8",
+    )
+
+    code = cli.main(
+        ["-c", str(config_path), "rotate", "sonarr_api_key", "--abandon", "--apply"]
+    )
+
+    assert code == ExitCode.USAGE
+    assert "cannot be combined" in capsys.readouterr().err
+
+
+# -- 8. rotate load resolution ------------------------------------------------
 
 def test_rotate_honors_the_manifest_override(tmp_path, capsys):
     """`-m` names the manifest rotate reads, the way audit already resolves it.

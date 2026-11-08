@@ -211,6 +211,22 @@ test("an imported audit-only API key names the service that can rotate it", () =
   assert.deepEqual(importWarningLines(null), []);
 });
 
+test("an imported issuer change says the stored value is still the old one", () => {
+  assert.deepEqual(
+    importWarningLines([
+      {
+        credential: "sonarr_api_key",
+        service: "prowlarr",
+        previous_service: "sonarr",
+        kind: "issuer_changed",
+      },
+    ]),
+    [
+      "Sonarr API Key changed issuer from Sonarr to Prowlarr, but its stored value is still the old service's. Paste the new key or clear the stored value before rotating.",
+    ],
+  );
+});
+
 test("a refusal says the outcome once, then only what can be acted on", () => {
   assert.deepEqual(
     refusalLines(

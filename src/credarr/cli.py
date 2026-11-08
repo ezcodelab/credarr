@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import getpass
+import json
 import os
 import sys
 from collections.abc import Mapping
@@ -113,6 +114,12 @@ def build_parser() -> argparse.ArgumentParser:
         "taken over, instead of waiting for them to age out. The run still "
         "reads the service's own state first, so an earlier mint is resumed, "
         "not repeated",
+    )
+    rotate.add_argument(
+        "--abandon", action="store_true",
+        help="close this credential's unfinished rotation without minting or "
+        "revoking anything, then stop. Use it when the service is unreachable "
+        "and no resume can run; stored and parked values are left as they are",
     )
     rotate.add_argument(
         "--actor", metavar="WHO", default=None,
@@ -273,7 +280,7 @@ def _rotate(args: argparse.Namespace) -> int:
     cannot rotate the same stack at once.
     """
     lock: contextlib.AbstractContextManager[object] = contextlib.nullcontext()
-    if args.apply and not args.dry_run:
+    if getattr(args, "abandon", False) or (args.apply and not args.dry_run):
         lock = InstanceLock(_lock_dir(args))
     with lock:
         return _rotate_locked(args)
@@ -291,6 +298,57 @@ def _lock_dir(args: argparse.Namespace) -> Path:
     return args.config.resolve().parent
 
 
+def _abandon(config: Config, args: argparse.Namespace) -> int:
+    """Close one credential's unfinished rotation; never touch the service.
+
+    The server's own exit when no resume can run is `POST .../rotation/abandon`.
+    This is the same record-only action for the case the server is down: it
+    takes the instance lock (a journal write) and the credential lease, then
+    closes the unfinished steps and attempt without minting or revoking.
+    """
+    if (
+        args.apply
+        or args.dry_run
+        or args.take_over
+        or getattr(args, "manual_value_stdin", False)
+    ):
+        print(
+            "--abandon is its own action; it cannot be combined with --apply, "
+            "--dry-run, --take-over or --manual-value-stdin",
+            file=sys.stderr,
+        )
+        return ExitCode.USAGE
+    journal = facade.journal_for(config)
+    with journal.lock(args.credential, args.actor):
+        closed = journal.abandon(args.credential, args.actor)
+    if args.as_json:
+        print(json.dumps(
+            {
+                "credential": args.credential,
+                "abandoned": [
+                    {"target": step.target, "kind": step.kind}
+                    for step in closed
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        ))
+    elif closed:
+        print(
+            f"Abandoned {len(closed)} unfinished step(s) for "
+            f"{args.credential}:"
+        )
+        for step in closed:
+            print(f"  - {step.target} ({step.kind})")
+        print(
+            "Nothing was minted or revoked; stored and parked values are "
+            "untouched."
+        )
+    else:
+        print(f"{args.credential} has no unfinished rotation; nothing changed.")
+    return ExitCode.OK
+
+
 def _rotate_locked(args: argparse.Namespace) -> int:
     """Print the plan. Apply only when explicitly asked.
 
@@ -300,6 +358,8 @@ def _rotate_locked(args: argparse.Namespace) -> int:
     """
     config_path = args.config.resolve()
     config = load_config(config_path)
+    if getattr(args, "abandon", False):
+        return _abandon(config, args)
     # Resolved the way audit resolves it: -m wins, the vault is read relative
     # to whichever manifest won, and the journal stays with the config.
     manifest_path = args.manifest or config.manifest

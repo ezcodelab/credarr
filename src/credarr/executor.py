@@ -36,6 +36,7 @@ leaves the stack broken in a way nobody can see:
 from __future__ import annotations
 
 import base64
+import contextlib
 import copy
 import io
 import json
@@ -52,7 +53,7 @@ from xml.sax.saxutils import escape as _xml_escape
 from . import __version__
 from .config import HostConfig
 from .errors import ConfigError, CredctlError, RotationError, TransportError
-from .journal import Journal
+from .journal import Journal, PendingStep
 from .model import Credential, parse_row_selector, split_target
 from .pending import PendingSecrets
 from .redact import Secret, scrub, scrub_url_credentials
@@ -97,6 +98,11 @@ MAX_WRITE_INTERVAL = 30.0
 # another value is safe; three attempts cover a validator with a narrow rule
 # without turning a real refusal into an endless mint.
 MINT_VALUE_ATTEMPTS = 3
+# Mints that park the chosen value before mutating the service and revoke the
+# canonical key at the mint. After a crash that reached RECORD, the parked or
+# canonical value is the only key the service accepts; minting again would
+# revoke the key the holders just received.
+PENDING_MINTS = frozenset({"reset", "rotate", "sabnzbd_rotate", "bazarr_rotate", "regenerate"})
 
 # Sonarr validates an indexer while saving it, which can involve contacting it.
 # Three of ten took over five seconds and some exceeded thirty, so a short
@@ -411,6 +417,17 @@ class RotationContext:
     holders: list[HolderOutcome] = field(default_factory=list)
     # Set once the run has an attempt id, so holder state can be journalled.
     attempt: int | None = None
+    # Set before the first step when the previous attempt reached RECORD but
+    # never finished. The run completes from RECORD instead of minting again.
+    prior_record: bool = False
+    prior_attempt: int | None = None
+    # The handle a dead run's reissue mint recorded before it died. When the
+    # value it created is still parked, the mint adopts that row instead of
+    # creating a third secret.
+    prior_mint_handle: str = ""
+    # The ordinal of the step being dispatched, for a mint that must record its
+    # handle before the step itself finishes.
+    current_ordinal: int = -1
     # Called after the attempt row exists; a scheduler uses it to record a
     # truthful "started" event, never one with a fake status transition.
     on_started: Callable[[int], None] | None = None
@@ -995,6 +1012,153 @@ class Executor:
                               "the step before this one failed")
             )
 
+    def _adoptable_mint_handle(
+        self,
+        plan: RotationPlan,
+        previous: int | None,
+        previous_outcome: str | None,
+    ) -> str:
+        """The handle of a create-alongside mint that died before finishing.
+
+        The service returned the successor once and the mint parked it. A crash
+        between the create and the mint step's finish leaves the row live, its
+        parked value durable, and the handle on the open step. Adopting that
+        pair finishes the rotation without creating a third secret; without the
+        handle the slot is ignored and the normal mint path runs.
+
+        A reached RECORD is `_resume_after_record`'s shape, and Jellyfin records
+        no handle by design (its revoke sweeps by name).
+        """
+        if previous is None or self._ctx.pending is None:
+            return ""
+        if previous_outcome is not None:
+            abandoned = str(previous_outcome).startswith("abandoned")
+            if not abandoned or not self._ctx.take_over:
+                return ""
+        mint = next(
+            (step for step in plan.steps if step.kind is StepKind.MINT), None
+        )
+        if mint is None:
+            return ""
+        if (
+            mint.target not in REISSUERS
+            and str(self._ctx.credential.write.get("mechanism") or "")
+            != "gitea_hook_secret"
+        ):
+            return ""
+        steps = self._ctx.journal.steps(previous)
+        if any(
+            step["kind"] == StepKind.RECORD.value
+            and step["finished_at"] is not None
+            and not str(step["outcome"] or "").startswith(("failed", "abandoned"))
+            for step in steps
+        ):
+            return ""
+        return next(
+            (
+                str(step["handle"]) for step in steps
+                if step["kind"] == StepKind.MINT.value and step["handle"]
+            ),
+            "",
+        )
+
+    def _resume_after_record(
+        self,
+        plan: RotationPlan,
+        previous: int | None,
+        previous_outcome: str | None,
+        reclaimed: list[PendingStep],
+    ) -> bool:
+        """Whether this run can finish from the previous attempt's RECORD.
+
+        A kill after the canonical write but before the attempt was closed
+        leaves an open attempt whose RECORD step is finished (or whose
+        unfinished step this run just reclaimed). Minting again would revoke
+        the key the service and every holder already received. Two mint shapes
+        can finish from here: the pending-backed mints, and a create-alongside
+        mint that recorded the row handle it created before RECORD. Jellyfin
+        records no handle and deliberately re-mints and sweeps by name.
+        """
+        if previous is None:
+            return False
+        # A completed or failed attempt is history. Only an open attempt or one
+        # a previous takeover/reclaim already closed can hide a half-done RECORD.
+        if previous_outcome is not None and not str(previous_outcome).startswith("abandoned"):
+            return False
+        # An already-abandoned attempt is history unless this run explicitly
+        # takes it over. A plain new rotation (a due policy, or an operator
+        # pressing Rotate again later) is asking for a new key, not a resume.
+        if previous_outcome is not None and not self._ctx.take_over:
+            return False
+        mint = next((step for step in plan.steps if step.kind is StepKind.MINT), None)
+        if mint is None or self._ctx.vault_value is None:
+            return False
+        source = MINT_SOURCES.get(mint.target)
+        pending_mint = source is not None and source.mechanism in PENDING_MINTS
+        if pending_mint and self._ctx.pending is None:
+            return False
+        if not any(step.kind is StepKind.RECORD for step in plan.steps):
+            return False
+        previous_steps = self._ctx.journal.steps(previous)
+        handle = next(
+            (str(step["handle"]) for step in previous_steps
+             if step["kind"] == StepKind.MINT.value and step["handle"]),
+            None,
+        )
+        if not pending_mint and handle is None:
+            return False
+        record_steps = [
+            step for step in previous_steps
+            if step["kind"] == StepKind.RECORD.value
+        ]
+        if not record_steps:
+            return False
+        abandoned = str(previous_outcome or "").startswith("abandoned")
+        if not abandoned:
+            took_over_record = any(
+                step.attempt_id == previous and step.kind == StepKind.RECORD.value
+                for step in reclaimed
+            )
+            finished_record = any(
+                step["finished_at"] is not None
+                and not str(step["outcome"] or "").startswith("abandoned")
+                and not str(step["outcome"] or "").startswith("failed")
+                for step in record_steps
+            )
+            if not took_over_record and not finished_record:
+                return False
+        name = plan.credential.name
+        candidate = (
+            self._ctx.pending.get(name) if self._ctx.pending is not None else None
+        )
+        if (
+            pending_mint
+            and candidate is not None
+            and candidate.reveal() != self._ctx.vault_value
+        ):
+            # RECORD had not written the canonical value yet. The parked value
+            # is still the successor; the normal mint path resumes it.
+            return False
+        # The canonical value must be the one the service is actually using
+        # before it can stand in for the mint. If it does not authenticate, the
+        # pending store was lost or the operator changed the wrong copy; the
+        # normal mint path will fail closed rather than propagate the old key.
+        verdict, _detail = self._authenticate_settled(
+            mint.target, self._ctx.vault_value
+        )
+        if verdict != "live":
+            return False
+        if candidate is not None:
+            self._ctx.pending.clear(name)
+        self._ctx.prior_record = True
+        self._ctx.prior_attempt = previous
+        self._ctx.minted = Secret(self._ctx.vault_value)
+        self._ctx.minted_service = mint.target
+        if handle is not None:
+            self._ctx.minted_handle = handle
+        self._ctx.resumed = True
+        return True
+
     def execute(self, plan: RotationPlan) -> ExecutionResult:
         # The plan chose the mint mechanism; the executor must not guess a
         # different one after approval.
@@ -1018,37 +1182,75 @@ class Executor:
         # does not by itself authorise the mint - the backup/restore mint
         # re-derives from the pending store and the vault whether a restore
         # already happened, and resumes it if so.
-        reclaimed = self._ctx.journal.reclaim_stale(plan.credential.name)
+        name = plan.credential.name
+        previous = self._ctx.journal.open_attempts().get(name)
+        if previous is None:
+            previous = self._ctx.journal.last_attempt(name)
+        previous_outcome = (
+            self._ctx.journal.attempt_outcome(previous)
+            if previous is not None else None
+        )
+        reclaimed = self._ctx.journal.reclaim_stale(name)
         if self._ctx.take_over:
             # Under the lock, so the run that left these behind is not holding
             # it any more; the row still says who decided, because "presumed
             # dead" is a claim about a process, and this one is about a person.
-            reclaimed += self._ctx.journal.take_over(
-                plan.credential.name, self._ctx.actor
+            reclaimed += self._ctx.journal.take_over(name, self._ctx.actor)
+        resume_recorded = self._resume_after_record(
+            plan, previous, previous_outcome, reclaimed
+        )
+        if not resume_recorded:
+            self._ctx.prior_mint_handle = self._adoptable_mint_handle(
+                plan, previous, previous_outcome
             )
-        result = ExecutionResult(credential=plan.credential.name, attempt=0)
+        if resume_recorded and previous is not None:
+            # The dead attempt's holder rows are the evidence that the
+            # propagation completed before RECORD; keep them for the report
+            # instead of re-writing every holder just to lose their proof.
+            self._ctx.holders = [
+                HolderOutcome(row["target"], row["label"], row["outcome"],
+                              row["detail"])
+                for row in self._ctx.journal.holders(previous)
+            ]
+        record_ordinal = next(
+            (index for index, step in enumerate(plan.steps)
+             if step.kind is StepKind.RECORD),
+            len(plan.steps),
+        )
+        result = ExecutionResult(credential=name, attempt=0)
         result.reclaimed = [(p.target, p.detail) for p in reclaimed]
-        result.attempt = self._ctx.journal.begin(plan.credential.name)
+        result.attempt = self._ctx.journal.begin(name)
         if self._ctx.on_started is not None:
             self._ctx.on_started(result.attempt)
         result.revokes_before_holders = plan.revokes_before_holders
         self._ctx.attempt = result.attempt
 
         for ordinal, step in enumerate(plan.steps):
-            self._ctx.journal.step_started(
-                result.attempt, ordinal, step.kind.value, step.target, step.detail
-            )
             try:
-                # The fence, inside the try so losing the lease is reported as a
-                # failed run rather than escaping as a traceback. If the lock was
-                # reclaimed while this run was slow, the work below belongs to
-                # whoever took over. Checking once per step is not atomic with
-                # the writes, but it stops a reclaimed process before its next
-                # write instead of letting it run to the end and report success
-                # for work that was overtaken.
-                if self._ctx.lease_check is not None:
-                    self._ctx.lease_check()
-                detail = self._dispatch(step)
+                self._ctx.journal.step_started(
+                    result.attempt, ordinal, step.kind.value, step.target,
+                    step.detail,
+                )
+                if resume_recorded and ordinal < record_ordinal:
+                    # Every step before RECORD completed in the dead attempt.
+                    # The key is already on the service and the holders; doing
+                    # them again would only add a second write.
+                    detail = (
+                        f"not re-run: attempt {previous} already completed "
+                        "this step"
+                    )
+                else:
+                    # The fence, inside the try so losing the lease is reported as a
+                    # failed run rather than escaping as a traceback. If the lock was
+                    # reclaimed while this run was slow, the work below belongs to
+                    # whoever took over. Checking once per step is not atomic with
+                    # the writes, but it stops a reclaimed process before its next
+                    # write instead of letting it run to the end and report success
+                    # for work that was overtaken.
+                    if self._ctx.lease_check is not None:
+                        self._ctx.lease_check()
+                    self._ctx.current_ordinal = ordinal
+                    detail = self._dispatch(step)
             except Exception as exc:  # the reason is recorded in the journal
                 # Scrubbed at the one place every failure passes through. The
                 # message can contain the credential: a service that echoes the
@@ -1070,21 +1272,28 @@ class Executor:
                 if hint:
                     detail += "\n  " + scrub(hint, self._ctx.minted,
                                                self._ctx.vault_value)
-                self._ctx.journal.step_finished(result.attempt, ordinal, detail)
+                self._ctx.journal.step_finished(
+                    result.attempt, ordinal, detail,
+                    self._ctx.minted_handle if step.kind is StepKind.MINT else None,
+                )
                 result.failed = step.target
                 result.detail = detail
-                self._ctx.journal.finish(result.attempt, "failed")
                 self._mark_unreached(plan, ordinal)
                 # Holders live on the context; the result is what
                 # the report reads. Copied on every exit path, because a
                 # report rendering no holders is indistinguishable from a
                 # rotation that touched none - the exact confusion this
-                # per-holder reporting exists to remove.
+                # per-holder reporting exists to remove. Written before the
+                # attempt closes: a closed attempt accepts no new rows.
                 result.holders = list(self._ctx.holders)
                 self._journal_holders()
+                self._ctx.journal.finish(result.attempt, "failed")
                 return result
 
-            self._ctx.journal.step_finished(result.attempt, ordinal, detail)
+            self._ctx.journal.step_finished(
+                result.attempt, ordinal, detail,
+                self._ctx.minted_handle if step.kind is StepKind.MINT else None,
+            )
             if step.kind is StepKind.MANUAL:
                 result.manual.append(step.target)
             else:
@@ -1092,12 +1301,35 @@ class Executor:
                 if step.kind is StepKind.RECORD:
                     result.vault_written = True
 
+        # The final fence. Without it a run that lost the lease after its last
+        # step still called `finish('completed')` and reported success for work
+        # another run may already own. The attempt is deliberately left open:
+        # the owner that reclaimed it is the only run allowed to close it.
+        try:
+            if self._ctx.lease_check is not None:
+                self._ctx.lease_check()
+        except Exception as exc:
+            detail = scrub(
+                f"failed: {exc}", self._ctx.minted, self._ctx.vault_value
+            )
+            hint = getattr(exc, "hint", None)
+            if hint:
+                detail += "\n  " + scrub(
+                    hint, self._ctx.minted, self._ctx.vault_value
+                )
+            result.failed = "the credential lease"
+            result.detail = detail
+            result.holders = list(self._ctx.holders)
+            self._journal_holders()
+            return result
+
         result.resumed = self._ctx.resumed
-        self._ctx.journal.finish(result.attempt, "completed")
         # As the failure path does, so the record shows what the run achieved
         # and not only what it ran; INSERT OR REPLACE just rewrites what the
-        # API path already journalled.
+        # API path already journalled. Written before the attempt closes: a
+        # closed attempt accepts no new rows.
         self._journal_holders()
+        self._ctx.journal.finish(result.attempt, "completed")
         result.holders = list(self._ctx.holders)
         return result
 
@@ -2856,7 +3088,15 @@ class Executor:
                 hint="authenticating with the *new* key; if this fails with 401 "
                 "the service did not actually rotate",
             )
-        rows = self._select_rows(step.target, rows)
+        try:
+            rows = self._select_rows(step.target, rows)
+        except RotationError as exc:
+            # The step failed before naming any row; "all" is the honest label
+            # for a slot that could not be addressed at all.
+            self._ctx.holders.append(
+                HolderOutcome(step.target, "all", "failed", str(exc))
+            )
+            raise
 
         target_field = self._resolve_field(step)
         written = 0
@@ -2909,9 +3149,14 @@ class Executor:
                     # success as writing the mask back: the row keeps the old
                     # (revoked) key and the promotion pass can only report it
                     # after the fact. Refuse before the request, naming the drift.
+                    detail = (
+                        f"the resource has no {target_field!r} field"
+                    )
+                    self._ctx.holders.append(
+                        HolderOutcome(step.target, label, "failed", detail)
+                    )
                     raise RotationError(
-                        f"{step.target} id={row.get('id')}: the resource has no "
-                        f"{target_field!r} field",
+                        f"{step.target} id={row.get('id')}: {detail}",
                         hint="the service's row shape changed, or the field name "
                         "is wrong; refusing a PUT that would change nothing",
                     )
@@ -2953,6 +3198,9 @@ class Executor:
                             time.sleep(delay)
                             attempt += 1
                             continue
+                        self._ctx.holders.append(
+                            HolderOutcome(step.target, label, "failed", reason)
+                        )
                         raise RotationError(
                             f"{step.target} id={row.get('id')} still failing after "
                             f"{WRITE_ATTEMPTS} attempts: {reason}",
@@ -4087,6 +4335,21 @@ class Executor:
         spec = REISSUERS[service]
         if self._ctx.minted is not None:
             return f"{service}: secret already minted by this run; nothing to redo"
+        if self._ctx.prior_mint_handle and self._ctx.pending is not None:
+            parked = self._ctx.pending.get(self._ctx.credential.name)
+            if parked is not None and parked.reveal() != self._ctx.vault_value:
+                verdict, _detail = self._authenticate_settled(
+                    service, parked.reveal()
+                )
+                if verdict == "live":
+                    self._ctx.minted = parked
+                    self._ctx.minted_service = service
+                    self._ctx.minted_handle = self._ctx.prior_mint_handle
+                    self._ctx.resumed = True
+                    return (
+                        "resumed the replacement a dead run created "
+                        f"(row {self._ctx.prior_mint_handle})"
+                    )
         expected = self._ctx.vault_value
         if expected is None:
             raise RotationError(
@@ -4135,6 +4398,17 @@ class Executor:
                 hint="the declaration and the service disagree; fix one before "
                 "rotating. Nothing has changed.",
             )
+        # Record the row this create will replace, before it creates anything.
+        # A resume that reaches the revoke can then delete it by id even if an
+        # operator renamed it in between. Best effort: a missing id falls back
+        # to the name/namespace sweep the revoke already does.
+        if self._ctx.attempt is not None and self._ctx.current_ordinal >= 0:
+            with contextlib.suppress(Exception):
+                row_id = str(current.get("id") or "")
+                if row_id:
+                    self._ctx.journal.step_predecessor(
+                        self._ctx.attempt, self._ctx.current_ordinal, row_id
+                    )
         new_name = (
             f"{base}.credarr.{int(time.time())}"
             if spec.name_style == "namespace" else name
@@ -4187,6 +4461,18 @@ class Executor:
         self._ctx.minted = Secret(key)
         self._ctx.minted_service = service
         self._ctx.minted_handle = str(handle)
+        # Park and journal the row before anything else can fail: the service
+        # returned this value once, and a crash before RECORD must leave both
+        # the value and its handle for the next run to adopt. Best effort - the
+        # value is still in memory for this run.
+        if self._ctx.pending is not None:
+            with contextlib.suppress(Exception):
+                self._ctx.pending.set(self._ctx.credential.name, Secret(key))
+        if self._ctx.attempt is not None and self._ctx.current_ordinal >= 0:
+            with contextlib.suppress(Exception):
+                self._ctx.journal.step_handle(
+                    self._ctx.attempt, self._ctx.current_ordinal, str(handle)
+                )
         verdict, detail = self._authenticate_settled(service, key)
         if verdict != "live":
             raise RotationError(
@@ -4202,7 +4488,13 @@ class Executor:
         )
 
     def _reissue_revoke(self, step: Step) -> str:
-        """Delete the predecessor and any credarr-named stray, then prove it."""
+        """Delete the predecessor and any credarr-named stray, then prove it.
+
+        A resumed run (crash after RECORD) has no predecessor value to prove
+        dead: RECORD already moved the canonical copy to the successor. It
+        relies on deleting every row that matches the predecessor's name or
+        namespace; the by-value 401 proof runs only on a fresh rotation.
+        """
         service = step.target
         spec = REISSUERS[service]
         minted = self._ctx.minted
@@ -4252,6 +4544,31 @@ class Executor:
                 )
             )
         ]
+        # A resume after RECORD has the predecessor's row id on the dead mint
+        # step. Use it, so a rename between the crash and the resume cannot
+        # leave the predecessor unproven.
+        recorded = None
+        if self._ctx.prior_record and self._ctx.prior_attempt is not None:
+            recorded = next(
+                (
+                    str(step["predecessor"])
+                    for step in self._ctx.journal.steps(self._ctx.prior_attempt)
+                    if step["kind"] == StepKind.MINT.value
+                    and step["predecessor"]
+                ),
+                None,
+            )
+            present = {str(row.get("id")) for row in doomed}
+            if recorded and recorded not in present:
+                for row in rows:
+                    if (
+                        str(row.get("id")) == recorded
+                        and str(row.get("id")) != handle
+                        and not any(
+                            row.get(field) for field in spec.protected_fields
+                        )
+                    ):
+                        doomed.append(row)
         failures: list[str] = []
         for row in doomed:
             status, _ = self._call(
@@ -4270,7 +4587,38 @@ class Executor:
                 "confirmed and the vault holds the new value - but a row this "
                 "run was to delete is still live. Delete it in the service.",
             )
-        old = self._ctx.vault_value
+        # Prove by the list, not only by the delete responses: a service that
+        # answers 204 and keeps the row would otherwise read as revoked. This
+        # is also the only proof a resumed run has, because RECORD already
+        # moved the canonical copy and the predecessor's value is no longer in
+        # hand.
+        remaining = self._reissue_rows(
+            service, spec, kwargs, account=account, username=username
+        )
+        survivors = [
+            row for row in remaining
+            if str(row.get("id")) != handle
+            and not any(row.get(field) for field in spec.protected_fields)
+            and (
+                row.get("name") == base
+                or (
+                    spec.sweep == "namespace"
+                    and str(row.get("name") or "").startswith(
+                        base + ".credarr."
+                    )
+                )
+                or str(row.get("id")) == recorded
+            )
+        ]
+        if survivors:
+            raise RotationError(
+                f"{service}: {len(survivors)} previous row(s) are still listed "
+                f"after the revoke",
+                hint="the delete was answered but the row is still in the "
+                f"{spec.list_label}. Delete it in the service before treating "
+                "this rotation as complete.",
+            )
+        old = None if self._ctx.prior_record else self._ctx.vault_value
         if old is not None and not self._old_credential_dead(service, old):
             raise RotationError(
                 f"{service}: the previous value is still live after the revoke",
