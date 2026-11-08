@@ -1450,12 +1450,16 @@ async function main() {
       await page.getByText("A rotation of this app did not finish.").isVisible(),
     );
     check(
+      "the shell banner yields to the app's own recovery banner",
+      (await page.getByText("A rotation did not finish.").count()) === 0,
+    );
+    check(
       "the run affordance becomes the resume path",
       await page.getByRole("button", { name: "Resume rotation" }).isVisible(),
     );
     check(
       "and the view says what resuming takes over",
-      await page.getByText("Continuing below takes those steps over").isVisible(),
+      await page.getByText("Resume rotation above continues the earlier mint").isVisible(),
     );
     // The fixture stack's prowlarr URL points at a closed port, so a resumed
     // run still cannot be checked. That refusal has to be the *stack's*: pressing
@@ -2043,7 +2047,7 @@ async function main() {
     await page.getByLabel("Import mode").selectOption("merge");
     await page.getByLabel("I understand this merges into the declared topology").check();
     await page.getByRole("button", { name: "Import", exact: true }).click();
-    await page.getByText("Imported, but some keys are audit-only.").waitFor();
+    await page.getByText("Imported, with something to check.").waitFor();
     check(
       "an audit-only API key on a mintable service is named after import",
       await page.getByText(/Seerr Fixture API Key is marked audit-only, but Seerr supports rotation/).isVisible(),

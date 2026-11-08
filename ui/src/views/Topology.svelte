@@ -91,7 +91,7 @@
 
 {#if message}<Banner tone="ok">{message}</Banner>{/if}
 {#if warningLines.length}
-  <Banner tone="warn" title="Imported, but some keys are audit-only.">
+  <Banner tone="warn" title="Imported, with something to check.">
     {#each warningLines as line (line)}<p>{line}</p>{/each}
   </Banner>
 {/if}

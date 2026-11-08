@@ -138,6 +138,17 @@
   const rotationNames = $derived([
     ...new Set(rotationPending.map((step) => step.credential)),
   ]);
+  // The app detail page owns its own recovery banner. The shell banner stays
+  // for every other view, and keeps naming the *other* credentials that are
+  // interrupted, so a second one is never hidden.
+  const bannerNames = $derived(
+    view === "app"
+      ? rotationNames.filter((name) => name !== credentialName)
+      : rotationNames,
+  );
+  const bannerPending = $derived(
+    rotationPending.filter((step) => bannerNames.includes(step.credential)),
+  );
   const health = $derived(stackHealth(status, credentials));
 
   // The two reads are the console's whole state; a hung one must not hold the
@@ -613,17 +624,17 @@
             Data below is as old as the last recorded run.
           </Banner>
         {/if}
-        {#if rotationPending.length > 0}
+        {#if bannerNames.length > 0}
           <Banner tone="danger" role="alert" title="A rotation did not finish.">
             <p>
-              {rotationNames.map(credentialTitle).join(", ")} stopped
-              {elapsed(rotationPending[0].seconds_ago)} ago. Resume from the app
+              {bannerNames.map(credentialTitle).join(", ")} stopped
+              {elapsed(bannerPending[0].seconds_ago)} ago. Resume from the app
               page; it continues the earlier mint instead of making a second
               key. A live run keeps the lock.
             </p>
             <p class="muted">Audits never restart it.</p>
             {#snippet actions()}
-              {#each rotationNames as name (name)}
+              {#each bannerNames as name (name)}
                 {#if credentials?.credentials.some((row) => row.name === name)}
                   <button onclick={() => rotateCredential(name)}>Resume {credentialTitle(name)}</button>
                 {/if}

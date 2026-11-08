@@ -358,15 +358,15 @@
       {#if pendingHere.length > 0}
         <p>
           It stopped in {serviceOfTarget(pendingHere[0].target)}
-          {elapsed(pendingHere[0].seconds_ago)} ago. Continuing below takes
-          those steps over and resumes the service's observed state instead of
-          minting again. A live run keeps the lock.
+          {elapsed(pendingHere[0].seconds_ago)} ago. Resume rotation above
+          continues the earlier mint instead of making a second key; a live run
+          keeps the lock.
         </p>
       {:else}
         <p>
-          Every step finished, but the run never closed its record. Continuing
-          below starts a new run; Abandon clears the record without touching
-          the service.
+          Every step finished, but the run never closed its record. Resume
+          rotation above starts a new run; Abandon clears the record without
+          touching the service.
         </p>
       {/if}
       <div class="toolbar">
