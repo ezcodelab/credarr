@@ -14,6 +14,7 @@
   import HoldersTable from "../lib/HoldersTable.svelte";
   import KeyTile from "../lib/KeyTile.svelte";
   import PageHeader from "../lib/PageHeader.svelte";
+  import RecoveryBanner from "../lib/RecoveryBanner.svelte";
   import RotationPanel from "../lib/RotationPanel.svelte";
   import StatusPill from "../lib/StatusPill.svelte";
   import { checkStatus, credentialReason, statusInfo, statusOf } from "../lib/status.js";
@@ -810,6 +811,14 @@
     {/snippet}
   </PageHeader>
 
+  <RecoveryBanner
+    {row}
+    pending={rotation?.pending ?? []}
+    attempts={rotation?.open_attempts ?? []}
+    {onrefresh}
+    {onsignout}
+  />
+
   {#if checkError}<Banner tone="danger">{checkError}</Banner>{/if}
 
   <section class="detail-summary">
@@ -848,7 +857,6 @@
     <RotationPanel
       {row}
       pending={rotation?.pending ?? []}
-      attempts={rotation?.open_attempts ?? []}
       bind:armed={rotationArmed}
       bind:planBusy
       bind:runBusy

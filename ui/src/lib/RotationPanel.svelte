@@ -8,7 +8,7 @@
     isLoginBlock,
     manualTargets,
   } from "./apps.js";
-  import { copyLabel, bannerLine, credentialTitle, friendlyReason, refusalLines, splitLoginWall } from "./names.js";
+  import { copyLabel, bannerLine, credentialTitle, friendlyReason, refusalLines, serviceOfTarget, splitLoginWall } from "./names.js";
   import {
     clearManualTracker,
     pruneManualTracker,
@@ -16,17 +16,16 @@
   } from "./manualTracker.js";
   import { serviceById } from "./setupCatalog.js";
 
-  // The rotation result surface on the app page. The header holds Plan /
-  // Check / Rotate / Replace key, and calls in through the registration below;
-  // the one button it owns is Abandon, which lives in the unfinished-run
-  // banner because that is the only state it applies to. A plan is read-only;
-  // a run changes live services; an unfinished step of this app turns the run
-  // into the resume path. The armed confirm state lives here so a row switch
-  // disarms it, and the header reads it through the same binding.
+  // The rotation result surface on the app page. It owns no buttons: the
+  // header holds Plan / Check / Rotate / Replace key, and calls in through the
+  // registration below. A plan is read-only; a run changes live services; an
+  // unfinished step of this app turns the run into the resume path, and the
+  // page-level RecoveryBanner above explains it. The armed confirm state lives
+  // here so a row switch disarms it, and the header reads it through the same
+  // binding.
   let {
     row,
     pending = [],
-    attempts = [],
     armed = $bindable(false),
     planBusy = $bindable(false),
     runBusy = $bindable(false),
@@ -54,15 +53,8 @@
   // The post-run audit is a second stack-wide read. It still runs, but it no
   // longer holds the rotate button after the run's own answer is in hand.
   let auditBusy = $state(false);
-  let abandonBusy = $state(false);
   const pendingHere = $derived(
     pending.filter((step) => step.credential === row?.name),
-  );
-  const attemptHere = $derived(
-    attempts.filter((attempt) => attempt.credential === row?.name),
-  );
-  const unfinishedHere = $derived(
-    pendingHere.length > 0 || attemptHere.length > 0,
   );
   // The reset key is the name, not the row object: a refresh after a run
   // rebuilds the row, and resetting on that would erase the run the operator
@@ -88,11 +80,6 @@
 
   // The plan, in operator words: a dry run over every declared copy. Slugs
   // stay out; the engine's own refusal and preflight sentences stay in.
-  function serviceOfTarget(target) {
-    const head = String(target ?? "").split("[", 1)[0].split("(", 1)[0];
-    const [service] = head.split(".");
-    return serviceById(service)?.label ?? service;
-  }
 
   // The credential's own service, for naming the login that blocks the
   // backup. Same derivation the credential view uses.
@@ -236,29 +223,6 @@
     }
   }
 
-  // The escape from a run the service cannot resolve: close the record without
-  // minting. Stored and parked values are untouched, and the next Rotate is a
-  // new run.
-  async function abandon() {
-    if (!row || abandonBusy || runBusy) return;
-    abandonBusy = true;
-    rotationError = "";
-    try {
-      await api(
-        `/credentials/${encodeURIComponent(row.name)}/rotation/abandon`,
-        { method: "POST" },
-      );
-      plan = null;
-      run = null;
-      await onrefresh?.();
-    } catch (failure) {
-      if (failure instanceof ApiError && failure.status === 401) onsignout();
-      else rotationError = errorText(failure);
-    } finally {
-      abandonBusy = false;
-    }
-  }
-
   async function rotate(manualSubmit = false) {
     if (!row || runBusy) return;
     // A manual mint runs on the operator's key, which does not exist until
@@ -353,38 +317,6 @@
 </script>
 
 <div id="rotation" bind:this={section} class="rotation-panel">
-  {#if unfinishedHere}
-    <Banner tone="danger" title="A rotation of this app did not finish.">
-      {#if pendingHere.length > 0}
-        <p>
-          It stopped in {serviceOfTarget(pendingHere[0].target)}
-          {elapsed(pendingHere[0].seconds_ago)} ago. Resume rotation above
-          continues the earlier mint instead of making a second key; a live run
-          keeps the lock.
-        </p>
-      {:else}
-        <p>
-          Every step finished, but the run never closed its record. Resume
-          rotation above starts a new run; Abandon clears the record without
-          touching the service.
-        </p>
-      {/if}
-      <div class="toolbar">
-        <button
-          type="button"
-          onclick={abandon}
-          disabled={abandonBusy || runBusy}
-        >
-          {abandonBusy ? "Abandoning…" : "Abandon this run"}
-        </button>
-      </div>
-      <p class="field-help">
-        Abandon closes the record without touching the service: nothing is
-        minted or revoked, and you can rotate again later. Use it when the
-        service is unreachable and a resume cannot run.
-      </p>
-    </Banner>
-  {/if}
   {#if rotationError}<Banner tone="danger">{rotationError}</Banner>{/if}
   {#if auditBusy}
     <p class="muted" role="status">Refreshing copy status after the run…</p>

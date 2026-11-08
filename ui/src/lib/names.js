@@ -42,6 +42,14 @@ export function credentialSlug(title) {
   return slugPart(text).slice(0, 64);
 }
 
+// The service a holder target names (`sonarr.indexers[0]` -> Sonarr), for
+// sentences that say where a run stopped. Two views name it, so it lives here.
+export function serviceOfTarget(target) {
+  const head = String(target ?? "").split("[", 1)[0].split("(", 1)[0];
+  const [service] = head.split(".");
+  return serviceById(service)?.label ?? service;
+}
+
 // One sentence per imported declaration that needs attention. The server sends
 // the facts; the console owns the labels. `audit_only` keys will not rotate
 // even though their service can mint; `issuer_changed` keys still hold the old
