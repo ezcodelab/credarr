@@ -1,5 +1,67 @@
 # Changelog
 
+## 1.2.0 — 2026-11-07
+
+A state-machine audit of the rotation engine, with the confirmed defects fixed,
+an explicit way out of an interrupted run, and one recovery banner per page.
+
+### 🔎 State audit
+
+- `docs/STATE_MACHINES.md` inventories twelve explicit and implicit machines
+  (lease, attempt, step, pending secret, holder outcome, executor recovery,
+  auto policy, audit ledger, delivery, auth, topology and working copies, loop
+  health) with their states, invariants, transitions and every reachable
+  invalid state found.
+- Ten findings are fixed with regression tests (SM-1…SM-10). SM-2c (a service
+  that returns a secret once) and SM-9 (no fencing token at the service) are
+  recorded as service-contract limits, not unhandled states.
+
+### 🧩 Rotation
+
+- A closed attempt is immutable: no new step or holder row, and a takeover or
+  reclaim wins over a zombie's late finish.
+- A crash after RECORD finishes from RECORD instead of minting a second key.
+- Reissue mints park their value and record the created and predecessor row
+  ids before RECORD, so a crash before or after it adopts the successor and
+  revokes the predecessor by id.
+- A run that loses the lease after its last step is not reported as success.
+- Stored values, service URLs, holders, class, vault and mint mechanism are
+  frozen while a run is unfinished; description and notes stay editable.
+
+### 🚪 Recovery
+
+- **Abandon** closes an unfinished rotation without minting or revoking:
+  `POST /api/v1/credentials/{name}/rotation/abandon`,
+  `credarr rotate <name> --abandon`, and **Abandon this run** in the console.
+  It is the exit when the service is unreachable and no resume can run.
+- The console shows one recovery banner per page: the page-level banner under
+  the app header (Resume in the action bar, Abandon beside the explanation),
+  and the stack-wide shell banner only on the other views. The no-step variant
+  (every step finished, attempt open) is named too.
+
+### 🐛 Fixes
+
+- Every attempted holder has a row after retry exhaustion, including the one
+  that failed.
+- A blocked auto-rotation retries on the configured interval with scheduled
+  audits off.
+- A password change cannot race a sign-in that is verifying the old password.
+- Import warns when a surviving name changes issuer but keeps the old stored
+  value; the warning title no longer calls every warning audit-only.
+
+### 📦 Ship
+
+- Verified with 1004 Python tests, 220 console smoke checks, 4 container
+  integration tests and `ruff`.
+- Published as `ghcr.io/ezcodelab/credarr:1.2.0` and `:latest`; the test
+  deployment pins `git.ezcloud.casa/admin/credarr:1.2.0`.
+
+### 📖 Documentation
+
+- `docs/STATE_MACHINES.md` added and linked from `docs/README.md`;
+  `DECISIONS.md` 53, `LIMITATIONS.md`, `OPERATING.md`, `API.md` and
+  `process-lessons.md` record the recovery contract.
+
 ## 1.1.0 — 2026-11-01
 
 Graphite ledger console, and unattended rotation for every credential in the

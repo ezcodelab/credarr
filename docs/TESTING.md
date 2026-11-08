@@ -1,16 +1,16 @@
 # Testing
 
 What the suite does today, where it is weak, and the rules for new tests.
-The numbers here are from the 2026-10-30 tree; re-measure when they move.
+The numbers here are from the 2026-11-07 tree; re-measure when they move.
 
 ## Current shape
 
 | Layer | Tool | Size | Runtime |
 | --- | --- | --- | --- |
-| Engine + server unit tests | pytest, fake transport, some real HTTP fixtures | 971 passed, 2 skipped | ~3.5 min |
+| Engine + server unit tests | pytest, fake transport, some real HTTP fixtures | 1004 passed, 2 skipped | ~3.5 min |
 | Property tests | hypothesis (inside the above) | 7 | ~1 s |
-| Console unit tests | `node --test` | 115 | ~3 s |
-| Console end-to-end | Playwright + Chromium + `@axe-core/playwright` against a real server | 219 checks | ~2 min |
+| Console unit tests | `node --test` | 116 | ~3 s |
+| Console end-to-end | Playwright + Chromium + `@axe-core/playwright` against a real server | 220 checks | ~2 min |
 | Container black box | pytest `-m integration`, testcontainers | 4 | ~9 s + image start |
 
 `make check` runs the first, second (same invocation) and third layers. The UI
