@@ -939,8 +939,8 @@ def test_no_branch_reads_a_status_out_of_a_verdict_detail():
     """`Verdict` keeps the status in a field; the sentence is for humans.
 
     A refusal that compares `detail` to "HTTP 401" is the failure this ratchet
-    removed: rewording a message, or a service answering with a body, changes
-    whether the mint runs.
+    removed: rewording a message - or later quoting a service's body in it -
+    would change whether the mint runs.
     """
     import re
     from pathlib import Path
