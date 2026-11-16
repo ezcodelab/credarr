@@ -24,6 +24,7 @@ from pathlib import Path
 
 from credarr.audit import AuditResult, CredentialResult, Status
 from credarr.report import exit_code_for
+from credarr.transaction import transaction
 
 from .store import connect, initialise
 
@@ -357,65 +358,59 @@ class AuditLog:
         disagree with the rows beside it.
         """
         finished_at = time.time()
-        with connect(self.path) as connection:
-            connection.execute("BEGIN")
-            try:
-                cursor = connection.execute(
-                    "INSERT INTO audit_runs (started_at, finished_at, exit_code, "
-                    "exit_status, detail) VALUES (?, ?, ?, ?, '')",
-                    (started_at, finished_at, exit_code_for(result), result.exit_status.value),
+        with connect(self.path) as connection, transaction(connection):
+            cursor = connection.execute(
+                "INSERT INTO audit_runs (started_at, finished_at, exit_code, "
+                "exit_status, detail) VALUES (?, ?, ?, ?, '')",
+                (started_at, finished_at, exit_code_for(result), result.exit_status.value),
+            )
+            run_id = cursor.lastrowid
+            for credential_result in result.results:
+                name = credential_result.credential.name
+                # Read the previous status before writing this run's row, so
+                # "previous" cannot mean the row about to be inserted.
+                previous = _previous_status(connection, name, run_id)
+                connection.execute(
+                    "INSERT INTO audit_credentials (run_id, credential, status, "
+                    "detail, reason) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        run_id,
+                        name,
+                        credential_result.status.value,
+                        credential_result.detail,
+                        _event_reason(credential_result),
+                    ),
                 )
-                run_id = cursor.lastrowid
-                for credential_result in result.results:
-                    name = credential_result.credential.name
-                    # Read the previous status before writing this run's row, so
-                    # "previous" cannot mean the row about to be inserted.
-                    previous = _previous_status(connection, name, run_id)
+                kind = _transition(previous, credential_result.status)
+                if kind is not None:
                     connection.execute(
-                        "INSERT INTO audit_credentials (run_id, credential, status, "
-                        "detail, reason) VALUES (?, ?, ?, ?, ?)",
+                        "INSERT INTO events (at, kind, credential, previous_status, "
+                        "status, detail) VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            finished_at,
+                            kind,
+                            name,
+                            previous.value if previous else None,
+                            credential_result.status.value,
+                            _event_detail(credential_result),
+                        ),
+                    )
+                for position, consumer_result in enumerate(credential_result.consumers):
+                    connection.execute(
+                        "INSERT INTO audit_consumers (run_id, credential, position, "
+                        "target, status, detail, reason, observed_count) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             run_id,
                             name,
-                            credential_result.status.value,
-                            credential_result.detail,
-                            _event_reason(credential_result),
+                            position,
+                            str(consumer_result.consumer.target),
+                            consumer_result.status.value,
+                            consumer_result.detail,
+                            consumer_result.reason,
+                            consumer_result.observed_count,
                         ),
                     )
-                    kind = _transition(previous, credential_result.status)
-                    if kind is not None:
-                        connection.execute(
-                            "INSERT INTO events (at, kind, credential, previous_status, "
-                            "status, detail) VALUES (?, ?, ?, ?, ?, ?)",
-                            (
-                                finished_at,
-                                kind,
-                                name,
-                                previous.value if previous else None,
-                                credential_result.status.value,
-                                _event_detail(credential_result),
-                            ),
-                        )
-                    for position, consumer_result in enumerate(credential_result.consumers):
-                        connection.execute(
-                            "INSERT INTO audit_consumers (run_id, credential, position, "
-                            "target, status, detail, reason, observed_count) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                            (
-                                run_id,
-                                name,
-                                position,
-                                str(consumer_result.consumer.target),
-                                consumer_result.status.value,
-                                consumer_result.detail,
-                                consumer_result.reason,
-                                consumer_result.observed_count,
-                            ),
-                        )
-                connection.execute("COMMIT")
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
         return run_id
 
     def record_failure(

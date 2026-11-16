@@ -41,6 +41,7 @@ from credarr.model import MANIFEST_VERSION, Consumer, Credential, Manifest, Targ
 from credarr.redact import Secret
 from credarr.secrets import BACKENDS
 from credarr.targets import TargetRegistry
+from credarr.transaction import transaction
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS credentials (
@@ -339,39 +340,33 @@ class TopologyStore:
 
     def _replace(self, manifest: Manifest) -> ImportSummary:
         """Swap in `manifest`, pruning values for names it no longer declares."""
-        with connect(self.path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                previous = connection.execute(
-                    "SELECT COUNT(*) FROM credentials"
-                ).fetchone()[0]
-                connection.execute("DELETE FROM holders")
-                connection.execute("DELETE FROM credentials")
-                for position, (name, credential) in enumerate(manifest.credentials.items()):
-                    _insert_credential(connection, position, name, credential)
-                # A working copy survives a re-import for a credential the file
-                # still declares; one the file no longer declares loses its
-                # value, because a secret kept for a name nothing references is
-                # a secret kept for no reason.
-                connection.execute(
-                    "DELETE FROM working_copies WHERE credential NOT IN "
-                    "(SELECT name FROM credentials)"
-                )
-                connection.execute(
-                    "DELETE FROM pending_secrets WHERE credential NOT IN "
-                    "(SELECT name FROM credentials)"
-                )
-                # Policy for a name the manifest no longer declares is dead
-                # state. A surviving name keeps its row, including enabled,
-                # interval and pause, until an operator changes it.
-                connection.execute(
-                    "DELETE FROM auto_rotation WHERE credential NOT IN "
-                    "(SELECT name FROM credentials)"
-                )
-                connection.execute("COMMIT")
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
+        with connect(self.path) as connection, transaction(connection):
+            previous = connection.execute(
+                "SELECT COUNT(*) FROM credentials"
+            ).fetchone()[0]
+            connection.execute("DELETE FROM holders")
+            connection.execute("DELETE FROM credentials")
+            for position, (name, credential) in enumerate(manifest.credentials.items()):
+                _insert_credential(connection, position, name, credential)
+            # A working copy survives a re-import for a credential the file
+            # still declares; one the file no longer declares loses its
+            # value, because a secret kept for a name nothing references is
+            # a secret kept for no reason.
+            connection.execute(
+                "DELETE FROM working_copies WHERE credential NOT IN "
+                "(SELECT name FROM credentials)"
+            )
+            connection.execute(
+                "DELETE FROM pending_secrets WHERE credential NOT IN "
+                "(SELECT name FROM credentials)"
+            )
+            # Policy for a name the manifest no longer declares is dead
+            # state. A surviving name keeps its row, including enabled,
+            # interval and pause, until an operator changes it.
+            connection.execute(
+                "DELETE FROM auto_rotation WHERE credential NOT IN "
+                "(SELECT name FROM credentials)"
+            )
         return _summary("replace", manifest, added=len(manifest.credentials), removed=previous)
 
     def _merge(self, manifest: Manifest, *, prune: bool) -> ImportSummary:
@@ -383,37 +378,31 @@ class TopologyStore:
         not part of the manifest.
         """
         added = updated = removed = 0
-        with connect(self.path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                existing = {
-                    row["name"]: row["position"]
-                    for row in connection.execute(
-                        "SELECT name, position FROM credentials"
-                    )
-                }
-                position = max(existing.values(), default=-1) + 1
-                for name, credential in manifest.credentials.items():
-                    if name in existing:
-                        at = existing[name]
-                        updated += 1
-                    else:
-                        at = position
-                        position += 1
-                        added += 1
-                    _write_credential(connection, at, name, credential)
-                if prune:
-                    for row in connection.execute("SELECT name FROM credentials").fetchall():
-                        if row["name"] not in manifest.credentials:
-                            connection.execute(
-                                "DELETE FROM credentials WHERE name = ?", (row["name"],)
-                            )
-                            removed += 1
-                    _prune_orphans(connection)
-                connection.execute("COMMIT")
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
+        with connect(self.path) as connection, transaction(connection):
+            existing = {
+                row["name"]: row["position"]
+                for row in connection.execute(
+                    "SELECT name, position FROM credentials"
+                )
+            }
+            position = max(existing.values(), default=-1) + 1
+            for name, credential in manifest.credentials.items():
+                if name in existing:
+                    at = existing[name]
+                    updated += 1
+                else:
+                    at = position
+                    position += 1
+                    added += 1
+                _write_credential(connection, at, name, credential)
+            if prune:
+                for row in connection.execute("SELECT name FROM credentials").fetchall():
+                    if row["name"] not in manifest.credentials:
+                        connection.execute(
+                            "DELETE FROM credentials WHERE name = ?", (row["name"],)
+                        )
+                        removed += 1
+                _prune_orphans(connection)
         return _summary(
             "merge",
             manifest,
@@ -468,37 +457,30 @@ class TopologyStore:
         `store_meta` makes this a migration, not a default: an operator who
         deletes every service must not have the file quietly put them back.
         """
-        with connect(self.path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                if connection.execute(
-                    "SELECT 1 FROM store_meta WHERE key = ?", (SERVICES_SEEDED,)
-                ).fetchone():
-                    connection.execute("COMMIT")
-                    return 0
-                inserted = 0
-                for position, entry in enumerate(entries):
-                    cursor = connection.execute(
-                        "INSERT OR IGNORE INTO services "
-                        "(name, position, kind, url, notes) "
-                        "VALUES (?, ?, ?, ?, ?)",
-                        (
-                            entry.name,
-                            position,
-                            entry.kind,
-                            entry.url,
-                            entry.notes,
-                        ),
-                    )
-                    inserted += cursor.rowcount
-                connection.execute(
-                    "INSERT OR REPLACE INTO store_meta (key, value) VALUES (?, ?)",
-                    (SERVICES_SEEDED, str(time.time())),
+        with connect(self.path) as connection, transaction(connection):
+            if connection.execute(
+                "SELECT 1 FROM store_meta WHERE key = ?", (SERVICES_SEEDED,)
+            ).fetchone():
+                return 0
+            inserted = 0
+            for position, entry in enumerate(entries):
+                cursor = connection.execute(
+                    "INSERT OR IGNORE INTO services "
+                    "(name, position, kind, url, notes) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        entry.name,
+                        position,
+                        entry.kind,
+                        entry.url,
+                        entry.notes,
+                    ),
                 )
-                connection.execute("COMMIT")
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
+                inserted += cursor.rowcount
+            connection.execute(
+                "INSERT OR REPLACE INTO store_meta (key, value) VALUES (?, ?)",
+                (SERVICES_SEEDED, str(time.time())),
+            )
         return inserted
 
     def create_service(
@@ -509,23 +491,17 @@ class TopologyStore:
         url: str | None,
         notes: str,
     ) -> Service:
-        with connect(self.path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                position = connection.execute(
-                    "SELECT COALESCE(MAX(position), -1) + 1 FROM services"
-                ).fetchone()[0]
-                cursor = connection.execute(
-                    "INSERT OR IGNORE INTO services "
-                    "(name, position, kind, url, notes) VALUES (?, ?, ?, ?, ?)",
-                    (name, position, kind, url, notes),
-                )
-                if cursor.rowcount == 0:
-                    raise ServiceExists(name)
-                connection.execute("COMMIT")
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
+        with connect(self.path) as connection, transaction(connection):
+            position = connection.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 FROM services"
+            ).fetchone()[0]
+            cursor = connection.execute(
+                "INSERT OR IGNORE INTO services "
+                "(name, position, kind, url, notes) VALUES (?, ?, ?, ?, ?)",
+                (name, position, kind, url, notes),
+            )
+            if cursor.rowcount == 0:
+                raise ServiceExists(name)
         state = self.service(name)
         assert state is not None
         return state
@@ -565,31 +541,24 @@ class TopologyStore:
         the value; committing both here means a crash cannot leave the URL
         changed while the new key is only in a request body.
         """
-        with connect(self.path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                cursor = connection.execute(
-                    "UPDATE services SET kind = ?, url = ?, notes = ? "
-                    "WHERE name = ?",
-                    (kind, url, notes, name),
-                )
-                if cursor.rowcount == 0:
-                    connection.execute("ROLLBACK")
-                    return None
-                stored = connection.execute(
-                    "INSERT INTO working_copies (credential, value, updated_at) "
-                    "SELECT ?, ?, ? WHERE EXISTS "
-                    "(SELECT 1 FROM credentials WHERE name = ?) "
-                    "ON CONFLICT(credential) DO UPDATE SET value = excluded.value, "
-                    "updated_at = excluded.updated_at",
-                    (credential, value.reveal(), time.time(), credential),
-                )
-                if stored.rowcount == 0:
-                    raise UnknownCredential(credential)
-                connection.execute("COMMIT")
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
+        with connect(self.path) as connection, transaction(connection):
+            cursor = connection.execute(
+                "UPDATE services SET kind = ?, url = ?, notes = ? "
+                "WHERE name = ?",
+                (kind, url, notes, name),
+            )
+            if cursor.rowcount == 0:
+                return None
+            stored = connection.execute(
+                "INSERT INTO working_copies (credential, value, updated_at) "
+                "SELECT ?, ?, ? WHERE EXISTS "
+                "(SELECT 1 FROM credentials WHERE name = ?) "
+                "ON CONFLICT(credential) DO UPDATE SET value = excluded.value, "
+                "updated_at = excluded.updated_at",
+                (credential, value.reveal(), time.time(), credential),
+            )
+            if stored.rowcount == 0:
+                raise UnknownCredential(credential)
         return self.service(name)
 
     def delete_service(self, name: str) -> bool:
@@ -599,54 +568,35 @@ class TopologyStore:
 
     def create_credential(self, credential: Credential) -> None:
         """Add one validated credential after the existing declaration order."""
-        with connect(self.path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                if connection.execute(
-                    "SELECT 1 FROM credentials WHERE name = ?", (credential.name,)
-                ).fetchone():
-                    raise CredentialExists(credential.name)
-                position = connection.execute(
-                    "SELECT COALESCE(MAX(position), -1) + 1 FROM credentials"
-                ).fetchone()[0]
-                _write_credential(connection, position, credential.name, credential)
-                connection.execute("COMMIT")
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
+        with connect(self.path) as connection, transaction(connection):
+            if connection.execute(
+                "SELECT 1 FROM credentials WHERE name = ?", (credential.name,)
+            ).fetchone():
+                raise CredentialExists(credential.name)
+            position = connection.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 FROM credentials"
+            ).fetchone()[0]
+            _write_credential(connection, position, credential.name, credential)
 
     def update_credential(self, name: str, credential: Credential) -> bool:
         """Replace one credential's metadata and holders, keeping its order."""
-        with connect(self.path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                row = connection.execute(
-                    "SELECT position FROM credentials WHERE name = ?", (name,)
-                ).fetchone()
-                if row is None:
-                    connection.execute("ROLLBACK")
-                    return False
-                _write_credential(connection, row["position"], name, credential)
-                connection.execute("COMMIT")
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
+        with connect(self.path) as connection, transaction(connection):
+            row = connection.execute(
+                "SELECT position FROM credentials WHERE name = ?", (name,)
+            ).fetchone()
+            if row is None:
+                return False
+            _write_credential(connection, row["position"], name, credential)
         return True
 
     def delete_credential(self, name: str) -> bool:
         """Delete a credential and every policy/value row that names it."""
-        with connect(self.path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                cursor = connection.execute(
-                    "DELETE FROM credentials WHERE name = ?", (name,)
-                )
-                if cursor.rowcount:
-                    _prune_orphans(connection)
-                connection.execute("COMMIT")
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
+        with connect(self.path) as connection, transaction(connection):
+            cursor = connection.execute(
+                "DELETE FROM credentials WHERE name = ?", (name,)
+            )
+            if cursor.rowcount:
+                _prune_orphans(connection)
         return cursor.rowcount > 0
 
     def clear_value(self, name: str) -> bool:

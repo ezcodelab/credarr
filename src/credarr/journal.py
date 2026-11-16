@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import RotationError
+from .transaction import transaction
 
 # Serialises the one-time initialisation of a brand-new SQLite database.
 #
@@ -239,36 +240,29 @@ class Journal:
         """
         now = time.time()
         token = secrets.token_hex(16)
-        with self._connect() as db:
-            # IMMEDIATE takes the write lock up front. Without it the check, the
-            # reclaim and the insert are three separate statements, and two
-            # processes both finding the lock stale would each delete and
-            # insert - both returning a token and both believing they hold it.
-            db.execute("BEGIN IMMEDIATE")
-            try:
-                existing = db.execute(
-                    "SELECT acquired_at FROM locks WHERE credential = ?", (credential,)
-                ).fetchone()
-                if (existing is not None
-                        and now - existing["acquired_at"] <= self.stale_after):
-                    db.execute("COMMIT")
-                    return None
-                if existing is not None:
-                    # Reclaim. Refusing to ever rotate again after a crash is a
-                    # worse failure than a rare overlap nobody was watching.
-                    # Deliberately unconditional: reclaiming a stale lock must
-                    # work whoever held it, which is why it is the one place a
-                    # token is not required.
-                    db.execute("DELETE FROM locks WHERE credential = ?", (credential,))
-                db.execute(
-                    "INSERT INTO locks (credential, pid, host, acquired_at, token, "
-                    "actor) VALUES (?, ?, ?, ?, ?, ?)",
-                    (credential, os.getpid(), socket.gethostname(), now, token, actor),
-                )
-            except Exception:
-                db.execute("ROLLBACK")
-                raise
-            db.execute("COMMIT")
+        # One transaction takes the write lock at entry: without it the check,
+        # the reclaim and the insert are three separate statements, and two
+        # processes both finding the lock stale would each delete and insert -
+        # both returning a token and both believing they hold it.
+        with self._connect() as db, transaction(db):
+            existing = db.execute(
+                "SELECT acquired_at FROM locks WHERE credential = ?", (credential,)
+            ).fetchone()
+            if (existing is not None
+                    and now - existing["acquired_at"] <= self.stale_after):
+                return None
+            if existing is not None:
+                # Reclaim. Refusing to ever rotate again after a crash is a
+                # worse failure than a rare overlap nobody was watching.
+                # Deliberately unconditional: reclaiming a stale lock must
+                # work whoever held it, which is why it is the one place a
+                # token is not required.
+                db.execute("DELETE FROM locks WHERE credential = ?", (credential,))
+            db.execute(
+                "INSERT INTO locks (credential, pid, host, acquired_at, token, "
+                "actor) VALUES (?, ?, ?, ?, ?, ?)",
+                (credential, os.getpid(), socket.gethostname(), now, token, actor),
+            )
             return token
 
     def release(self, credential: str, token: str) -> None:
@@ -411,34 +405,28 @@ class Journal:
         insert a fresh unfinished step into an attempt a takeover already
         closed, re-blocking the credential with a step no live run owns.
         """
-        with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            try:
-                row = db.execute(
-                    "SELECT finished_at FROM attempts WHERE id = ?", (attempt,)
-                ).fetchone()
-                if row is None or row["finished_at"] is not None:
-                    raise JournalLocked(
-                        f"attempt {attempt} is already closed",
-                        hint="the run that owned it was taken over or reclaimed; "
-                        "this step belongs to no live rotation",
-                    )
-                cursor = db.execute(
-                    "INSERT OR IGNORE INTO steps "
-                    "(attempt_id, ordinal, kind, target, detail, started_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (attempt, ordinal, kind, target, detail, time.time()),
+        with self._connect() as db, transaction(db):
+            row = db.execute(
+                "SELECT finished_at FROM attempts WHERE id = ?", (attempt,)
+            ).fetchone()
+            if row is None or row["finished_at"] is not None:
+                raise JournalLocked(
+                    f"attempt {attempt} is already closed",
+                    hint="the run that owned it was taken over or reclaimed; "
+                    "this step belongs to no live rotation",
                 )
-                if cursor.rowcount == 0:
-                    raise JournalLocked(
-                        f"step {ordinal} of attempt {attempt} already exists",
-                        hint="a step is recorded once; retrying the same ordinal "
-                        "would erase the evidence of the first attempt",
-                    )
-                db.execute("COMMIT")
-            except BaseException:
-                db.execute("ROLLBACK")
-                raise
+            cursor = db.execute(
+                "INSERT OR IGNORE INTO steps "
+                "(attempt_id, ordinal, kind, target, detail, started_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (attempt, ordinal, kind, target, detail, time.time()),
+            )
+            if cursor.rowcount == 0:
+                raise JournalLocked(
+                    f"step {ordinal} of attempt {attempt} already exists",
+                    hint="a step is recorded once; retrying the same ordinal "
+                    "would erase the evidence of the first attempt",
+                )
 
     def step_handle(self, attempt: int, ordinal: int, handle: str) -> None:
         """Record a step's service-side row handle while the step is still open.
