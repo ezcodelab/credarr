@@ -20,6 +20,14 @@ const GRANDFATHERED = {
   "views/AppDetail.svelte": 1261,
   "lib/NotificationServices.svelte": 912,
 };
+// The only files ever allowed on the list. Spotting a fourth entry by count
+// alone is not enough: removing a shrunk file and adding a new one keeps the
+// count at three, so the names are pinned too.
+const ALLOWED = new Set([
+  "SetupWizard.svelte",
+  "views/AppDetail.svelte",
+  "lib/NotificationServices.svelte",
+]);
 
 function components(directory = SOURCE) {
   const found = [];
@@ -56,13 +64,10 @@ test("a grandfathered component only shrinks, and leaves the list once it fits",
   const entries = Object.entries(GRANDFATHERED);
   const problems = [];
 
-  if (entries.length > 3) {
-    problems.push(
-      `${entries.length} entries: the list may only shrink, never take a new file`,
-    );
-  }
-
   for (const [name, recorded] of entries) {
+    if (!ALLOWED.has(name)) {
+      problems.push(`${name} was never grandfathered; the list may only shrink`);
+    }
     let count;
     try {
       count = lines(join(SOURCE, name));
