@@ -17,6 +17,7 @@ from credarr.writers import (
     HOLDERS,
     MINT_SOURCES,
     REISSUERS,
+    AuthShape,
     api_version,
     auth_kwargs,
     auth_shape,
@@ -330,11 +331,24 @@ def test_every_mint_source_owns_auth_shape():
 
 
 def test_auth_shapes_are_the_measured_transports():
-    """The four unusual shapes, pinned by value; the rest are the default."""
-    assert auth_kwargs("qbittorrent", "k") == {
-        "key": "Bearer k", "auth_header": "Authorization",
+    """Every row, pinned by value: the table is the contract, not a sample."""
+    default = AuthShape()
+    expected = {
+        "sonarr": default, "radarr": default, "prowlarr": default,
+        "lidarr": default, "readarr": default, "whisparr": default,
+        "jellyfin": default, "arcane": default, "bazarr": default,
+        "qui": default,
+        "seerr": AuthShape(header="X-API-Key", dead_status=403),
+        "qbittorrent": AuthShape(
+            header="Authorization", prefix="Bearer ", dead_status=403),
+        "grafana": AuthShape(header="Authorization", prefix="Bearer "),
+        "gitea": AuthShape(
+            header="Authorization", prefix="token ", live_on_403=True),
+        "sabnzbd": AuthShape(query_name="apikey", dead_status=403),
     }
-    assert auth_kwargs("grafana", "k") == {
+    assert expected == AUTH_SHAPES
+
+    assert auth_kwargs("qbittorrent", "k") == {
         "key": "Bearer k", "auth_header": "Authorization",
     }
     assert auth_kwargs("gitea", "k") == {
@@ -348,11 +362,10 @@ def test_auth_shapes_are_the_measured_transports():
     assert auth_kwargs("qbittorrent", None) == {
         "key": None, "auth_header": "Authorization",
     }
+
     # The answer a revoked key gets is a registry fact too: a bare 403 is
     # ambiguous unless the service is one that measured it.
     assert auth_shape("qbittorrent").dead_status == 403
-    assert auth_shape("seerr").dead_status == 403
-    assert auth_shape("sabnzbd").dead_status == 403
     assert auth_shape("sonarr").dead_status == 401
     assert auth_shape("gitea").live_on_403 is True
     assert auth_shape("prowlarr").live_on_403 is False

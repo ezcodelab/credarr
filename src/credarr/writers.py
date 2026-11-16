@@ -535,13 +535,16 @@ REISSUE_MECHANISMS: dict[str, str] = {
 class AuthShape:
     """How a service carries its own key on the calls that read it.
 
-    Header names are case-insensitive, so the *arr shape is the default; the
-    prefix and the query parameter are not. qBittorrent 5.3 accepts only
+    The default is the *arr spelling, `X-Api-Key`, which is what the readiness
+    probes and the holder writers have always sent. The prefix and the query
+    parameter are load-bearing: qBittorrent 5.3 accepts only
     `Authorization: Bearer`, Gitea's tokens travel as `Authorization: token`,
-    SABnzbd reads `apikey` from the query, and everything else uses an
-    API-key header. This is a read shape, not the mint transport: Jellyfin's
-    mint calls use the `ApiKey` query parameter (`MINT_SOURCES`), while its
-    liveness route reads the header.
+    and SABnzbd reads `apikey` from the query. A row repeats a service's own
+    header spelling only where the mint path measured it; Bazarr and qui keep
+    the default because it is what their read path has always sent and it
+    works. This is a read shape, not the mint transport: Jellyfin's mint calls
+    use the `ApiKey` query parameter (`MINT_SOURCES`), while its liveness route
+    reads the header.
     """
 
     header: str = "X-Api-Key"
@@ -563,8 +566,10 @@ AUTH_SHAPES: dict[str, AuthShape] = {
         "jellyfin", "arcane",
     )},
     "seerr": AuthShape(header="X-API-Key", dead_status=403),
-    "bazarr": AuthShape(header="X-API-KEY"),
-    "qui": AuthShape(header="X-API-Key"),
+    # Bazarr's settings route and qui's API document X-API-KEY and X-API-Key;
+    # their read path has always sent the default and both accept it.
+    "bazarr": AuthShape(),
+    "qui": AuthShape(),
     "qbittorrent": AuthShape(
         header="Authorization", prefix="Bearer ", dead_status=403),
     "grafana": AuthShape(header="Authorization", prefix="Bearer "),
