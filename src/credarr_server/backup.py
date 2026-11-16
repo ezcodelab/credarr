@@ -42,6 +42,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from credarr import __version__
 from credarr.errors import CredctlError, ExitCode
 from credarr.instance import InstanceLock
+from credarr.paths import fsync_directory
 from credarr.redact import disable_core_dumps
 
 from .store import connect
@@ -158,7 +159,7 @@ def write_backup(*, config_path: Path, config_dir: Path, out: Path, passphrase: 
             file.flush()
             os.fsync(file.fileno())
         temporary.replace(out)
-        _fsync_directory(out.parent)
+        fsync_directory(out.parent)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
@@ -240,9 +241,9 @@ def restore_backup(
                 os.link(database, previous)
             _publish(staged_database, database)
             database_published = True
-            _fsync_directory(config_dir)
+            fsync_directory(config_dir)
             if destination_config.parent != config_dir:
-                _fsync_directory(destination_config.parent)
+                fsync_directory(destination_config.parent)
         except BaseException:
             if database_published:
                 if previous.exists():
@@ -415,17 +416,9 @@ def _write(destination: Path, data: bytes) -> None:
     work = Path(tempfile.mkdtemp(prefix=".restore-", dir=destination.parent))
     try:
         _publish(_stage(work / "file", data, destination), destination)
-        _fsync_directory(destination.parent)
+        fsync_directory(destination.parent)
     finally:
         shutil.rmtree(work, ignore_errors=True)
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _require_passphrase(passphrase: str) -> None:

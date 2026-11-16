@@ -1476,7 +1476,7 @@ def _mount(app: FastAPI) -> None:
         `observed_run` names the run every status here was drawn from, because
         "match" without a time is a claim nobody can date. A status is shown
         only when that run audited holders and they are the ones declared now
-        (see `_credential_json`).
+        (see `_console_credential_json`).
         """
         manifest = store.load_manifest()
         stored = store.working_copy_times()
@@ -1492,7 +1492,7 @@ def _mount(app: FastAPI) -> None:
                 else None
             ),
             "credentials": [
-                _credential_json(
+                _console_credential_json(
                     credential,
                     stored.get(name),
                     observed.get(name),
@@ -1521,7 +1521,7 @@ def _mount(app: FastAPI) -> None:
                 ) from None
         return {
             "ok": True,
-            "credential": _credential_json(
+            "credential": _console_credential_json(
                 credential,
                 None,
                 None,
@@ -1599,7 +1599,7 @@ def _mount(app: FastAPI) -> None:
                 )
             return {
                 "ok": True,
-                "credential": _credential_json(
+                "credential": _console_credential_json(
                     credential,
                     store.working_copy_times().get(name),
                     None,
@@ -2788,7 +2788,7 @@ def _auto_json(state: AutoRotation | None, last_rotation: float | None) -> dict[
     }
 
 
-def _credential_json(
+def _console_credential_json(
     credential: Credential,
     stored_at: float | None,
     observed: CredentialState | None,

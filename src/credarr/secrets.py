@@ -30,6 +30,7 @@ from typing import Any, Protocol
 
 from .errors import ConfigError, SecretSourceError
 from .model import VaultRef
+from .paths import fsync_directory
 from .redact import Secret
 
 # sops and ansible-vault both write progress and warnings to stderr. Only the
@@ -270,7 +271,7 @@ class MutableAnsibleVaultSource(AnsibleVaultSource):
                 with encrypted.open("rb") as stream:
                     os.fsync(stream.fileno())
                 encrypted.replace(path)
-                _fsync_directory(path.parent)
+                fsync_directory(path.parent)
             finally:
                 # Removed even when the encrypt step failed, or a rotation
                 # failure would leave every credential in the homelab in a
@@ -376,14 +377,6 @@ def build_source(
         f"unknown vault backend {backend!r}",
         hint=f"known backends: {', '.join(BACKENDS)}",
     )
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _is_collection(text: str) -> bool:
