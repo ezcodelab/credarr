@@ -37,6 +37,7 @@ from credarr.executor import (
     ExecutionResult,
     Executor,
     RotationContext,
+    Verdict,
     _config_xml_api_key,
     _config_xml_from_host,
     _servarr_backup_config,
@@ -2241,7 +2242,7 @@ def test_restart_key_waits_through_connection_resets(tmp_path, monkeypatch):
         if key == NEW_KEY:
             calls["n"] += 1
             if calls["n"] <= 2:
-                return "unknown", "ConnectionResetError"
+                return Verdict("unknown", None, "ConnectionResetError")
         return real(service, key)
 
     executor._authenticate = resetting
@@ -2277,8 +2278,8 @@ def test_restart_key_proceeds_when_the_old_key_probe_is_inconclusive(tmp_path):
 
     def authenticate(service, key):
         if key == NEW_KEY:
-            return "live", "HTTP 200"
-        return "unknown", "ConnectionResetError"
+            return Verdict("live", 200, "HTTP 200")
+        return Verdict("unknown", None, "ConnectionResetError")
 
     executor._authenticate = authenticate
 
@@ -2294,7 +2295,7 @@ def test_restart_key_fails_when_the_old_key_stays_live(tmp_path, monkeypatch):
     state = FakeState()
     executor, _ = _executor(tmp_path, state)
 
-    executor._authenticate = lambda service, key: ("live", "HTTP 200")
+    executor._authenticate = lambda service, key: Verdict("live", 200, "HTTP 200")
 
     with pytest.raises(RotationError, match="old key still authenticates"):
         executor._await_restart_key(
@@ -2714,18 +2715,18 @@ class ApiMintExecutor(Executor):
         self.restarts += 1
 
     def _await_restart_key(self, service, *, old_key, new_key):
-        new_verdict, new_detail = self.verdicts.pop(0)
-        old_verdict, old_detail = self.verdicts.pop(0)
-        if new_verdict != "live":
+        new_verdict = self.verdicts.pop(0)
+        old_verdict = self.verdicts.pop(0)
+        if new_verdict.state != "live":
             raise RotationError(
                 f"{service}: the service-native restart did not make the "
-                f"restored key usable ({new_detail})"
+                f"restored key usable ({new_verdict.detail})"
             )
-        if old_verdict == "live":
+        if old_verdict.state == "live":
             raise RotationError(
                 f"{service}: the old key still authenticates after the restart"
             )
-        self._ctx.old_key_dead = old_detail == "HTTP 401"
+        self._ctx.old_key_dead = old_verdict.status == 401
 
 
 def _api_context(tmp_path, pending):
@@ -2745,7 +2746,11 @@ def test_a_backup_restore_mint_persists_before_restore_and_restarts_once(tmp_pat
     ctx = _api_context(tmp_path, pending)
     executor = ApiMintExecutor(
         ctx,
-        verdicts=[("live", ""), ("live", ""), ("dead", "HTTP 401")],
+        verdicts=[
+            Verdict("live", 200, ""),
+            Verdict("live", 200, ""),
+            Verdict("dead", 401, "HTTP 401"),
+        ],
         backup_xml=_api_xml(OLD_KEY),
     )
 
@@ -2780,8 +2785,8 @@ def test_a_dead_parked_candidate_is_not_reported_as_a_resume(tmp_path):
     executor = ApiMintExecutor(
         ctx,
         verdicts=[
-            ("live", ""), ("dead", "HTTP 401"),
-            ("live", ""), ("dead", "HTTP 401"),
+            Verdict("live", 200, ""), Verdict("dead", 401, "HTTP 401"),
+            Verdict("live", 200, ""), Verdict("dead", 401, "HTTP 401"),
         ],
         backup_xml=_api_xml(OLD_KEY),
     )
@@ -2800,7 +2805,7 @@ def test_a_backup_restore_mint_resumes_when_the_pending_key_is_live(tmp_path):
     ctx = _api_context(tmp_path, pending)
     executor = ApiMintExecutor(
         ctx,
-        verdicts=[("dead", "HTTP 401"), ("live", "")],
+        verdicts=[Verdict("dead", 401, "HTTP 401"), Verdict("live", 200, "")],
         backup_xml=_api_xml(OLD_KEY),
     )
 
@@ -2824,10 +2829,10 @@ def test_a_backup_restore_mint_restarts_without_reuploading_an_already_restored_
     executor = ApiMintExecutor(
         ctx,
         verdicts=[
-            ("live", ""),
-            ("dead", "HTTP 401"),
-            ("live", ""),
-            ("dead", "HTTP 401"),
+            Verdict("live", 200, ""),
+            Verdict("dead", 401, "HTTP 401"),
+            Verdict("live", 200, ""),
+            Verdict("dead", 401, "HTTP 401"),
         ],
         backup_xml=_api_xml("pending-value"),
     )
@@ -2848,7 +2853,7 @@ def test_a_backup_restore_mint_refuses_a_config_holding_a_third_key(tmp_path):
     ctx = _api_context(tmp_path, pending)
     executor = ApiMintExecutor(
         ctx,
-        verdicts=[("live", ""), ("dead", "HTTP 401")],
+        verdicts=[Verdict("live", 200, ""), Verdict("dead", 401, "HTTP 401")],
         backup_xml=_api_xml("some-other-value"),
     )
 
@@ -2867,7 +2872,7 @@ def test_a_backup_restore_mint_refuses_both_keys_authenticating(tmp_path):
     ctx = _api_context(tmp_path, pending)
     executor = ApiMintExecutor(
         ctx,
-        verdicts=[("live", ""), ("live", "")],
+        verdicts=[Verdict("live", 200, ""), Verdict("live", 200, "")],
         backup_xml=_api_xml(OLD_KEY),
     )
 
@@ -2901,7 +2906,7 @@ def test_a_backup_restore_mint_keeps_the_pending_value_when_restore_is_refused(t
     ctx = _api_context(tmp_path, pending)
     executor = ApiMintExecutor(
         ctx,
-        verdicts=[("live", "")],
+        verdicts=[Verdict("live", 200, "")],
         backup_xml=_api_xml(OLD_KEY),
         restore_status=400,
     )
@@ -3146,7 +3151,11 @@ def test_a_backup_restore_mint_discards_a_pending_copy_of_the_stored_key(tmp_pat
     ctx = _api_context(tmp_path, pending)
     executor = ApiMintExecutor(
         ctx,
-        verdicts=[("live", ""), ("live", ""), ("dead", "HTTP 401")],
+        verdicts=[
+            Verdict("live", 200, ""),
+            Verdict("live", 200, ""),
+            Verdict("dead", 401, "HTTP 401"),
+        ],
         backup_xml=_api_xml(OLD_KEY),
     )
 
@@ -3164,7 +3173,7 @@ def test_a_backup_restore_mint_refuses_when_the_config_holds_a_lost_value(tmp_pa
     ctx = _api_context(tmp_path, pending)
     executor = ApiMintExecutor(
         ctx,
-        verdicts=[("live", "")],
+        verdicts=[Verdict("live", 200, "")],
         backup_xml=_api_xml("a-value-no-store-knows"),
     )
 
@@ -3183,10 +3192,10 @@ def test_a_backup_restore_mint_refuses_when_the_old_key_survives_the_restart(tmp
     executor = ApiMintExecutor(
         ctx,
         verdicts=[
-            ("live", ""),
-            ("dead", "HTTP 401"),
-            ("live", ""),
-            ("live", ""),
+            Verdict("live", 200, ""),
+            Verdict("dead", 401, "HTTP 401"),
+            Verdict("live", 200, ""),
+            Verdict("live", 200, ""),
         ],
         backup_xml=_api_xml(OLD_KEY),
     )
@@ -3608,7 +3617,7 @@ def test_the_backup_restore_mint_parks_the_value_before_reading_the_backup(tmp_p
     ctx = _api_context(tmp_path, pending)
     executor = FailingBackup(
         ctx,
-        verdicts=[("live", ""), ("dead", "HTTP 401")],
+        verdicts=[Verdict("live", 200, ""), Verdict("dead", 401, "HTTP 401")],
         backup_xml=_api_xml(OLD_KEY),
     )
 
@@ -3627,7 +3636,11 @@ def test_execute_routes_the_planned_backup_restore_mint_to_the_api_path(tmp_path
     ctx = _api_context(tmp_path, pending)
     executor = ApiMintExecutor(
         ctx,
-        verdicts=[("live", ""), ("live", ""), ("dead", "HTTP 401")],
+        verdicts=[
+            Verdict("live", 200, ""),
+            Verdict("live", 200, ""),
+            Verdict("dead", 401, "HTTP 401"),
+        ],
         backup_xml=_api_xml(OLD_KEY),
     )
     plan = RotationPlan(credential=ctx.credential, host=ctx.host)
@@ -3931,7 +3944,7 @@ def test_a_manual_mint_accepts_the_supplied_key_and_parks_it(tmp_path):
     ctx = _manual_context(tmp_path)
     pending = ctx.pending
     executor = ManualMintExecutor(
-        ctx, verdicts=[("dead", "HTTP 401"), ("live", "")],
+        ctx, verdicts=[Verdict("dead", 401, "HTTP 401"), Verdict("live", 200, "")],
     )
 
     detail = executor._mint_for(_manual_step())
@@ -3955,7 +3968,7 @@ def test_a_manual_mint_refuses_the_stored_key_as_the_new_one(tmp_path):
 
 def test_a_manual_mint_refuses_while_the_stored_key_still_works(tmp_path):
     ctx = _manual_context(tmp_path, provided="the-third-key")
-    executor = ManualMintExecutor(ctx, verdicts=[("live", "HTTP 200")])
+    executor = ManualMintExecutor(ctx, verdicts=[Verdict("live", 200, "HTTP 200")])
 
     with pytest.raises(RotationError, match="still authenticates"):
         executor._mint_for(_manual_step())
@@ -3966,7 +3979,7 @@ def test_a_manual_mint_refuses_while_the_stored_key_still_works(tmp_path):
 def test_a_manual_mint_refuses_a_supplied_key_the_service_will_not_take(tmp_path):
     ctx = _manual_context(tmp_path, provided="wrong-key")
     executor = ManualMintExecutor(
-        ctx, verdicts=[("dead", "HTTP 401"), ("dead", "HTTP 401")],
+        ctx, verdicts=[Verdict("dead", 401, "HTTP 401"), Verdict("dead", 401, "HTTP 401")],
     )
 
     with pytest.raises(RotationError, match="does not authenticate"):
@@ -3987,7 +4000,7 @@ def test_a_manual_mint_resumes_from_the_parked_key(tmp_path):
     pending = FakePending({"prowlarr_api_key": Secret(NEW_KEY)})
     ctx = _manual_context(tmp_path, provided=None, pending=pending)
     executor = ManualMintExecutor(
-        ctx, verdicts=[("dead", "HTTP 401"), ("live", "")],
+        ctx, verdicts=[Verdict("dead", 401, "HTTP 401"), Verdict("live", 200, "")],
     )
 
     detail = executor._mint_for(_manual_step())
@@ -4014,7 +4027,7 @@ def test_manual_mint_preflight_is_ready_before_the_key_exists(tmp_path):
 def test_manual_mint_preflight_verifies_a_supplied_key(tmp_path):
     ctx = _manual_context(tmp_path, provided=NEW_KEY)
     executor = ManualMintExecutor(
-        ctx, verdicts=[("dead", "HTTP 401"), ("live", "")],
+        ctx, verdicts=[Verdict("dead", 401, "HTTP 401"), Verdict("live", 200, "")],
         servarr_call=_servarr_call(FakeState()),
     )
 
@@ -4032,9 +4045,9 @@ def test_a_manual_mint_replaces_a_dead_parked_key(tmp_path):
     executor = ManualMintExecutor(
         ctx,
         verdicts=[
-            ("dead", "HTTP 401"),  # parked key: dead, so replace it
-            ("dead", "HTTP 401"),  # stored key
-            ("live", ""),          # supplied key
+            Verdict("dead", 401, "HTTP 401"),  # parked key: dead, so replace it
+            Verdict("dead", 401, "HTTP 401"),  # stored key
+            Verdict("live", 200, ""),          # supplied key
         ],
     )
 
@@ -4049,7 +4062,7 @@ def test_a_manual_mint_refuses_to_overwrite_a_live_parked_key(tmp_path):
     pending = FakePending({"prowlarr_api_key": Secret("live-parked-key")})
     ctx = _manual_context(tmp_path, provided=NEW_KEY, pending=pending)
     executor = ManualMintExecutor(
-        ctx, verdicts=[("live", "HTTP 200")],
+        ctx, verdicts=[Verdict("live", 200, "HTTP 200")],
     )
 
     with pytest.raises(RotationError, match="parked a different key"):
@@ -4075,7 +4088,11 @@ def test_a_declared_ui_password_does_not_log_in_when_the_download_is_open(tmp_pa
     ctx.mint_values = {"prowlarr_ui_password": Secret("wrong-password")}
     executor = ApiMintExecutor(
         ctx,
-        verdicts=[("live", ""), ("live", ""), ("dead", "HTTP 401")],
+        verdicts=[
+            Verdict("live", 200, ""),
+            Verdict("live", 200, ""),
+            Verdict("dead", 401, "HTTP 401"),
+        ],
         backup_xml=_api_xml(OLD_KEY),
     )
     executor._call = _servarr_call(state)
@@ -4108,7 +4125,7 @@ def test_a_manual_mint_never_writes_the_supplied_key_to_the_journal(tmp_path):
     ctx = _manual_context(tmp_path)
     ctx.vault_setter = lambda value: None
     executor = ManualMintExecutor(
-        ctx, verdicts=[("dead", "HTTP 401"), ("live", "")],
+        ctx, verdicts=[Verdict("dead", 401, "HTTP 401"), Verdict("live", 200, "")],
     )
     plan = RotationPlan(
         credential=ctx.credential, host=ctx.host, mint_via="provided"
@@ -4238,7 +4255,11 @@ def test_reconstructed_mint_restores_the_built_config_without_a_backup(tmp_path)
     ctx = _reconstruct_context(tmp_path)
     executor = ApiMintExecutor(
         ctx,
-        verdicts=[("live", ""), ("live", ""), ("dead", "HTTP 401")],
+        verdicts=[
+            Verdict("live", 200, ""),
+            Verdict("live", 200, ""),
+            Verdict("dead", 401, "HTTP 401"),
+        ],
         backup_xml=_api_xml(OLD_KEY),
     )
     executor._call = _servarr_call(state)
@@ -4265,7 +4286,11 @@ def test_a_rejected_reconstructed_restore_keeps_the_old_key_and_parks(tmp_path):
     ctx = _reconstruct_context(tmp_path)
     executor = ApiMintExecutor(
         ctx,
-        verdicts=[("live", ""), ("live", ""), ("dead", "HTTP 401")],
+        verdicts=[
+            Verdict("live", 200, ""),
+            Verdict("live", 200, ""),
+            Verdict("dead", 401, "HTTP 401"),
+        ],
         backup_xml=_api_xml(OLD_KEY),
         restore_status=400,
     )
@@ -4302,7 +4327,11 @@ def test_reconstructed_mint_refuses_postgres_before_restoring(tmp_path):
     ctx = _reconstruct_context(tmp_path)
     executor = ApiMintExecutor(
         ctx,
-        verdicts=[("live", ""), ("live", ""), ("dead", "HTTP 401")],
+        verdicts=[
+            Verdict("live", 200, ""),
+            Verdict("live", 200, ""),
+            Verdict("dead", 401, "HTTP 401"),
+        ],
         backup_xml=_api_xml(OLD_KEY),
     )
     executor._call = _servarr_call(state)
