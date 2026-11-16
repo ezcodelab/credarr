@@ -58,7 +58,12 @@ scripts/deploy-github
 # pytest-testmon state (an experiment; not used by CI)
 .testmondata*
 
-# The first-pass UI contract and the portable audit harness are local design
-# notes: ignored like the live fixtures, not part of the published tree.
-docs/UI_CONTRACT.md
-ui-system/
+# The portable UI audit and its first-pass contract are part of the gate:
+# `make ui-audit` reads them, so they ship with the repository. Anything else
+# under ui-system/ stays local.
+ui-system/*
+!ui-system/README.md
+!ui-system/config.json
+!ui-system/bin/
+ui-system/bin/*
+!ui-system/bin/ui_system.py

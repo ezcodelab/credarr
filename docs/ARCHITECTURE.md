@@ -55,6 +55,19 @@ src/credarr/provenance.py   the version each capability was measured against;
                             managed vs monitor-only; display claims only
 src/credarr/transport.py    run_python(code); local subprocess for API calls
 src/credarr/journal.py      SQLite: attempts, steps, locks, holders
+src/credarr/config.py       hosts and URLs; refused retired settings
+src/credarr/errors.py       expected failures and the exit-code contract
+src/credarr/redact.py       Secret: a value that refuses to print; scrub()
+src/credarr/fingerprint.py  compare values without storing or revealing them
+src/credarr/secrets.py      canonical values behind the backend interface
+src/credarr/pending.py      the parked value an API-only mint must not lose
+src/credarr/names.py        the one grammar for a container name in a path
+src/credarr/instance.py     one app process per config directory (app.lock)
+src/credarr/services.py     per-service facts the console reads
+src/credarr/emitter.py      the parsed model back to YAML text
+src/credarr/docker_api.py   the read-only Docker boundary (discovery, images)
+src/credarr/cli.py          the command line; the exit code is the contract
+src/credarr/facade.py       the library the CLI and the server call
 src/credarr/audit.py        observed state (statuses + reason codes)
 src/credarr/report.py       human + versioned JSON output
 src/credarr_server/store.py the topology store: the manifest as rows, imported
@@ -72,6 +85,14 @@ src/credarr_server/notifier.py
 src/credarr_server/discovery.py
                             optional read-only Docker scan; proposals and
                             capability diffs, never a topology write
+src/credarr_server/backup.py
+                            encrypted backup and the restore that proves it
+src/credarr_server/auto_rotation.py
+                            whether a due credential may run unattended
+src/credarr_server/audit_jobs.py
+                            one long audit as a server-side job
+src/credarr_server/mounts.py
+                            a filesystem that can hold the app's paths
 ui/                         the SPA (Svelte + Vite); `make web` builds it into
                             src/credarr_server/web, which the BFF serves at "/"
 ```

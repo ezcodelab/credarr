@@ -9,7 +9,7 @@ VENV := .venv
 BIN  := $(VENV)/bin
 PORT ?= 8080
 
-.PHONY: help install test ui-test lint check ci worktree-setup serve ui-dev web ui-smoke wheel image ship publish release clean
+.PHONY: help install test ui-test lint check ci worktree-setup serve ui-dev web ui-smoke ui-audit wheel image ship publish release clean
 
 GHCR := ghcr.io/ezcodelab/credarr
 
@@ -33,11 +33,14 @@ ui-test:  ## Run the console's unit tests (Node only)
 	@[ -d ui/node_modules ] || (cd ui && npm ci)
 	cd ui && npm test
 
+ui-audit:  ## Audit the console against the portable UI system contract
+	python3 ui-system/bin/ui_system.py audit .
+
 lint:  ## Lint
 	@if [ ! -x $(BIN)/ruff ]; then $(MAKE) install; fi
 	$(BIN)/ruff check .
 
-check: lint test ui-test  ## Local release gate: lint, Python tests, UI unit tests
+check: lint test ui-test ui-audit  ## Local release gate: lint, Python tests, UI unit tests, UI audit
 
 ci: check  ## Alias for check
 
