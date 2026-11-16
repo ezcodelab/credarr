@@ -6,6 +6,11 @@ load-bearing: a looser threshold or a broader ignore is the ratchet slipping,
 and the exemption may only shrink. Removing an entry is safe because
 `ruff check .` re-proves the function was actually fixed; adding a path, or a
 code outside the three, fails here so the loosening is a visible diff.
+
+The exemption is per file, not per function: ruff has no function-scoped
+ignore, so a new oversized function inside either file is caught by review,
+not by this test. A global `ignore` would disable the rule everywhere, so it
+is checked by name as well.
 """
 
 from __future__ import annotations
@@ -51,15 +56,17 @@ def test_size_thresholds_are_the_measured_values(
     assert found == value, f"[tool.ruff.lint.{section}] {key} must stay {value}, got {found!r}"
 
 
-def size_ignores(ignores: dict[str, list[str]]) -> dict[str, set[str]]:
-    """The entries that suppress a size rule, including broad prefixes.
+def broad(code: str) -> bool:
+    """Whether a selector covers one of the size rules.
 
-    `ALL` is ruff's everything selector and has no prefix relation to the
-    codes, so it is checked by name.
+    Ruff matches selectors by prefix, and `ALL` is its everything selector with
+    no prefix relation to the codes, so it is checked by name.
     """
-    def broad(code: str) -> bool:
-        return code == "ALL" or any(rule.startswith(code) for rule in SIZE_RULES)
+    return code == "ALL" or any(rule.startswith(code) for rule in SIZE_RULES)
 
+
+def size_ignores(ignores: dict[str, list[str]]) -> dict[str, set[str]]:
+    """The per-file entries that suppress a size rule, including broad ones."""
     return {
         path: {code for code in codes if broad(code)}
         for path, codes in ignores.items()
@@ -74,3 +81,14 @@ def test_size_exemptions_may_only_shrink(lint_config: dict) -> None:
     for path, allowed in EXEMPT.items():
         extra = sorted(found.get(path, set()) - allowed)
         assert not extra, f"{path} ignores {extra}, beyond the measured {sorted(allowed)}"
+
+
+def test_no_global_ignore_disables_a_size_rule(lint_config: dict) -> None:
+    """A global ignore switches the rule off everywhere, invisibly.
+
+    The per-file list is pinned above; without this, adding "C901" - or "PL",
+    or "ALL" - to the global list would pass every other test here while
+    `ruff check .` stopped enforcing the ratchet.
+    """
+    offenders = sorted(code for code in lint_config.get("ignore", []) if broad(code))
+    assert not offenders, f"global ignore disables the size ratchet: {offenders}"
