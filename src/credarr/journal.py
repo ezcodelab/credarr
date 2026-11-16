@@ -36,6 +36,7 @@ import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 from .errors import RotationError
@@ -150,6 +151,40 @@ def _pending(row: sqlite3.Row) -> PendingStep:
 
 class JournalLocked(RotationError):
     """Another rotation of this credential is already running."""
+
+
+class Outcome(Enum):
+    """How an attempt or a step ended, once its stored text is classified.
+
+    The journal keeps outcomes as text and their prefixes are load-bearing: the
+    executor decides whether to resume, adopt or start a new run from them, and
+    `last_rotation` reads the same text in SQL. Classifying here keeps the two
+    readings from drifting, and keeps a sixth caller from inventing a seventh
+    prefix comparison.
+    """
+
+    COMPLETED = "completed"
+    FAILED = "failed"
+    ABANDONED = "abandoned"
+    INTERRUPTED = "interrupted"
+
+
+def outcome_state(stored: str | None) -> Outcome:
+    """Classify one stored outcome.
+
+    A successful step stores its own description rather than a keyword - "noted",
+    "PUT 10 rows" - so a value without a failure or abandonment prefix is a
+    completion. `None` is a row with no finish: the interrupted case the journal
+    exists to make visible. An empty string is a finished row whose detail was
+    empty, and stays a completion.
+    """
+    if stored is None:
+        return Outcome.INTERRUPTED
+    if stored.startswith("failed"):
+        return Outcome.FAILED
+    if stored.startswith("abandoned"):
+        return Outcome.ABANDONED
+    return Outcome.COMPLETED
 
 
 class Journal:
