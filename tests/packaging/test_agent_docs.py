@@ -1,9 +1,11 @@
-"""AGENTS.md is the entry point every agent reads: pin it to the tree.
+"""The docs an agent follows are pinned to the tree, not to memory.
 
-Three drifts the audit found, each invisible until an agent follows the prose:
-a path that only exists under `docs/`, a layout that omits the modules added
-since it was written, and a gate the document names that no check runs. A test
-is the only place these stay true, because nothing imports a document.
+`AGENTS.md` is the local entry point and is deliberately not published; the
+public GitHub tree carries `README.md` and `docs/`. A gate named in either has
+to exist, a path has to resolve, and a module a reader is told about has to be
+listed where they look. The audit found all three drifted: a root
+`DECISIONS.md` that lives under `docs/`, a Modules block missing the modules
+added since, and a UI audit no check ran.
 """
 
 from __future__ import annotations
@@ -12,23 +14,37 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
-AGENTS = ROOT / "AGENTS.md"
+LOCAL_AGENTS = ROOT / "AGENTS.md"
+PUBLIC_DOCS = (
+    ROOT / "README.md",
+    ROOT / "docs/README.md",
+    ROOT / "docs/ARCHITECTURE.md",
+    ROOT / "docs/CONTRIBUTING.md",
+)
 
 # Backticked names that are not repository paths.
 NOT_A_REPO_PATH = {
+    # The operator's own config; the tree ships credarr.example.yaml.
+    "credarr.yaml",
+    # The engine/CLI declaration an operator writes; no file ships in the tree.
+    "credentials.yaml",
     # Seerr's own settings file, named to say credarr never writes it.
     "settings.json",
 }
-# A bare `.py` token in the prose means a module under `src/`. The package
-# markers are described by package, not by row.
-BARE_MODULE_ROOTS = ("src",)
 LAYOUT_ALLOWED = {"__init__.py", "__main__.py"}
 PATH_SUFFIXES = (".md", ".py", ".mjs", ".yaml", ".toml", ".json", ".css")
-
-
-def prose() -> str:
-    return AGENTS.read_text(encoding="utf-8")
+BARE_ROOTS = {
+    ".py": ("src", "tests"),
+    ".md": (".", "docs"),
+    ".json": (".", "ui"),
+    ".yaml": (".",),
+    ".toml": (".",),
+    ".css": ("ui/src",),
+    ".mjs": ("ui/tests",),
+}
 
 
 def backticked(text: str) -> list[str]:
@@ -36,66 +52,51 @@ def backticked(text: str) -> list[str]:
 
 
 def named_paths(text: str) -> list[str]:
-    """The tokens that read as repository paths, not routes or URLs."""
     found = set()
     for token in backticked(text):
-        if token in NOT_A_REPO_PATH:
+        if token in NOT_A_REPO_PATH or " " in token or token.startswith(("/", "-")):
             continue
-        if " " in token or token.startswith(("/", "-")):
-            continue
-        if not token.endswith(PATH_SUFFIXES):
-            continue
-        found.add(token)
+        if token.endswith(PATH_SUFFIXES):
+            found.add(token)
     return sorted(found)
 
 
-def resolve(token: str) -> Path | None:
-    """What the token means in the document's own grammar.
-
-    A slash means repo-relative. A bare module name is looked up under `src/`
-    only, because the prose says "registered in `writers.py`" and means the
-    one module. A bare document name means next to AGENTS.md; a document that
-    lives under `docs/` has to say so.
-    """
+def resolve(token: str, document: Path) -> Path | None:
+    if token.startswith("../"):
+        candidate = (document.parent / token).resolve()
+        return candidate if candidate.exists() else None
     if "/" in token:
         candidate = ROOT / token
         return candidate if candidate.exists() else None
-    if token.endswith(".py"):
-        matches = [
-            path
-            for root in BARE_MODULE_ROOTS
-            for path in (ROOT / root).rglob(token)
-        ]
-        return matches[0] if len(matches) == 1 else None
-    candidate = ROOT / token
-    return candidate if candidate.exists() else None
+    suffix = Path(token).suffix
+    matches = {
+        path.resolve()
+        for root in BARE_ROOTS.get(suffix, (".",))
+        for path in (ROOT / root).rglob(token)
+        if not {".venv", "node_modules", "__pycache__"} & set(path.parts)
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
 
 
-def make_targets() -> set[str]:
-    return set(
-        re.findall(r"^([a-zA-Z][a-zA-Z0-9_-]*):", (ROOT / "Makefile").read_text(), re.M)
-    )
+def missing_paths(documents: tuple[Path, ...]) -> dict[str, list[str]]:
+    missing: dict[str, list[str]] = {}
+    for document in documents:
+        for token in named_paths(document.read_text(encoding="utf-8")):
+            if resolve(token, document) is None:
+                missing.setdefault(token, []).append(
+                    str(document.relative_to(ROOT))
+                )
+    return missing
 
 
-def test_every_path_named_in_agents_md_exists() -> None:
-    text = prose()
-    missing = {}
-    for token in named_paths(text):
-        if resolve(token) is None:
-            missing[token] = text.count(f"`{token}`")
-    assert not missing, (
-        "AGENTS.md names paths that do not resolve in this grammar "
-        "(token: occurrences): " + repr(missing)
-    )
-
-
-def layout_block(text: str) -> str:
-    match = re.search(r"## Layout\n\n```\n(.*?)```", text, re.S)
-    assert match is not None, "AGENTS.md has no Layout code block"
+def modules_block(document: Path, heading: str) -> str:
+    text = document.read_text(encoding="utf-8")
+    match = re.search(rf"{re.escape(heading)}\n\n```\n(.*?)```", text, re.S)
+    assert match is not None, f"{document} has no {heading} block"
     return match.group(1)
 
 
-def named_in_layout(name: str, block: str) -> bool:
+def named_in_block(name: str, block: str) -> bool:
     if name in block:
         return True
     stem = name.removesuffix(".py")
@@ -105,26 +106,66 @@ def named_in_layout(name: str, block: str) -> bool:
     )
 
 
-def test_every_source_module_is_named_in_the_layout() -> None:
-    block = layout_block(prose())
-    missing = sorted(
+def undocumented_modules(block: str) -> list[str]:
+    return sorted(
         path.name
         for path in (ROOT / "src").rglob("*.py")
-        if path.name not in LAYOUT_ALLOWED and not named_in_layout(path.name, block)
+        if path.name not in LAYOUT_ALLOWED and not named_in_block(path.name, block)
     )
+
+
+def make_targets() -> set[str]:
+    return set(
+        re.findall(r"^([a-zA-Z][a-zA-Z0-9_-]*):", (ROOT / "Makefile").read_text(), re.M)
+    )
+
+
+def named_targets(documents: tuple[Path, ...]) -> set[str]:
+    named = set()
+    for document in documents:
+        named |= {
+            match.group(1)
+            for token in backticked(document.read_text(encoding="utf-8"))
+            if (match := re.fullmatch(r"make ([a-zA-Z][a-zA-Z0-9_-]*)", token))
+        }
+    return named
+
+
+def test_every_path_in_the_public_docs_exists() -> None:
+    missing = missing_paths(PUBLIC_DOCS)
     assert not missing, (
-        "src modules no agent can find from AGENTS.md's layout: " + repr(missing)
+        "public docs name paths that do not resolve (token: documents): " + repr(missing)
     )
 
 
-def test_every_make_target_named_in_agents_md_is_defined() -> None:
-    named = {
-        match.group(1)
-        for token in backticked(prose())
-        if (match := re.fullmatch(r"make ([a-zA-Z][a-zA-Z0-9_-]*)", token))
-    }
-    missing = sorted(named - make_targets())
-    assert not missing, "AGENTS.md names Makefile targets that do not exist: " + repr(missing)
+def test_every_source_module_is_named_in_the_architecture_modules_block() -> None:
+    missing = undocumented_modules(modules_block(ROOT / "docs/ARCHITECTURE.md", "## Modules"))
+    assert not missing, (
+        "src modules missing from docs/ARCHITECTURE.md's Modules block: " + repr(missing)
+    )
+
+
+def test_every_make_target_named_in_the_public_docs_is_defined() -> None:
+    missing = sorted(named_targets(PUBLIC_DOCS) - make_targets())
+    assert not missing, "public docs name Makefile targets that do not exist: " + repr(missing)
+
+
+@pytest.mark.skipif(
+    not LOCAL_AGENTS.exists(),
+    reason="AGENTS.md is a local file, deliberately not published",
+)
+def test_agents_md_is_in_sync_when_present() -> None:
+    """The local entry point gets the same three checks, where it exists."""
+    missing = missing_paths((LOCAL_AGENTS,))
+    assert not missing, "AGENTS.md names paths that do not resolve: " + repr(missing)
+    missing_modules = undocumented_modules(modules_block(LOCAL_AGENTS, "## Layout"))
+    assert not missing_modules, (
+        "src modules missing from AGENTS.md's Layout block: " + repr(missing_modules)
+    )
+    missing_targets = sorted(named_targets((LOCAL_AGENTS,)) - make_targets())
+    assert not missing_targets, (
+        "AGENTS.md names Makefile targets that do not exist: " + repr(missing_targets)
+    )
 
 
 def test_the_ui_audit_is_a_real_check_gate() -> None:
