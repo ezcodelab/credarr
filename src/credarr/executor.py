@@ -506,8 +506,8 @@ class Verdict:
     `state` is the credential answer, `status` the HTTP code when there was one
     (`None` when the service could not be reached), and `detail` the sentence a
     human reads. The split is the point: control flow reads `state` and
-    `status`, so rewording `detail` - "HTTP 401", "HTTP 401 (revoked key)" or a
-    service's unusual body - cannot change whether a mint refuses.
+    `status`, so rewording `detail` - "HTTP 401" today, a sentence that quotes
+    the service tomorrow - cannot change whether a mint refuses.
 
     A caller with no value to ask about uses `state="absent"`, which is not a
     service answer: it never counts as `live` or `dead`, and callers that need

@@ -910,10 +910,10 @@ def test_manual_apply_without_a_parked_key_or_tty_is_usage(monkeypatch, capsys):
 def test_a_401_with_an_unusual_body_is_still_proof_the_stored_key_is_dead():
     """The manual-mint refusal reads state and status, never the sentence.
 
-    A service may answer 401 with a body worth quoting. The refusal used to
-    compare the display string against "HTTP 401", so a 401 whose detail said
-    anything else refused a key the service had just proven dead - and the
-    operator was told the proof was ambiguous when it was not.
+    Today's sentence is "HTTP 401", but a future one may quote the service or
+    say more than the code. The refusal must key on the answer, not on the
+    text: a detail carrying a body is still a dead key, and a 403 is still
+    ambiguous.
     """
     from credarr.executor import Executor, Verdict
 
