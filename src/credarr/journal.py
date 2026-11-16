@@ -157,10 +157,14 @@ class Outcome(Enum):
     """How an attempt or a step ended, once its stored text is classified.
 
     The journal keeps outcomes as text and their prefixes are load-bearing: the
-    executor decides whether to resume, adopt or start a new run from them, and
-    `last_rotation` reads the same text in SQL. Classifying here keeps the two
-    readings from drifting, and keeps a sixth caller from inventing a seventh
-    prefix comparison.
+    executor decides whether to resume, adopt or start a new run from them.
+    Classifying here keeps one caller from inventing a prefix the next one does
+    not know about.
+
+    `last_success`, `last_rotation` and `last_rotations` read the same text in
+    SQL and cannot call this function. That is a second reading, not a caller:
+    `test_the_sql_readers_agree_with_outcome_state` runs every stored form
+    through both and fails when they part company.
     """
 
     COMPLETED = "completed"
@@ -174,9 +178,13 @@ def outcome_state(stored: str | None) -> Outcome:
 
     A successful step stores its own description rather than a keyword - "noted",
     "PUT 10 rows" - so a value without a failure or abandonment prefix is a
-    completion. `None` is a row with no finish: the interrupted case the journal
-    exists to make visible. An empty string is a finished row whose detail was
-    empty, and stays a completion.
+    completion. An empty string is a completion for the same reason: it is not a
+    keyword, and no current writer stores one.
+
+    `None` is a row with no finish, which is the interrupted case the journal
+    exists to make visible. Its column is `outcome`, while the tables above key
+    interruption on `finished_at`; every writer sets the two together, so the
+    pair is one state seen from two columns.
     """
     if stored is None:
         return Outcome.INTERRUPTED

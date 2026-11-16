@@ -133,6 +133,11 @@ statement "a run started", even if it died before its first step.
 6. Callers classify a stored outcome with `journal.outcome_state`, never by a
    prefix of their own. `Outcome.INTERRUPTED` is `outcome IS NULL`, not a
    stored word; the three abandoned sentences all classify as `ABANDONED`.
+   `last_success`/`last_rotation`/`last_rotations` read the same text in SQL
+   and cannot call it; that second reading is pinned by
+   `test_the_sql_readers_agree_with_outcome_state`. The states table above
+   keys interruption on `finished_at`, the classifier on `outcome`; every
+   writer sets both columns together, so they are one state seen twice.
 
 ### Transitions
 

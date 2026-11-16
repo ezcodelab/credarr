@@ -503,3 +503,42 @@ def test_outcome_prefixes_are_parsed_only_in_the_journal():
     assert not offenders, (
         "outcome prefixes parsed outside journal.outcome_state: " + repr(offenders)
     )
+
+
+@pytest.mark.parametrize(
+    ("attempt_outcome", "record_outcome"),
+    [
+        ("completed", "noted"),
+        ("failed", "noted"),
+        ("abandoned: run presumed dead, reclaimed by a later attempt", "noted"),
+        ("abandoned: taken over by the admin", "noted"),
+        ("abandoned: abandoned by the admin", "noted"),
+        ("completed", "failed: HTTP 401 from the vault"),
+        ("completed", "abandoned: taken over by the admin"),
+    ],
+)
+def test_the_sql_readers_agree_with_outcome_state(
+    journal, attempt_outcome, record_outcome
+):
+    """`last_rotation` is the same text read in SQL, not a second vocabulary.
+
+    It cannot call `outcome_state`, so it spells the prefixes out. This runs
+    every form a writer stores through both readings, so a keyword added to the
+    classifier fails here until the SQL knows it too.
+    """
+    attempt = journal.begin("prowlarr_api_key")
+    journal.step_started(attempt, 0, "record", "vault", "write")
+    journal.step_finished(attempt, 0, record_outcome)
+    journal.finish(attempt, attempt_outcome)
+
+    state = outcome_state(attempt_outcome)
+    step_state = outcome_state(record_outcome)
+    rotated = step_state is Outcome.COMPLETED and state in (
+        Outcome.COMPLETED,
+        Outcome.ABANDONED,
+    )
+    assert (journal.last_rotation("prowlarr_api_key") is not None) is rotated
+    assert ("prowlarr_api_key" in journal.last_rotations()) is rotated
+    assert (journal.last_success("prowlarr_api_key") is not None) is (
+        rotated and state is Outcome.COMPLETED
+    )
