@@ -53,7 +53,7 @@ from xml.sax.saxutils import escape as _xml_escape
 from . import __version__
 from .config import HostConfig
 from .errors import ConfigError, CredctlError, RotationError, TransportError
-from .journal import Journal, PendingStep
+from .journal import Journal, Outcome, PendingStep, outcome_state
 from .model import Credential, parse_row_selector, split_target
 from .pending import PendingSecrets
 from .redact import Secret, scrub, scrub_url_credentials
@@ -1032,7 +1032,7 @@ class Executor:
         if previous is None or self._ctx.pending is None:
             return ""
         if previous_outcome is not None:
-            abandoned = str(previous_outcome).startswith("abandoned")
+            abandoned = outcome_state(previous_outcome) is Outcome.ABANDONED
             if not abandoned or not self._ctx.take_over:
                 return ""
         mint = next(
@@ -1050,7 +1050,7 @@ class Executor:
         if any(
             step["kind"] == StepKind.RECORD.value
             and step["finished_at"] is not None
-            and not str(step["outcome"] or "").startswith(("failed", "abandoned"))
+            and outcome_state(step["outcome"]) is Outcome.COMPLETED
             for step in steps
         ):
             return ""
@@ -1083,7 +1083,8 @@ class Executor:
             return False
         # A completed or failed attempt is history. Only an open attempt or one
         # a previous takeover/reclaim already closed can hide a half-done RECORD.
-        if previous_outcome is not None and not str(previous_outcome).startswith("abandoned"):
+        previous_state = outcome_state(previous_outcome)
+        if previous_state not in (Outcome.INTERRUPTED, Outcome.ABANDONED):
             return False
         # An already-abandoned attempt is history unless this run explicitly
         # takes it over. A plain new rotation (a due policy, or an operator
@@ -1113,7 +1114,7 @@ class Executor:
         ]
         if not record_steps:
             return False
-        abandoned = str(previous_outcome or "").startswith("abandoned")
+        abandoned = previous_state is Outcome.ABANDONED
         if not abandoned:
             took_over_record = any(
                 step.attempt_id == previous and step.kind == StepKind.RECORD.value
@@ -1121,8 +1122,7 @@ class Executor:
             )
             finished_record = any(
                 step["finished_at"] is not None
-                and not str(step["outcome"] or "").startswith("abandoned")
-                and not str(step["outcome"] or "").startswith("failed")
+                and outcome_state(step["outcome"]) is Outcome.COMPLETED
                 for step in record_steps
             )
             if not took_over_record and not finished_record:

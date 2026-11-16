@@ -36,6 +36,7 @@ import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 from .errors import RotationError
@@ -150,6 +151,48 @@ def _pending(row: sqlite3.Row) -> PendingStep:
 
 class JournalLocked(RotationError):
     """Another rotation of this credential is already running."""
+
+
+class Outcome(Enum):
+    """How an attempt or a step ended, once its stored text is classified.
+
+    The journal keeps outcomes as text and their prefixes are load-bearing: the
+    executor decides whether to resume, adopt or start a new run from them.
+    Classifying here keeps one caller from inventing a prefix the next one does
+    not know about.
+
+    `last_success`, `last_rotation` and `last_rotations` read the same text in
+    SQL and cannot call this function. That is a second reading, not a caller:
+    `test_the_sql_readers_agree_with_outcome_state` runs every stored form
+    through both and fails when they part company.
+    """
+
+    COMPLETED = "completed"
+    FAILED = "failed"
+    ABANDONED = "abandoned"
+    INTERRUPTED = "interrupted"
+
+
+def outcome_state(stored: str | None) -> Outcome:
+    """Classify one stored outcome.
+
+    A successful step stores its own description rather than a keyword - "noted",
+    "PUT 10 rows" - so a value without a failure or abandonment prefix is a
+    completion. An empty string is a completion for the same reason: it is not a
+    keyword, and no current writer stores one.
+
+    `None` is a row with no finish, which is the interrupted case the journal
+    exists to make visible. Its column is `outcome`, while the tables above key
+    interruption on `finished_at`; every writer sets the two together, so the
+    pair is one state seen from two columns.
+    """
+    if stored is None:
+        return Outcome.INTERRUPTED
+    if stored.startswith("failed"):
+        return Outcome.FAILED
+    if stored.startswith("abandoned"):
+        return Outcome.ABANDONED
+    return Outcome.COMPLETED
 
 
 class Journal:

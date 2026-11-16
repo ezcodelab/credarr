@@ -130,6 +130,14 @@ statement "a run started", even if it died before its first step.
    manual and `written` work that the operator was already told about, and an
    abandoned attempt whose RECORD step finished (the key did change; only the
    attempt close was lost).
+6. Callers classify a stored outcome with `journal.outcome_state`, never by a
+   prefix of their own. `Outcome.INTERRUPTED` is `outcome IS NULL`, not a
+   stored word; the three abandoned sentences all classify as `ABANDONED`.
+   `last_success`/`last_rotation`/`last_rotations` read the same text in SQL
+   and cannot call it; that second reading is pinned by
+   `test_the_sql_readers_agree_with_outcome_state`. The states table above
+   keys interruption on `finished_at`, the classifier on `outcome`; every
+   writer sets both columns together, so they are one state seen twice.
 
 ### Transitions
 
@@ -212,6 +220,9 @@ One row per `(attempt, ordinal)` in `steps`. A step is written as started
    cannot rewrite it.
 5. The failure detail is scrubbed before it is journaled (`executor.py` failure
    handler); no value, fingerprint, or token enters `outcome`.
+6. A completed step is `outcome_state(...) is Outcome.COMPLETED`. A successful
+   step stores its own description, so the absence of a keyword is not the
+   absence of success — `outcome = ''` is a completion too.
 
 ### Transitions
 

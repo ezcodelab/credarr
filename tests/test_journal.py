@@ -9,14 +9,22 @@ touches a credential.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
-from credarr.journal import Journal, JournalLocked
+from credarr.journal import Journal, JournalLocked, Outcome, outcome_state
+
+ROOT = Path(__file__).resolve().parents[1]
+
+# `str(row["outcome"] or "").startswith(("failed", "abandoned"))` and its
+# one-word cousins: the parse this file's table test replaces.
+OUTCOME_PREFIX = re.compile(r"""\.startswith\(\s*\(?\s*["'](?:failed|abandoned)""")
 
 
 @pytest.fixture
@@ -442,3 +450,95 @@ def test_a_closed_attempt_rejects_holder_rows(journal):
     journal.record_holder(attempt, "sonarr.indexers", "all", "confirmed", "stale")
 
     assert journal.holders(attempt) == []
+
+
+def test_outcome_state(journal):
+    """Every stored spelling, classified in one place.
+
+    The journal keeps outcomes as text and five of them begin with a keyword:
+    `completed`, `failed` (bare or followed by the step's message), and three
+    `abandoned: ...` reasons - reclaimed, taken over, abandoned. A successful
+    step stores its own description instead, so the keyword cannot be required
+    in both directions; a row with no finish stores NULL. Callers used to parse
+    the prefixes themselves, six times, in the executor.
+    """
+    cases = [
+        ("completed", Outcome.COMPLETED),
+        ("failed", Outcome.FAILED),
+        ("failed: HTTP 401 from sonarr", Outcome.FAILED),
+        (
+            "abandoned: run presumed dead, reclaimed by a later attempt",
+            Outcome.ABANDONED,
+        ),
+        ("abandoned: taken over by the admin", Outcome.ABANDONED),
+        ("abandoned: abandoned by the admin", Outcome.ABANDONED),
+        ("noted", Outcome.COMPLETED),
+        ("", Outcome.COMPLETED),
+        (None, Outcome.INTERRUPTED),
+    ]
+    for stored, expected in cases:
+        assert outcome_state(stored) is expected, (stored, expected)
+
+    # The table is the contract for real rows, not just strings: a finished
+    # attempt and an open step classify without a caller second-guessing them.
+    attempt = journal.begin("prowlarr_api_key")
+    journal.step_started(attempt, 0, "mint", "prowlarr", "backup/restore")
+    assert outcome_state(journal.attempt_outcome(attempt)) is Outcome.INTERRUPTED
+    journal.step_finished(attempt, 0, "noted")
+    journal.finish(attempt, "completed")
+    assert outcome_state(journal.attempt_outcome(attempt)) is Outcome.COMPLETED
+
+
+def test_outcome_prefixes_are_parsed_only_in_the_journal():
+    """A prefix parse in the executor is how `failed` and `abandoned` drift."""
+    offenders = []
+    for path in sorted((ROOT / "src").rglob("*.py")):
+        if path.name == "journal.py" or "__pycache__" in path.parts:
+            continue
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            if OUTCOME_PREFIX.search(line):
+                offenders.append(f"{path.relative_to(ROOT)}:{number}")
+    assert not offenders, (
+        "outcome prefixes parsed outside journal.outcome_state: " + repr(offenders)
+    )
+
+
+@pytest.mark.parametrize(
+    ("attempt_outcome", "record_outcome"),
+    [
+        ("completed", "noted"),
+        ("failed", "noted"),
+        ("abandoned: run presumed dead, reclaimed by a later attempt", "noted"),
+        ("abandoned: taken over by the admin", "noted"),
+        ("abandoned: abandoned by the admin", "noted"),
+        ("completed", "failed: HTTP 401 from the vault"),
+        ("completed", "abandoned: taken over by the admin"),
+    ],
+)
+def test_the_sql_readers_agree_with_outcome_state(
+    journal, attempt_outcome, record_outcome
+):
+    """`last_rotation` is the same text read in SQL, not a second vocabulary.
+
+    It cannot call `outcome_state`, so it spells the prefixes out. This runs
+    every form a writer stores through both readings, so a keyword added to the
+    classifier fails here until the SQL knows it too.
+    """
+    attempt = journal.begin("prowlarr_api_key")
+    journal.step_started(attempt, 0, "record", "vault", "write")
+    journal.step_finished(attempt, 0, record_outcome)
+    journal.finish(attempt, attempt_outcome)
+
+    state = outcome_state(attempt_outcome)
+    step_state = outcome_state(record_outcome)
+    rotated = step_state is Outcome.COMPLETED and state in (
+        Outcome.COMPLETED,
+        Outcome.ABANDONED,
+    )
+    assert (journal.last_rotation("prowlarr_api_key") is not None) is rotated
+    assert ("prowlarr_api_key" in journal.last_rotations()) is rotated
+    assert (journal.last_success("prowlarr_api_key") is not None) is (
+        rotated and state is Outcome.COMPLETED
+    )
