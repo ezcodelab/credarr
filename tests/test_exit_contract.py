@@ -905,3 +905,54 @@ def test_manual_apply_without_a_parked_key_or_tty_is_usage(monkeypatch, capsys):
     assert cli._rotate_locked(args) == ExitCode.USAGE
     _, err = capsys.readouterr()
     assert "needs the key" in err
+
+
+def test_a_401_with_an_unusual_body_is_still_proof_the_stored_key_is_dead():
+    """The manual-mint refusal reads state and status, never the sentence.
+
+    Today's sentence is "HTTP 401", but a future one may quote the service or
+    say more than the code. The refusal must key on the answer, not on the
+    text: a detail carrying a body is still a dead key, and a 403 is still
+    ambiguous.
+    """
+    from credarr.executor import Executor, Verdict
+
+    class Probe(Executor):
+        def __init__(self, *verdicts):
+            self.verdicts = list(verdicts)
+
+        def _authenticate_settled(self, service, key):
+            return self.verdicts.pop(0)
+
+    stored = Verdict("dead", 401, 'HTTP 401: {"error": "invalid api key"}')
+    supplied = Verdict("live", 200, "HTTP 200")
+    assert Probe(stored, supplied)._manual_mint_problems("prowlarr", "old", "new") == []
+
+    refusal = Probe(Verdict("dead", 403, "HTTP 403"))
+    problems = refusal._manual_mint_problems("prowlarr", "old", "new")
+    assert len(problems) == 1
+    assert "could not prove the stored key is dead" in problems[0]
+    assert "HTTP 403" in problems[0]
+
+
+def test_no_branch_reads_a_status_out_of_a_verdict_detail():
+    """`Verdict` keeps the status in a field; the sentence is for humans.
+
+    A refusal that compares `detail` to "HTTP 401" is the failure this ratchet
+    removed: rewording a message - or later quoting a service's body in it -
+    would change whether the mint runs.
+    """
+    import re
+    from pathlib import Path
+
+    pattern = re.compile(r'[dD]etail\s*(?:==|!=)\s*["\']HTTP')
+    offenders = []
+    for path in sorted((Path(__file__).resolve().parents[1] / "src").rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            if pattern.search(line):
+                offenders.append(f"{path.name}:{number}")
+    assert not offenders, "status read from a verdict detail: " + repr(offenders)

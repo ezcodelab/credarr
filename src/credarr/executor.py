@@ -499,6 +499,26 @@ class BackupProbe:
     ui_password_can_help: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class Verdict:
+    """What a service answered about a key, in fields rather than prose.
+
+    `state` is the credential answer, `status` the HTTP code when there was one
+    (`None` when the service could not be reached), and `detail` the sentence a
+    human reads. The split is the point: control flow reads `state` and
+    `status`, so rewording `detail` - "HTTP 401" today, a sentence that quotes
+    the service tomorrow - cannot change whether a mint refuses.
+
+    A caller with no value to ask about uses `state="absent"`, which is not a
+    service answer: it never counts as `live` or `dead`, and callers that need
+    "could not check" test it separately from `unknown`.
+    """
+
+    state: str
+    status: int | None
+    detail: str
+
+
 class Executor:
     def __init__(
         self,
@@ -1143,10 +1163,10 @@ class Executor:
         # before it can stand in for the mint. If it does not authenticate, the
         # pending store was lost or the operator changed the wrong copy; the
         # normal mint path will fail closed rather than propagate the old key.
-        verdict, _detail = self._authenticate_settled(
+        verdict = self._authenticate_settled(
             mint.target, self._ctx.vault_value
         )
-        if verdict != "live":
+        if verdict.state != "live":
             return False
         if candidate is not None:
             self._ctx.pending.clear(name)
@@ -1433,10 +1453,10 @@ class Executor:
                 else None
             )
             if pending is not None:
-                verdict, _ = self._authenticate_settled(
+                verdict = self._authenticate_settled(
                     service, pending.reveal()
                 )
-                if verdict == "live":
+                if verdict.state == "live":
                     return []
             return [
                 f"{service}: the stored key does not authenticate; the "
@@ -1576,10 +1596,10 @@ class Executor:
                 else None
             )
             if pending is not None:
-                verdict, _ = self._authenticate_settled(
+                verdict = self._authenticate_settled(
                     service, pending.reveal()
                 )
-                if verdict == "live":
+                if verdict.state == "live":
                     return problems, None
             problems.append(
                 f"{service}: the stored key does not authorize "
@@ -1889,26 +1909,27 @@ class Executor:
                 f"{service}: the supplied key is the stored key; rotate the key "
                 "in the service's own UI first, then supply the new one"
             ]
-        old_verdict, old_detail = self._authenticate_settled(service, expected)
-        if old_verdict == "live":
+        old_verdict = self._authenticate_settled(service, expected)
+        if old_verdict.state == "live":
             return [
                 f"{service}: the stored key still authenticates; rotate the key "
                 "in the service's own UI first, then supply the new one. Nothing "
                 "has been changed."
             ]
-        if old_verdict != "dead" or old_detail != "HTTP 401":
+        if old_verdict.state != "dead" or old_verdict.status != 401:
             return [
                 f"{service}: could not prove the stored key is dead "
-                f"({old_verdict}: {old_detail}). A Servarr refuses a revoked key "
-                "with HTTP 401; anything else is ambiguous, so the manual mint "
-                "will not write a holder. Nothing has been changed."
+                f"({old_verdict.state}: {old_verdict.detail}). A Servarr refuses "
+                "a revoked key with HTTP 401; anything else is ambiguous, so the "
+                "manual mint will not write a holder. Nothing has been changed."
             ]
-        new_verdict, new_detail = self._authenticate_settled(service, provided)
-        if new_verdict != "live":
+        new_verdict = self._authenticate_settled(service, provided)
+        if new_verdict.state != "live":
             return [
                 f"{service}: the supplied key does not authenticate "
-                f"({new_verdict}: {new_detail}); copy the key the service shows "
-                "after its regenerate, and supply that. Nothing has been changed."
+                f"({new_verdict.state}: {new_verdict.detail}); copy the key the "
+                "service shows after its regenerate, and supply that. Nothing "
+                "has been changed."
             ]
         return []
 
@@ -1973,13 +1994,13 @@ class Executor:
                 # supplied value must not overwrite it. A dead parked key is
                 # not a resume - the operator rotated again - so it may be
                 # replaced after the normal old/new verification below.
-                verdict, detail = self._authenticate_settled(
+                verdict = self._authenticate_settled(
                     service, parked.reveal()
                 )
-                if verdict != "dead":
+                if verdict.state != "dead":
                     raise RotationError(
                         f"{service}: a previous run parked a different key "
-                        f"({verdict}: {detail}); the supplied key was not used",
+                        f"({verdict.state}: {verdict.detail}); the supplied key was not used",
                         hint="resume that run with the parked key, or clear the "
                         "pending value after confirming the service's current "
                         "key. Nothing has been changed.",
@@ -2154,23 +2175,23 @@ class Executor:
             pending.clear(name)
             candidate = None
 
-        old_verdict, old_detail = self._authenticate_settled(service, expected)
-        if old_verdict == "unknown":
+        old_verdict = self._authenticate_settled(service, expected)
+        if old_verdict.state == "unknown":
             raise RotationError(
                 f"{service}: cannot ask whether the stored key is live "
-                f"({old_detail})",
+                f"({old_verdict.detail})",
                 hint="the backup/restore mint will not create a backup or restore "
                 "a config until the current key is known to authenticate.",
             )
 
         if candidate is not None:
-            candidate_verdict, candidate_detail = self._authenticate_settled(
+            candidate_verdict = self._authenticate_settled(
                 service, candidate.reveal()
             )
         else:
-            candidate_verdict, candidate_detail = "absent", "no pending value"
+            candidate_verdict = Verdict("absent", None, "no pending value")
 
-        if old_verdict == "live" and candidate_verdict == "live":
+        if old_verdict.state == "live" and candidate_verdict.state == "live":
             raise RotationError(
                 f"{service}: both the stored key and the pending key "
                 "authenticate",
@@ -2179,7 +2200,7 @@ class Executor:
                 "ambiguous; wait for the service to settle and re-run.",
             )
 
-        if candidate_verdict == "live":
+        if candidate_verdict.state == "live":
             # The restore already happened and the service accepted the parked
             # value. Do not make another backup or write another config.
             self._ctx.minted = candidate
@@ -2188,11 +2209,11 @@ class Executor:
             self._confirm_old_key_dead(service, expected)
             return "already-restored: continuing with the pending key"
 
-        if old_verdict != "live":
+        if old_verdict.state != "live":
             raise RotationError(
                 f"{service}: neither the stored key nor the pending key is "
-                f"confirmed live (stored: {old_detail}; pending: "
-                f"{candidate_detail})",
+                f"confirmed live (stored: {old_verdict.detail}; pending: "
+                f"{candidate_verdict.detail})",
                 hint="a backup/restore mint needs one of them to authenticate. "
                 "Nothing has been changed; restore access and re-run. If this "
                 "run was started on the other surface (CLI or server), resume "
@@ -2208,10 +2229,10 @@ class Executor:
             # credential change, but doing this first keeps the write ordering
             # one rule: pending before mutation.
             pending.set(name, candidate)
-        elif candidate_verdict != "dead":
+        elif candidate_verdict.state != "dead":
             raise RotationError(
                 f"{service}: the pending key could not be checked safely "
-                f"({candidate_detail})",
+                f"({candidate_verdict.detail})",
                 hint="the stored key is live, but the parked value was neither "
                 "accepted nor refused cleanly. Refusing to restore over a "
                 "config whose outcome cannot be read; nothing has been changed.",
@@ -2372,22 +2393,22 @@ class Executor:
             pending.clear(name)
             candidate = None
 
-        old_verdict, old_detail = self._authenticate_settled(service, expected)
-        if old_verdict == "unknown":
+        old_verdict = self._authenticate_settled(service, expected)
+        if old_verdict.state == "unknown":
             raise RotationError(
                 f"{service}: cannot ask whether the stored key is live "
-                f"({old_detail})",
+                f"({old_verdict.detail})",
                 hint="the rotate call would revoke it without proof that it "
                 "is the current key. Nothing has been changed.",
             )
         if candidate is not None:
-            candidate_verdict, candidate_detail = self._authenticate_settled(
+            candidate_verdict = self._authenticate_settled(
                 service, candidate.reveal()
             )
         else:
-            candidate_verdict, candidate_detail = "absent", "no pending value"
+            candidate_verdict = Verdict("absent", None, "no pending value")
 
-        if old_verdict == "live" and candidate_verdict == "live":
+        if old_verdict.state == "live" and candidate_verdict.state == "live":
             raise RotationError(
                 f"{service}: both the stored key and the pending key "
                 "authenticate",
@@ -2395,27 +2416,27 @@ class Executor:
                 "rotating would invalidate whichever one is actually live. "
                 "Wait for the service to settle and re-run.",
             )
-        if candidate_verdict == "live":
+        if candidate_verdict.state == "live":
             self._ctx.minted = candidate
             self._ctx.minted_service = service
             self._ctx.resumed = True
             self._confirm_old_key_dead(service, expected)
             return "already-rotated: continuing with the pending key"
-        if old_verdict != "live":
+        if old_verdict.state != "live":
             raise RotationError(
                 f"{service}: neither the stored key nor the pending key is "
-                f"confirmed live (stored: {old_detail}; pending: "
-                f"{candidate_detail})",
+                f"confirmed live (stored: {old_verdict.detail}; pending: "
+                f"{candidate_verdict.detail})",
                 hint="a rotate needs one of them to authenticate. Nothing has "
                 "been changed; restore access and re-run. If this run was "
                 "started on the other surface (CLI or server), resume it "
                 "there: the pending value lives beside that surface's store.",
             )
         if candidate is not None:
-            if candidate_verdict != "dead":
+            if candidate_verdict.state != "dead":
                 raise RotationError(
                     f"{service}: the pending key could not be checked safely "
-                    f"({candidate_detail})",
+                    f"({candidate_verdict.detail})",
                     hint="the stored key is live, but the parked value was "
                     "neither accepted nor refused cleanly. Nothing has been "
                     "changed.",
@@ -2455,11 +2476,11 @@ class Executor:
         # Park before asking anything else: this is the only copy.
         pending.set(name, Secret(new_key))
 
-        verdict, detail = self._authenticate_settled(service, new_key)
-        if verdict != "live":
+        verdict = self._authenticate_settled(service, new_key)
+        if verdict.state != "live":
             raise RotationError(
                 f"{service}: the newly rotated key does not authenticate "
-                f"({detail})",
+                f"({verdict.detail})",
                 hint="the old key is already revoked and the new value is in "
                 "the pending store. Nothing has been written to a holder; "
                 "re-run to resume.",
@@ -2566,41 +2587,41 @@ class Executor:
             pending.clear(name)
             candidate = None
 
-        old_verdict, old_detail = self._authenticate_settled(service, expected)
-        if old_verdict == "unknown":
+        old_verdict = self._authenticate_settled(service, expected)
+        if old_verdict.state == "unknown":
             raise RotationError(
                 f"{service}: cannot ask whether the stored key is live "
-                f"({old_detail})",
+                f"({old_verdict.detail})",
                 hint="nothing has been changed.",
             )
         if candidate is not None:
-            candidate_verdict, candidate_detail = self._authenticate_settled(
+            candidate_verdict = self._authenticate_settled(
                 service, candidate.reveal()
             )
         else:
-            candidate_verdict, candidate_detail = "absent", "no pending value"
+            candidate_verdict = Verdict("absent", None, "no pending value")
 
-        if old_verdict == "dead" and candidate_verdict == "live":
+        if old_verdict.state == "dead" and candidate_verdict.state == "live":
             self._ctx.minted = candidate
             self._ctx.minted_service = service
             self._ctx.resumed = True
             self._confirm_old_key_dead(service, expected)
             return "already-rotated: continuing with the pending key"
-        if old_verdict == "dead":
+        if old_verdict.state == "dead":
             raise RotationError(
                 f"{service}: neither the stored key nor the pending key is "
-                f"confirmed live (stored: {old_detail}; pending: "
-                f"{candidate_detail})",
+                f"confirmed live (stored: {old_verdict.detail}; pending: "
+                f"{candidate_verdict.detail})",
                 hint="the reset may have completed without a parked value. "
                 "Restore access and reset the key again; nothing has been "
                 "written to a holder.",
             )
 
-        if candidate is None or candidate_verdict == "dead":
+        if candidate is None or candidate_verdict.state == "dead":
             new_key = self._sabnzbd_reset(service, expected)
             pending.set(name, Secret(new_key))
             candidate = Secret(new_key)
-        elif candidate_verdict == "live":
+        elif candidate_verdict.state == "live":
             # The reset happened and the old key has not been restarted away
             # yet. The restart below settles it; this is the measured
             # pre-restart state, not an ambiguity.
@@ -2608,14 +2629,14 @@ class Executor:
         else:
             raise RotationError(
                 f"{service}: the pending key could not be checked safely "
-                f"({candidate_detail})",
+                f"({candidate_verdict.detail})",
                 hint="nothing has been written to a holder.",
             )
 
         self._sabnzbd_restart(service, expected, candidate.reveal())
         self._await_restart_key(
             service, old_key=expected, new_key=candidate.reveal(),
-            dead_detail="HTTP 403")
+            dead_status=403)
         self._confirm_old_key_dead(service, expected)
         self._ctx.minted = candidate
         self._ctx.minted_service = service
@@ -2667,19 +2688,19 @@ class Executor:
                     "to a holder. Re-run once the settings API accepts the "
                     "write.",
                 )
-            still_live, detail = self._authenticate_settled(service, expected)
-            if still_live == "unknown":
+            still_live = self._authenticate_settled(service, expected)
+            if still_live.state == "unknown":
                 raise RotationError(
                     f"{service}: the settings write answered HTTP {status} but "
                     f"whether the stored key still authenticates could not be "
-                    f"checked ({detail})",
+                    f"checked ({still_live.detail})",
                     hint="the chosen value is parked. Re-run once the service "
                     "answers; do not mint again until it does.",
                 )
-            if still_live != "live":
+            if still_live.state != "live":
                 raise RotationError(
                     f"{service}: the settings write answered HTTP {status} but "
-                    f"the stored key no longer authenticates ({detail})",
+                    f"the stored key no longer authenticates ({still_live.detail})",
                     hint="the value may have been applied despite the answer. "
                     "The chosen value is parked; re-run to resume it, or "
                     "restore access before minting again.",
@@ -2734,41 +2755,41 @@ class Executor:
             pending.clear(name)
             candidate = None
 
-        old_verdict, old_detail = self._authenticate_settled(service, expected)
-        if old_verdict == "unknown":
+        old_verdict = self._authenticate_settled(service, expected)
+        if old_verdict.state == "unknown":
             raise RotationError(
                 f"{service}: cannot ask whether the stored key is live "
-                f"({old_detail})",
+                f"({old_verdict.detail})",
                 hint="nothing has been changed.",
             )
         if candidate is not None:
-            candidate_verdict, candidate_detail = self._authenticate_settled(
+            candidate_verdict = self._authenticate_settled(
                 service, candidate.reveal()
             )
         else:
-            candidate_verdict, candidate_detail = "absent", "no pending value"
+            candidate_verdict = Verdict("absent", None, "no pending value")
 
-        if old_verdict == "dead" and candidate_verdict == "live":
+        if old_verdict.state == "dead" and candidate_verdict.state == "live":
             self._ctx.minted = candidate
             self._ctx.minted_service = service
             self._ctx.resumed = True
             self._confirm_old_key_dead(service, expected)
             return "already-rotated: continuing with the pending key"
-        if old_verdict == "dead":
+        if old_verdict.state == "dead":
             raise RotationError(
                 f"{service}: neither the stored key nor the pending key is "
-                f"confirmed live (stored: {old_detail}; pending: "
-                f"{candidate_detail})",
+                f"confirmed live (stored: {old_verdict.detail}; pending: "
+                f"{candidate_verdict.detail})",
                 hint="restore access and re-run; nothing has been written to "
                 "a holder.",
             )
-        if candidate_verdict == "unknown":
+        if candidate_verdict.state == "unknown":
             raise RotationError(
                 f"{service}: the pending key could not be checked safely "
-                f"({candidate_detail})",
+                f"({candidate_verdict.detail})",
                 hint="nothing has been written to a holder.",
             )
-        if candidate_verdict == "live":
+        if candidate_verdict.state == "live":
             raise RotationError(
                 f"{service}: both the stored key and the pending key "
                 "authenticate",
@@ -2782,11 +2803,11 @@ class Executor:
 
         candidate = self._bazarr_write(
             service, expected, candidate, pending, name)
-        verdict, detail = self._authenticate_settled(
+        verdict = self._authenticate_settled(
             service, candidate.reveal())
-        if verdict != "live":
+        if verdict.state != "live":
             raise RotationError(
-                f"{service}: the new key does not authenticate ({detail})",
+                f"{service}: the new key does not authenticate ({verdict.detail})",
                 hint="the chosen value is parked. Re-run to resume; do not "
                 "mint again.",
             )
@@ -2845,22 +2866,22 @@ class Executor:
             pending.clear(name)
             candidate = None
 
-        old_verdict, old_detail = self._authenticate_settled(service, expected)
-        if old_verdict == "unknown":
+        old_verdict = self._authenticate_settled(service, expected)
+        if old_verdict.state == "unknown":
             raise RotationError(
                 f"{service}: cannot ask whether the stored key is live "
-                f"({old_detail})",
+                f"({old_verdict.detail})",
                 hint="the regenerate call would revoke it without proof that "
                 "it is the current key. Nothing has been changed.",
             )
         if candidate is not None:
-            candidate_verdict, candidate_detail = self._authenticate_settled(
+            candidate_verdict = self._authenticate_settled(
                 service, candidate.reveal()
             )
         else:
-            candidate_verdict, candidate_detail = "absent", "no pending value"
+            candidate_verdict = Verdict("absent", None, "no pending value")
 
-        if old_verdict == "live" and candidate_verdict == "live":
+        if old_verdict.state == "live" and candidate_verdict.state == "live":
             raise RotationError(
                 f"{service}: both the stored key and the pending key "
                 "authenticate",
@@ -2868,27 +2889,27 @@ class Executor:
                 "would invalidate whichever one is actually live. Wait for the "
                 "service to settle and re-run.",
             )
-        if candidate_verdict == "live":
+        if candidate_verdict.state == "live":
             self._ctx.minted = candidate
             self._ctx.minted_service = service
             self._ctx.resumed = True
             self._confirm_old_key_dead(service, expected)
             return "already-rotated: continuing with the pending key"
-        if old_verdict != "live":
+        if old_verdict.state != "live":
             raise RotationError(
                 f"{service}: neither the stored key nor the pending key is "
-                f"confirmed live (stored: {old_detail}; pending: "
-                f"{candidate_detail})",
+                f"confirmed live (stored: {old_verdict.detail}; pending: "
+                f"{candidate_verdict.detail})",
                 hint="a regenerate needs one of them to authenticate. Nothing "
                 "has been changed; restore access and re-run. If this run was "
                 "started on the other surface (CLI or server), resume it "
                 "there: the pending value lives beside that surface's store.",
             )
         if candidate is not None:
-            if candidate_verdict != "dead":
+            if candidate_verdict.state != "dead":
                 raise RotationError(
                     f"{service}: the pending key could not be checked safely "
-                    f"({candidate_detail})",
+                    f"({candidate_verdict.detail})",
                     hint="the stored key is live, but the parked value was "
                     "neither accepted nor refused cleanly. Nothing has been "
                     "changed.",
@@ -2926,11 +2947,11 @@ class Executor:
         # Park before asking anything else: this is the only copy.
         pending.set(name, Secret(new_key))
 
-        verdict, detail = self._authenticate_settled(service, new_key)
-        if verdict != "live":
+        verdict = self._authenticate_settled(service, new_key)
+        if verdict.state != "live":
             raise RotationError(
                 f"{service}: the regenerated key does not authenticate "
-                f"({detail})",
+                f"({verdict.detail})",
                 hint="the old key is already revoked and the new value is in "
                 "the pending store. Nothing has been written to a holder; "
                 "re-run to resume.",
@@ -4136,8 +4157,8 @@ class Executor:
         for a live key. The rule is the one `_confirm_old_key_dead` already
         applies - a bare 403 is not a credential verdict.
         """
-        verdict, detail = self._authenticate(service, old)
-        return verdict == "dead" and detail == "HTTP 401"
+        verdict = self._authenticate(service, old)
+        return verdict.state == "dead" and verdict.status == 401
 
     # -- reissue mints: create alongside, revoke last -------------------------
     #
@@ -4338,10 +4359,10 @@ class Executor:
         if self._ctx.prior_mint_handle and self._ctx.pending is not None:
             parked = self._ctx.pending.get(self._ctx.credential.name)
             if parked is not None and parked.reveal() != self._ctx.vault_value:
-                verdict, _detail = self._authenticate_settled(
+                verdict = self._authenticate_settled(
                     service, parked.reveal()
                 )
-                if verdict == "live":
+                if verdict.state == "live":
                     self._ctx.minted = parked
                     self._ctx.minted_service = service
                     self._ctx.minted_handle = self._ctx.prior_mint_handle
@@ -4473,10 +4494,10 @@ class Executor:
                 self._ctx.journal.step_handle(
                     self._ctx.attempt, self._ctx.current_ordinal, str(handle)
                 )
-        verdict, detail = self._authenticate_settled(service, key)
-        if verdict != "live":
+        verdict = self._authenticate_settled(service, key)
+        if verdict.state != "live":
             raise RotationError(
-                f"{service}: the new value does not authenticate ({detail})",
+                f"{service}: the new value does not authenticate ({verdict.detail})",
                 hint="the row exists but was not accepted; nothing has been "
                 "written to a holder. The previous value is still live.",
             )
@@ -4771,41 +4792,44 @@ class Executor:
 
     def _await_restart_key(
         self, service: str, *, old_key: str, new_key: str,
-        dead_detail: str = "HTTP 401",
+        dead_status: int = 401,
     ) -> None:
         """Wait until the new key is accepted and the old key is not still live.
 
         This is the restart's proof. A 200 from the restart route only says the
         request was queued; the service can still be running the old config, or
         never come back. A 403 or unknown old-key answer proceeds without
-        exercise-only proof; only HTTP 401 sets `old_key_dead`. The pending
-        value is parked before the restore, so a timeout is a recoverable stall
-        rather than a lost credential.
+        exercise-only proof; only the caller's `dead_status` sets
+        `old_key_dead`. The pending value is parked before the restore, so a
+        timeout is a recoverable stall rather than a lost credential.
         """
         deadline = time.time() + READINESS_TIMEOUT
-        old_verdict = new_verdict = "unknown"
-        last_old = last_new = "no attempt completed"
+        old_verdict = new_verdict = Verdict("unknown", None, "no attempt completed")
         while time.time() < deadline:
-            old_verdict, last_old = self._authenticate(service, old_key)
-            new_verdict, last_new = self._authenticate(service, new_key)
-            if new_verdict == "live" and old_verdict != "live":
+            old_verdict = self._authenticate(service, old_key)
+            new_verdict = self._authenticate(service, new_key)
+            if new_verdict.state == "live" and old_verdict.state != "live":
                 # Only the service's measured rejection proves the old key is
                 # dead. A bare 403 is not a credential verdict in general; the
                 # callers that measured it pass the service's own answer.
-                self._ctx.old_key_dead = last_old == dead_detail
+                self._ctx.old_key_dead = (
+                    old_verdict.state == "dead"
+                    and old_verdict.status == dead_status
+                )
                 if not self._ctx.old_key_dead:
                     log_line(
-                        f"      {service}: the old key was {last_old}, which "
-                        "is not proof it is dead; exercise-only confirmation "
-                        "will not be claimed"
+                        f"      {service}: the old key was {old_verdict.detail}, "
+                        "which is not proof it is dead; exercise-only "
+                        "confirmation will not be claimed"
                     )
                 return
             time.sleep(READINESS_INTERVAL)
-        if new_verdict != "live":
+        if new_verdict.state != "live":
             raise RotationError(
                 f"{service}: the service-native restart did not make the "
                 f"restored key usable within {READINESS_TIMEOUT}s "
-                f"(old key: {last_old}; new key: {last_new})",
+                f"(old key: {old_verdict.detail}; "
+                f"new key: {new_verdict.detail})",
                 hint="the new key is parked in the pending store. The service "
                 "may have no supervisor to start it again after "
                 "POST /api/.../system/restart; start it manually and re-run. "
@@ -4877,14 +4901,15 @@ class Executor:
             }
         return {"key": key}
 
-    def _authenticate(self, service: str, key: str | None) -> tuple[str, str]:
+    def _authenticate(self, service: str, key: str | None) -> Verdict:
         """Ask the service whether `key` is a live credential.
 
-        Three verdicts, not two, because the middle one matters:
+        Three states, not two, because the middle one matters:
 
         live     the service accepted it.
         dead     the service refused it (401/403).
-        unknown  the service could not be reached.
+        unknown  the service could not be reached, or answered something that
+                 is not a credential answer.
 
         `unknown` is deliberately distinct from `dead`. A service that is down
         says nothing about whether a key works, and collapsing the two is how a
@@ -4903,9 +4928,9 @@ class Executor:
             # "unknown" verdict unreachable and the retry that depends on it
             # dead code - a service restarting moments ago looked like a hard
             # failure rather than a temporary one.
-            return "unknown", f"{type(exc).__name__}: {exc}"
+            return Verdict("unknown", None, f"{type(exc).__name__}: {exc}")
         if 200 <= status < 300:
-            return "live", f"HTTP {status}"
+            return Verdict("live", status, f"HTTP {status}")
         if status in (401, 403):
             if service == "gitea" and status == 403:
                 # Gitea validates the token first and answers 403 when the
@@ -4913,22 +4938,22 @@ class Executor:
                 # write:repository token gets 403 on /user). The token is live;
                 # the route is out of scope. A revoked token answers 401, so
                 # the revoke check below still sees dead.
-                return "live", "HTTP 403"
-            return "dead", f"HTTP {status}"
-        return "unknown", f"HTTP {status}"
+                return Verdict("live", status, "HTTP 403")
+            return Verdict("dead", status, f"HTTP {status}")
+        return Verdict("unknown", status, f"HTTP {status}")
 
-    def _authenticate_settled(self, service: str, key: str) -> tuple[str, str]:
+    def _authenticate_settled(self, service: str, key: str) -> Verdict:
         """Authenticate, tolerating a service that is still coming up.
 
         Only transport failures are retried. A 401 is an answer, and repeating
         a question that has already been answered only delays the report.
         """
         deadline = time.time() + self._ctx.settle_timeout
-        verdict, detail = self._authenticate(service, key)
-        while verdict == "unknown" and time.time() < deadline:
+        verdict = self._authenticate(service, key)
+        while verdict.state == "unknown" and time.time() < deadline:
             time.sleep(READINESS_INTERVAL)
-            verdict, detail = self._authenticate(service, key)
-        return verdict, detail
+            verdict = self._authenticate(service, key)
+        return verdict
 
     def _confirm_old_key_dead(self, service: str, old_key: str) -> None:
         """Record whether the old key is dead at the issuer, without aborting.
@@ -4941,29 +4966,29 @@ class Executor:
         """
         deadline = time.time() + self._ctx.settle_timeout
         while True:
-            verdict, detail = self._authenticate(service, old_key)
+            verdict = self._authenticate(service, old_key)
             # A bare 403 is not a credential verdict: an access layer refusing
             # the status route for a live key produces exactly that. The
             # measured *arr answer for a revoked key is 401, qBittorrent's is
             # 403 on its version route, and Seerr's is 403 on /auth/me (the
             # route this check calls), so only those enable the exercise-only
             # reading.
-            dead_detail = (
-                "HTTP 403"
+            dead_status = (
+                403
                 if service in ("qbittorrent", "seerr", "sabnzbd")
-                else "HTTP 401"
+                else 401
             )
-            if verdict == "dead" and detail == dead_detail:
+            if verdict.state == "dead" and verdict.status == dead_status:
                 self._ctx.old_key_dead = True
                 return
             if time.time() >= deadline:
                 self._ctx.old_key_dead = False
-                if verdict == "dead":
-                    state = f"was refused with {detail}, which is ambiguous"
-                elif verdict == "live":
+                if verdict.state == "dead":
+                    state = f"was refused with {verdict.detail}, which is ambiguous"
+                elif verdict.state == "live":
                     state = "still accepts it"
                 else:
-                    state = f"was {verdict}"
+                    state = f"was {verdict.state}"
                 log_line(
                     f"      {service}: could not confirm the old key is dead "
                     f"({state}); exercise-only confirmation will not be claimed"
