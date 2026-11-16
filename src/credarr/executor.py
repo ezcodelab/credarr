@@ -65,6 +65,8 @@ from .writers import (
     Holder,
     Reissue,
     api_version,
+    auth_kwargs,
+    auth_shape,
     holder_for,
     known_systems,
     readiness_path,
@@ -553,7 +555,7 @@ class Executor:
         for service in sorted(services):
             answered = self._checked_call(
                 service, "GET", readiness_path(service),
-                **self._auth_kwargs(service, self._ctx.vault_value))
+                **auth_kwargs(service, self._ctx.vault_value))
             if answered is None:
                 continue
             status, _ = answered
@@ -2635,8 +2637,7 @@ class Executor:
 
         self._sabnzbd_restart(service, expected, candidate.reveal())
         self._await_restart_key(
-            service, old_key=expected, new_key=candidate.reveal(),
-            dead_status=403)
+            service, old_key=expected, new_key=candidate.reveal())
         self._confirm_old_key_dead(service, expected)
         self._ctx.minted = candidate
         self._ctx.minted_service = service
@@ -4190,10 +4191,10 @@ class Executor:
             and self._ctx.minted is not None
             and not str(self._ctx.credential.write.get("mint_with") or "")
         ):
-            return self._auth_kwargs(service, self._ctx.minted.reveal()), \
+            return auth_kwargs(service, self._ctx.minted.reveal()), \
                 self._ctx.minted.reveal(), ""
         value, rotator = self._mint_authorizer(service)
-        return self._auth_kwargs(service, value), value or "", rotator
+        return auth_kwargs(service, value), value or "", rotator
 
     def _reissue_path(self, spec: Reissue, path: str, *, account: str = "",
                       username: str = "", row_id: str = "") -> str:
@@ -4668,7 +4669,7 @@ class Executor:
                 "Gitea token with write:repository",
                 hint="nothing has changed.",
             )
-        auth = self._auth_kwargs(service, token)
+        auth = auth_kwargs(service, token)
         status, hooks = self._call(
             self._ctx.host, service, "GET", f"/repos/{repo}/hooks",
             transport=self._ctx.transport, **auth,
@@ -4718,7 +4719,7 @@ class Executor:
                 f"{service}: the hook row carries no id", hint="nothing has changed."
             )
         value = token_hex(16)
-        auth = self._auth_kwargs(service, token)
+        auth = auth_kwargs(service, token)
         status, _ = self._call(
             self._ctx.host, service, "PATCH",
             f"/repos/{repo}/hooks/{hook_id}",
@@ -4792,17 +4793,18 @@ class Executor:
 
     def _await_restart_key(
         self, service: str, *, old_key: str, new_key: str,
-        dead_status: int = 401,
     ) -> None:
         """Wait until the new key is accepted and the old key is not still live.
 
         This is the restart's proof. A 200 from the restart route only says the
         request was queued; the service can still be running the old config, or
         never come back. A 403 or unknown old-key answer proceeds without
-        exercise-only proof; only the caller's `dead_status` sets
-        `old_key_dead`. The pending value is parked before the restore, so a
-        timeout is a recoverable stall rather than a lost credential.
+        exercise-only proof; only the status the registry records for the
+        service's revoked key sets `old_key_dead`. The pending value is parked
+        before the restore, so a timeout is a recoverable stall rather than a
+        lost credential.
         """
+        dead_status = auth_shape(service).dead_status
         deadline = time.time() + READINESS_TIMEOUT
         old_verdict = new_verdict = Verdict("unknown", None, "no attempt completed")
         while time.time() < deadline:
@@ -4866,41 +4868,6 @@ class Executor:
             return stored.reveal()
         return None
 
-    def _auth_kwargs(self, service: str, key: str | None) -> dict:
-        """How a service's own key is carried on an API call.
-
-        qBittorrent 5.3 accepts only `Authorization: Bearer`; `X-API-Key` is a
-        later addition, so the header used for every other service is a 403
-        here. Seerr reads `X-API-Key`. Everything else keeps the Servarr
-        default.
-        """
-        if service == "qbittorrent":
-            return {
-                "key": f"Bearer {key}" if key is not None else None,
-                "auth_header": "Authorization",
-            }
-        if service == "seerr":
-            return {"key": key, "auth_header": "X-API-Key"}
-        if service == "sabnzbd":
-            return {"key": key, "auth_transport": "query",
-                    "query_key_name": "apikey"}
-        if service == "grafana":
-            # A Grafana Bearer token; Basic admin auth is a different credential
-            # and is not used by this build.
-            return {
-                "key": f"Bearer {key}" if key is not None else None,
-                "auth_header": "Authorization",
-            }
-        if service == "gitea":
-            # Gitea tokens travel as `Authorization: token <value>`; the token
-            # routes themselves are Basic-only and are called with an explicit
-            # header by the mint.
-            return {
-                "key": f"token {key}" if key is not None else None,
-                "auth_header": "Authorization",
-            }
-        return {"key": key}
-
     def _authenticate(self, service: str, key: str | None) -> Verdict:
         """Ask the service whether `key` is a live credential.
 
@@ -4920,7 +4887,7 @@ class Executor:
             status, _ = self._call(
                 self._ctx.host, service, "GET", path,
                 transport=self._ctx.transport,
-                **self._auth_kwargs(service, key),
+                **auth_kwargs(service, key),
             )
         except TransportError as exc:
             # A transport failure is an answer of its own: the service could
@@ -4932,12 +4899,12 @@ class Executor:
         if 200 <= status < 300:
             return Verdict("live", status, f"HTTP {status}")
         if status in (401, 403):
-            if service == "gitea" and status == 403:
-                # Gitea validates the token first and answers 403 when the
-                # token lacks the route's scope (measured on 1.27.2: a
-                # write:repository token gets 403 on /user). The token is live;
+            shape = auth_shape(service)
+            if shape.live_on_403 and status == 403:
+                # The service validates the token first and answers 403 when
+                # the token lacks the route's scope, so the token is live and
                 # the route is out of scope. A revoked token answers 401, so
-                # the revoke check below still sees dead.
+                # the revoke check still sees dead.
                 return Verdict("live", status, "HTTP 403")
             return Verdict("dead", status, f"HTTP {status}")
         return Verdict("unknown", status, f"HTTP {status}")
@@ -4968,16 +4935,9 @@ class Executor:
         while True:
             verdict = self._authenticate(service, old_key)
             # A bare 403 is not a credential verdict: an access layer refusing
-            # the status route for a live key produces exactly that. The
-            # measured *arr answer for a revoked key is 401, qBittorrent's is
-            # 403 on its version route, and Seerr's is 403 on /auth/me (the
-            # route this check calls), so only those enable the exercise-only
-            # reading.
-            dead_status = (
-                403
-                if service in ("qbittorrent", "seerr", "sabnzbd")
-                else 401
-            )
+            # the status route for a live key produces exactly that. The table
+            # carries the measured answer for the services that use 403.
+            dead_status = auth_shape(service).dead_status
             if verdict.state == "dead" and verdict.status == dead_status:
                 self._ctx.old_key_dead = True
                 return

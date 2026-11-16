@@ -1505,7 +1505,8 @@ def test_execution_stops_at_the_first_failure(tmp_path):
 
     original = _servarr_call(state)
 
-    def failing(host, service, method, path, *, body=None, key=None, transport=None):
+    def failing(host, service, method, path, *, body=None, key=None,
+                transport=None, auth_header="X-Api-Key", **_kwargs):
         if path == "/indexer/0" and service == "sonarr":
             return 500, None
         return original(host, service, method, path, body=body, key=key)
@@ -1630,7 +1631,8 @@ def test_a_run_is_not_clean_while_a_holder_is_unreached(tmp_path):
 
     original = _servarr_call(state)
 
-    def failing(host, service, method, path, *, body=None, key=None, transport=None):
+    def failing(host, service, method, path, *, body=None, key=None,
+                transport=None, auth_header="X-Api-Key", **_kwargs):
         if path == "/indexer/0" and service == "sonarr":
             return 500, None
         return original(host, service, method, path, body=body, key=key, transport=transport)
@@ -2353,7 +2355,8 @@ def test_a_permanent_refusal_is_not_retried(tmp_path):
     original = executor._call
     puts = {"n": 0}
 
-    def counted(host, service, method, path, *, body=None, key=None, transport=None):
+    def counted(host, service, method, path, *, body=None, key=None,
+                transport=None, **_kwargs):
         if method == "PUT":
             puts["n"] += 1
         return original(host, service, method, path, body=body, key=key, transport=transport)

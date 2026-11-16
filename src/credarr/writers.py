@@ -531,6 +531,77 @@ REISSUE_MECHANISMS: dict[str, str] = {
 }
 
 
+@dataclass(frozen=True)
+class AuthShape:
+    """How a service carries its own key on the calls that read it.
+
+    The default is the *arr spelling, `X-Api-Key`, which is what the readiness
+    probes and the holder writers have always sent. The prefix and the query
+    parameter are load-bearing: qBittorrent 5.3 accepts only
+    `Authorization: Bearer`, Gitea's tokens travel as `Authorization: token`,
+    and SABnzbd reads `apikey` from the query. A row repeats a service's own
+    header spelling only where the mint path measured it; Bazarr and qui keep
+    the default because it is what their read path has always sent and it
+    works. This is a read shape, not the mint transport: Jellyfin's mint calls
+    use the `ApiKey` query parameter (`MINT_SOURCES`), while its liveness route
+    reads the header.
+    """
+
+    header: str = "X-Api-Key"
+    prefix: str = ""
+    query_name: str = ""
+    # The status a revoked key answers with. Only these three answer 403; a
+    # bare 403 from anywhere else is an access layer refusing the route, not a
+    # credential verdict. Measured on qBittorrent 5.3, Seerr 3.5.0 and SABnzbd
+    # 5.1.3.
+    dead_status: int = 401
+    # Gitea validates the token before the route's scope, so a 403 means the
+    # token is live and the route is out of scope (measured on 1.27.2).
+    live_on_403: bool = False
+
+
+AUTH_SHAPES: dict[str, AuthShape] = {
+    **{name: AuthShape() for name in (
+        "sonarr", "radarr", "prowlarr", "lidarr", "readarr", "whisparr",
+        "jellyfin", "arcane",
+    )},
+    "seerr": AuthShape(header="X-API-Key", dead_status=403),
+    # Bazarr's settings route and qui's API document X-API-KEY and X-API-Key;
+    # their read path has always sent the default and both accept it.
+    "bazarr": AuthShape(),
+    "qui": AuthShape(),
+    "qbittorrent": AuthShape(
+        header="Authorization", prefix="Bearer ", dead_status=403),
+    "grafana": AuthShape(header="Authorization", prefix="Bearer "),
+    "gitea": AuthShape(
+        header="Authorization", prefix="token ", live_on_403=True),
+    "sabnzbd": AuthShape(query_name="apikey", dead_status=403),
+}
+
+
+def auth_shape(system: str) -> AuthShape:
+    """`system`'s shape, with the *arr default for a service not listed."""
+    return AUTH_SHAPES.get(system, AuthShape())
+
+
+def auth_kwargs(system: str, key: str | None) -> dict:
+    """The call kwargs that carry `system`'s own key.
+
+    One table, so a new service adds a row instead of a branch in the executor.
+    An unknown system keeps the Servarr default, which is what the readiness
+    probes and the holder writers already assume.
+    """
+    shape = auth_shape(system)
+    if shape.query_name:
+        return {
+            "key": key,
+            "auth_transport": "query",
+            "query_key_name": shape.query_name,
+        }
+    value = key if key is None or not shape.prefix else f"{shape.prefix}{key}"
+    return {"key": value, "auth_header": shape.header}
+
+
 def readiness_path(system: str) -> str:
     """Where a service reports that it is serving again.
 

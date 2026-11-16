@@ -13,9 +13,14 @@ import pytest
 from credarr.model import Target, parse_row_selector, split_target
 from credarr.writers import (
     API_VERSIONS,
+    AUTH_SHAPES,
     HOLDERS,
     MINT_SOURCES,
+    REISSUERS,
+    AuthShape,
     api_version,
+    auth_kwargs,
+    auth_shape,
     holder_for,
     known_systems,
 )
@@ -311,3 +316,56 @@ def test_every_mint_source_is_pinned_literally():
         {"sonarr", "radarr", "prowlarr", "lidarr", "readarr", "whisparr",
          "jellyfin", "qbittorrent", "seerr", "grafana", "arcane", "gitea",
          "bazarr", "sabnzbd"})
+
+
+def test_every_mint_source_owns_auth_shape():
+    """A service's key shape is a registry row, not a branch in the executor.
+
+    The executor used to carry five `if service == ...` branches for the four
+    unusual shapes. A new service either added a sixth or silently inherited
+    the Servarr header; this test makes the missing row a failure here.
+    """
+    known = set(MINT_SOURCES) | set(REISSUERS)
+    missing = sorted(known - set(AUTH_SHAPES))
+    assert not missing, f"mint sources with no auth shape: {missing}"
+
+
+def test_auth_shapes_are_the_measured_transports():
+    """Every row, pinned by value: the table is the contract, not a sample."""
+    default = AuthShape()
+    expected = {
+        "sonarr": default, "radarr": default, "prowlarr": default,
+        "lidarr": default, "readarr": default, "whisparr": default,
+        "jellyfin": default, "arcane": default, "bazarr": default,
+        "qui": default,
+        "seerr": AuthShape(header="X-API-Key", dead_status=403),
+        "qbittorrent": AuthShape(
+            header="Authorization", prefix="Bearer ", dead_status=403),
+        "grafana": AuthShape(header="Authorization", prefix="Bearer "),
+        "gitea": AuthShape(
+            header="Authorization", prefix="token ", live_on_403=True),
+        "sabnzbd": AuthShape(query_name="apikey", dead_status=403),
+    }
+    assert expected == AUTH_SHAPES
+
+    assert auth_kwargs("qbittorrent", "k") == {
+        "key": "Bearer k", "auth_header": "Authorization",
+    }
+    assert auth_kwargs("gitea", "k") == {
+        "key": "token k", "auth_header": "Authorization",
+    }
+    assert auth_kwargs("sabnzbd", "k") == {
+        "key": "k", "auth_transport": "query", "query_key_name": "apikey",
+    }
+    assert auth_kwargs("sonarr", "k") == {"key": "k", "auth_header": "X-Api-Key"}
+    assert auth_kwargs("seerr", "k") == {"key": "k", "auth_header": "X-API-Key"}
+    assert auth_kwargs("qbittorrent", None) == {
+        "key": None, "auth_header": "Authorization",
+    }
+
+    # The answer a revoked key gets is a registry fact too: a bare 403 is
+    # ambiguous unless the service is one that measured it.
+    assert auth_shape("qbittorrent").dead_status == 403
+    assert auth_shape("sonarr").dead_status == 401
+    assert auth_shape("gitea").live_on_403 is True
+    assert auth_shape("prowlarr").live_on_403 is False
