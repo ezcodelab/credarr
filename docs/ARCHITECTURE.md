@@ -55,6 +55,7 @@ src/credarr/provenance.py   the version each capability was measured against;
                             managed vs monitor-only; display claims only
 src/credarr/transport.py    run_python(code); local subprocess for API calls
 src/credarr/journal.py      SQLite: attempts, steps, locks, holders
+src/credarr/paths.py        filesystem primitives shared by engine and server
 src/credarr/config.py       hosts and URLs; refused retired settings
 src/credarr/errors.py       expected failures and the exit-code contract
 src/credarr/redact.py       Secret: a value that refuses to print; scrub()

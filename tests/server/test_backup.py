@@ -386,7 +386,7 @@ def test_a_restore_rolls_back_a_database_it_already_published(
     database.write_bytes(b"the old database")
     config.write_text("old: config\n", encoding="utf-8")
 
-    fsync = backup._fsync_directory
+    fsync = backup.fsync_directory
     failed = False
 
     def fail_once(path) -> None:
@@ -396,7 +396,7 @@ def test_a_restore_rolls_back_a_database_it_already_published(
             raise OSError("simulated fsync failure")
         fsync(path)
 
-    monkeypatch.setattr(backup, "_fsync_directory", fail_once)
+    monkeypatch.setattr(backup, "fsync_directory", fail_once)
     with pytest.raises(OSError, match="simulated fsync failure"):
         restore_backup(
             path=out,
