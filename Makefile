@@ -9,7 +9,7 @@ VENV := .venv
 BIN  := $(VENV)/bin
 PORT ?= 8080
 
-.PHONY: help install test ui-test lint check ci worktree-setup serve ui-dev web ui-smoke ui-audit wheel image ship publish release clean
+.PHONY: help install test ui-test ui-check lint check ci worktree-setup serve ui-dev web ui-smoke ui-audit wheel image ship publish release clean
 
 GHCR := ghcr.io/ezcodelab/credarr
 
@@ -29,9 +29,13 @@ test:  ## Run the test suite
 	@if [ ! -x $(BIN)/pytest ]; then $(MAKE) install; fi
 	cd . && PYTHONDONTWRITEBYTECODE=1 $(BIN)/pytest -q -p no:cacheprovider
 
-ui-test:  ## Run the console's unit tests (Node only)
+ui-test:  ## Run the console's unit tests (Node only; includes the component size cap)
 	@[ -d ui/node_modules ] || (cd ui && npm ci)
 	cd ui && npm test
+
+ui-check:  ## Type and template check the console (svelte-check)
+	@[ -d ui/node_modules ] || (cd ui && npm ci)
+	cd ui && npm run check
 
 ui-audit:  ## Audit the console against the portable UI system contract
 	python3 ui-system/bin/ui_system.py audit .
@@ -40,7 +44,7 @@ lint:  ## Lint
 	@if [ ! -x $(BIN)/ruff ]; then $(MAKE) install; fi
 	$(BIN)/ruff check .
 
-check: lint test ui-test ui-audit  ## Local release gate: lint, Python tests, UI unit tests, UI audit
+check: lint test ui-test ui-check ui-audit  ## Local release gate: lint, Python tests, UI unit tests, UI check, UI audit
 
 ci: check  ## Alias for check
 

@@ -43,11 +43,12 @@ jobs:
       - name: Engine and server tests
         run: .venv/bin/python -m pytest -o addopts="" -m "not integration" -q -n auto
 
-      - name: Console unit tests
+      - name: Console check and unit tests
         run: |
           set -euo pipefail
           cd ui
           npm ci --no-audit --no-fund
+          npm run check
           npm test
 
   container:
