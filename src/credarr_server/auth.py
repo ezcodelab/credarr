@@ -26,6 +26,8 @@ from pathlib import Path
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
 
+from credarr.transaction import transaction
+
 from .store import connect, initialise
 
 SCHEMA = """
@@ -242,43 +244,37 @@ class AdminAuth:
         return max(0, int(float(row["locked_until"]) - now + 0.999))
 
     def _record_failure(self, now: float) -> None:
-        with connect(self.path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                row = connection.execute(
-                    "SELECT failures, last_failure_at, locked_until "
-                    "FROM login_failures WHERE subject = 'admin'"
-                ).fetchone()
-                if (
-                    row is None
-                    or now - float(row["last_failure_at"]) > LOGIN_FAILURE_WINDOW
-                    or (
-                        float(row["locked_until"]) > 0
-                        and float(row["locked_until"]) <= now
-                    )
-                ):
-                    failures = 1
-                else:
-                    failures = int(row["failures"]) + 1
-                locked_until = (
-                    now + LOGIN_LOCKOUT_SECONDS
-                    if failures >= MAX_LOGIN_FAILURES
-                    else 0.0
+        with connect(self.path) as connection, transaction(connection):
+            row = connection.execute(
+                "SELECT failures, last_failure_at, locked_until "
+                "FROM login_failures WHERE subject = 'admin'"
+            ).fetchone()
+            if (
+                row is None
+                or now - float(row["last_failure_at"]) > LOGIN_FAILURE_WINDOW
+                or (
+                    float(row["locked_until"]) > 0
+                    and float(row["locked_until"]) <= now
                 )
-                connection.execute(
-                    "INSERT INTO login_failures "
-                    "(subject, failures, last_failure_at, locked_until) "
-                    "VALUES ('admin', ?, ?, ?) "
-                    "ON CONFLICT(subject) DO UPDATE SET "
-                    "failures = excluded.failures, "
-                    "last_failure_at = excluded.last_failure_at, "
-                    "locked_until = excluded.locked_until",
-                    (failures, now, locked_until),
-                )
-                connection.execute("COMMIT")
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
+            ):
+                failures = 1
+            else:
+                failures = int(row["failures"]) + 1
+            locked_until = (
+                now + LOGIN_LOCKOUT_SECONDS
+                if failures >= MAX_LOGIN_FAILURES
+                else 0.0
+            )
+            connection.execute(
+                "INSERT INTO login_failures "
+                "(subject, failures, last_failure_at, locked_until) "
+                "VALUES ('admin', ?, ?, ?) "
+                "ON CONFLICT(subject) DO UPDATE SET "
+                "failures = excluded.failures, "
+                "last_failure_at = excluded.last_failure_at, "
+                "locked_until = excluded.locked_until",
+                (failures, now, locked_until),
+            )
 
     def _clear_failures(self) -> None:
         with connect(self.path) as connection:
@@ -331,48 +327,42 @@ class AdminAuth:
         digest = self._hasher.hash(new.encode("utf-8"))
         at = time.time() if now is None else now
         issued: IssuedSession | None = None
-        with connect(self.path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
+        with connect(self.path) as connection, transaction(connection):
+            connection.execute(
+                "UPDATE settings SET value = ? WHERE key = ?",
+                (digest, PASSWORD_SETTING),
+            )
+            statement = (
+                "UPDATE app_sessions SET revoked_at = ? "
+                "WHERE subject = 'admin' AND revoked_at IS NULL"
+            )
+            values: list[float | int] = [at]
+            if session_id is not None:
+                statement += " AND id != ?"
+                values.append(session_id)
+            connection.execute(statement, values)
+            if session_id is not None:
+                row = connection.execute(
+                    "SELECT * FROM app_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                if row is None or row["revoked_at"] is not None:
+                    raise ValueError("the session being rotated is not live")
+                token = secrets.token_urlsafe(32)
+                csrf = secrets.token_urlsafe(32)
+                idle_expires = min(
+                    at + SESSION_IDLE_SECONDS, row["absolute_expires_at"]
+                )
                 connection.execute(
-                    "UPDATE settings SET value = ? WHERE key = ?",
-                    (digest, PASSWORD_SETTING),
+                    "UPDATE app_sessions SET token_hash = ?, csrf_token = ?, "
+                    "last_seen_at = ?, idle_expires_at = ? WHERE id = ?",
+                    (_session_hash(token), csrf, at, idle_expires, session_id),
                 )
-                statement = (
-                    "UPDATE app_sessions SET revoked_at = ? "
-                    "WHERE subject = 'admin' AND revoked_at IS NULL"
+                updated = connection.execute(
+                    "SELECT * FROM app_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                issued = IssuedSession(
+                    token=token, session=_session_from_row(updated)
                 )
-                values: list[float | int] = [at]
-                if session_id is not None:
-                    statement += " AND id != ?"
-                    values.append(session_id)
-                connection.execute(statement, values)
-                if session_id is not None:
-                    row = connection.execute(
-                        "SELECT * FROM app_sessions WHERE id = ?", (session_id,)
-                    ).fetchone()
-                    if row is None or row["revoked_at"] is not None:
-                        raise ValueError("the session being rotated is not live")
-                    token = secrets.token_urlsafe(32)
-                    csrf = secrets.token_urlsafe(32)
-                    idle_expires = min(
-                        at + SESSION_IDLE_SECONDS, row["absolute_expires_at"]
-                    )
-                    connection.execute(
-                        "UPDATE app_sessions SET token_hash = ?, csrf_token = ?, "
-                        "last_seen_at = ?, idle_expires_at = ? WHERE id = ?",
-                        (_session_hash(token), csrf, at, idle_expires, session_id),
-                    )
-                    updated = connection.execute(
-                        "SELECT * FROM app_sessions WHERE id = ?", (session_id,)
-                    ).fetchone()
-                    issued = IssuedSession(
-                        token=token, session=_session_from_row(updated)
-                    )
-                connection.execute("COMMIT")
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
         return issued
 
     def create_session(self, device: str = "", *, now: float | None = None) -> IssuedSession:
@@ -427,41 +417,32 @@ class AdminAuth:
             return None
         seen_at = time.time() if now is None else now
         digest = _session_hash(token)
-        with connect(self.path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                row = connection.execute(
-                    "SELECT * FROM app_sessions WHERE token_hash = ?", (digest,)
-                ).fetchone()
-                if row is None or row["revoked_at"] is not None:
-                    connection.execute("COMMIT")
-                    return None
-                absolute_expires = row["absolute_expires_at"]
-                if seen_at >= absolute_expires or seen_at >= row["idle_expires_at"]:
-                    connection.execute(
-                        "UPDATE app_sessions SET revoked_at = ? "
-                        "WHERE id = ? AND revoked_at IS NULL",
-                        (seen_at, row["id"]),
-                    )
-                    connection.execute("COMMIT")
-                    return None
-                remaining = row["idle_expires_at"] - seen_at
-                renewed = remaining < SESSION_IDLE_SECONDS * SESSION_RENEW_FRACTION
-                idle_expires = row["idle_expires_at"]
-                if renewed:
-                    idle_expires = min(seen_at + SESSION_IDLE_SECONDS, absolute_expires)
-                cursor = connection.execute(
-                    "UPDATE app_sessions SET last_seen_at = ?, idle_expires_at = ? "
+        with connect(self.path) as connection, transaction(connection):
+            row = connection.execute(
+                "SELECT * FROM app_sessions WHERE token_hash = ?", (digest,)
+            ).fetchone()
+            if row is None or row["revoked_at"] is not None:
+                return None
+            absolute_expires = row["absolute_expires_at"]
+            if seen_at >= absolute_expires or seen_at >= row["idle_expires_at"]:
+                connection.execute(
+                    "UPDATE app_sessions SET revoked_at = ? "
                     "WHERE id = ? AND revoked_at IS NULL",
-                    (seen_at, idle_expires, row["id"]),
+                    (seen_at, row["id"]),
                 )
-                if cursor.rowcount == 0:
-                    connection.execute("COMMIT")
-                    return None
-                connection.execute("COMMIT")
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
+                return None
+            remaining = row["idle_expires_at"] - seen_at
+            renewed = remaining < SESSION_IDLE_SECONDS * SESSION_RENEW_FRACTION
+            idle_expires = row["idle_expires_at"]
+            if renewed:
+                idle_expires = min(seen_at + SESSION_IDLE_SECONDS, absolute_expires)
+            cursor = connection.execute(
+                "UPDATE app_sessions SET last_seen_at = ?, idle_expires_at = ? "
+                "WHERE id = ? AND revoked_at IS NULL",
+                (seen_at, idle_expires, row["id"]),
+            )
+            if cursor.rowcount == 0:
+                return None
         return SessionLookup(
             session=Session(
                 id=row["id"],

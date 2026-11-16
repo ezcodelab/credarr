@@ -49,6 +49,8 @@ from email.utils import formataddr, formatdate, getaddresses
 from pathlib import Path
 from typing import Any
 
+from credarr.transaction import transaction
+
 from .audit_log import Event, event_from_row
 from .store import connect, initialise
 
@@ -1125,50 +1127,44 @@ class Notifier:
         SQLite's math functions keeps this readable.
         """
         now = time.time()
-        with connect(self.path) as connection:
-            # Read attempts and write the next state in one write transaction.
-            # A deferred BEGIN would upgrade after the read and can fail
-            # immediately with SQLITE_BUSY_SNAPSHOT if an audit committed first.
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                row = connection.execute(
-                    "SELECT attempts FROM event_deliveries WHERE event_id = ? AND sink = ?",
-                    (event.id, config.name),
-                ).fetchone()
-                attempts = (row["attempts"] if row else 0) + 1
-                if reason is None:
-                    state, next_attempt, error, delivered_at = (
-                        "delivered", None, None, now,
-                    )
-                else:
-                    state = "failed" if attempts >= MAX_ATTEMPTS else "pending"
-                    delay = min(
-                        BACKOFF_BASE_SECONDS * (2 ** (attempts - 1)), BACKOFF_CAP_SECONDS
-                    )
-                    next_attempt, error, delivered_at = now + delay, reason, None
-                connection.execute(
-                    "INSERT INTO event_deliveries (event_id, sink, state, attempts, "
-                    "next_attempt_at, last_error, delivered_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT(event_id, sink) DO UPDATE SET state = excluded.state, "
-                    "attempts = excluded.attempts, "
-                    "next_attempt_at = excluded.next_attempt_at, "
-                    "last_error = excluded.last_error, "
-                    "delivered_at = excluded.delivered_at",
-                    (
-                        event.id,
-                        config.name,
-                        state,
-                        attempts,
-                        next_attempt,
-                        error,
-                        delivered_at,
-                    ),
+        # A deferred BEGIN would upgrade after the read and can fail
+        # immediately with SQLITE_BUSY_SNAPSHOT if an audit committed first,
+        # so the write lock is taken at entry.
+        with connect(self.path) as connection, transaction(connection):
+            row = connection.execute(
+                "SELECT attempts FROM event_deliveries WHERE event_id = ? AND sink = ?",
+                (event.id, config.name),
+            ).fetchone()
+            attempts = (row["attempts"] if row else 0) + 1
+            if reason is None:
+                state, next_attempt, error, delivered_at = (
+                    "delivered", None, None, now,
                 )
-                connection.execute("COMMIT")
-            except BaseException:
-                connection.execute("ROLLBACK")
-                raise
+            else:
+                state = "failed" if attempts >= MAX_ATTEMPTS else "pending"
+                delay = min(
+                    BACKOFF_BASE_SECONDS * (2 ** (attempts - 1)), BACKOFF_CAP_SECONDS
+                )
+                next_attempt, error, delivered_at = now + delay, reason, None
+            connection.execute(
+                "INSERT INTO event_deliveries (event_id, sink, state, attempts, "
+                "next_attempt_at, last_error, delivered_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(event_id, sink) DO UPDATE SET state = excluded.state, "
+                "attempts = excluded.attempts, "
+                "next_attempt_at = excluded.next_attempt_at, "
+                "last_error = excluded.last_error, "
+                "delivered_at = excluded.delivered_at",
+                (
+                    event.id,
+                    config.name,
+                    state,
+                    attempts,
+                    next_attempt,
+                    error,
+                    delivered_at,
+                ),
+            )
 
 
 class DeliveryLoop:
