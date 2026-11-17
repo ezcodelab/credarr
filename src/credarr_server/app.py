@@ -2797,29 +2797,8 @@ def _console_credential_json(
 ) -> dict[str, Any]:
     """One credential as the console reads it: declared, stored, observed.
 
-    A recorded status is only shown while it is about the state declared now.
-    Three ways it stops being:
-
-    - the value moved. A run that finished before the last paste measured a
-      different canonical, so `stored_at` after `observed_at` voids every
-      status (`stored` stays true - the app does hold a value).
-    - `provisioned` moved. ABSENT is the run's word for an unprovisioned
-      credential; any other recorded status is a word about a provisioned one.
-      Either stops applying when the flag no longer agrees.
-    - the holders changed. A holder shows the status the run recorded for
-      *that holder at that position*, and the credential only when the run
-      audited holders and they are exactly the ones declared now - same count,
-      same targets, same order. A declared credential with holders that the
-      run never measured (no value stored, or not provisioned) still gets the
-      run's own finding: that is a real result, not "not audited yet". A
-      credential that declares no holders has no aggregate to show either way.
-
-    shortcut: the ledger records each holder's target and position, not its
-    host, mechanism or count, so an edit to only those keeps the previous run's
-    score, and a paste that lands inside the run's own evaluation window is
-    treated as measured by it. Recording the canonical read time and the full
-    holder shape per run is a ledger column plus a migration; it lands if a
-    view ever needs the distinction (DECISIONS names it).
+    A recorded status is only shown while it is about the state declared now;
+    `docs/STATE_MACHINES.md` section 8 names the three ways it stops applying.
     """
     audited = list(observed.consumers) if observed is not None else []
     declared = [str(consumer.target) for consumer in credential.consumers]
