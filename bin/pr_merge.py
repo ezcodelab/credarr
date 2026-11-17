@@ -3,9 +3,10 @@
 """Schedule a Gitea merge only after the trusted verifier passed.
 
 The workflow runs this from the base branch with the built-in GITEA_TOKEN. It
-re-reads the PR and requires a successful ``verifier / policy`` status before
-calling the merge API. It never checks out or executes PR code and never prints
-the token.
+re-reads the PR and requires a successful verifier status before calling the
+merge API. The default context is ``verifier / policy``; the scoped workflow
+passes its automatic ``... / verify (pull_request_target)`` context. It never
+checks out or executes PR code and never prints the token.
 """
 
 # ruff: noqa: S310
@@ -106,6 +107,7 @@ def merge(
     base: str,
     token: str,
     merge_style: str,
+    required_context: str = VERIFIER_CONTEXT,
     dry_run: bool = False,
 ) -> str:
     status, pr = api(
@@ -124,7 +126,7 @@ def merge(
     )
     if status != 200:
         raise MergeError(f"cannot read status: HTTP {status} {result}")
-    ok, detail = verifier_state(result)
+    ok, detail = verifier_state(result, required_context)
     if not ok:
         raise MergeError(detail)
 
@@ -164,6 +166,11 @@ def main() -> int:
         default=os.environ.get("GITEA_URL", ""),
         help="Gitea API base; defaults to GITEA_URL",
     )
+    parser.add_argument(
+        "--required-context",
+        default=VERIFIER_CONTEXT,
+        help="commit status context that must be successful",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -185,6 +192,7 @@ def main() -> int:
             args.base,
             token,
             args.merge_style,
+            required_context=args.required_context,
             dry_run=args.dry_run,
         )
     except MergeError as error:
