@@ -24,9 +24,11 @@ HELPER = SRC / "credarr" / "transaction.py"
 
 # A transaction statement handed to sqlite, wherever it is spelled out.
 # `executescript` takes a whole SQL document; lowercase is still the same
-# statement; a string prefix (`f"..."`) must not hide it from the scan.
+# statement; a string prefix (`f"..."`) and a triple-quoted document must not
+# hide it from the scan.
 STATEMENT = re.compile(
-    r"""\.(?:execute|executescript)\(\s*[frbu]{0,2}(['"])\s*(BEGIN|COMMIT|ROLLBACK)\b""",
+    r"""\.(?:execute|executescript)\(\s*[frbu]{0,2}('''|\"\"\"|['"])\s*"""
+    r"""(BEGIN|COMMIT|ROLLBACK)\b""",
     re.IGNORECASE,
 )
 
@@ -98,6 +100,8 @@ def statements(source: str) -> list[str]:
         ('.execute("begin immediate")', ["BEGIN"]),
         ('.execute(f"ROLLBACK")', ["ROLLBACK"]),
         ('.execute("  commit  ")', ["COMMIT"]),
+        ('.executescript(\'\'\'BEGIN\'\'\')', ["BEGIN"]),
+        ('.execute(f"""COMMIT""")', ["COMMIT"]),
         ('.execute("SELECT 1")', []),
         ('.execute("BEGINNING")', []),
     ],
