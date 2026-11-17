@@ -5,10 +5,10 @@ docstring in `app.py` while `docs/STATE_MACHINES.md` section 8, the machine
 that owns the audit ledger, did not state it. A rule that long is a document,
 and code that carries the document drifts from it with nothing to notice.
 
-No `src` docstring may exceed 20 lines. The baseline below is the measured
-set at the ratchet's introduction; each entry may shrink, none may grow, and
-an entry must be deleted once its docstring fits on its own. Adding an entry
-is a deliberate loosening and shows up in this file's diff.
+No `src` docstring may exceed 20 lines. The baseline below pins the measured
+length of each entry: a shorter docstring must update the pin (so a change is
+never silent), an entry must be deleted once its docstring fits, and a new
+entry is a deliberate loosening visible in this file's diff.
 """
 
 from __future__ import annotations
@@ -25,8 +25,8 @@ PAYLOADS = SRC / "credarr_server/api/payloads.py"
 
 MAX_LINES = 20
 
-# path:name -> the length measured when the budget landed. `<module>` is the
-# file's own docstring. Only shrink; delete an entry when it is at the cap.
+# path:name -> the exact measured length. `<module>` is the file's own
+# docstring. A change must update this number; delete an entry at the cap.
 BASELINE = {
     "src/credarr/executor.py:<module>": 33,
     "src/credarr/executor_steps/revoke.py:_revoke_jellyfin": 24,
@@ -91,7 +91,7 @@ def test_no_unlisted_docstring_exceeds_the_budget() -> None:
     )
 
 
-def test_the_baseline_only_shrinks() -> None:
+def test_the_baseline_is_the_measured_length() -> None:
     found = docstring_lines()
     problems: list[str] = []
     for key, pinned in BASELINE.items():
@@ -102,8 +102,11 @@ def test_the_baseline_only_shrinks() -> None:
             problems.append(
                 f"{key}: {actual} lines, within the budget, remove the baseline entry"
             )
-        elif actual > pinned:
-            problems.append(f"{key}: grew from {pinned} to {actual} lines")
+        elif actual != pinned:
+            problems.append(
+                f"{key}: measured {actual} lines, baseline says {pinned}; "
+                "update the pin so the change is explicit"
+            )
     assert not problems, "docstring baseline is stale: " + repr(problems)
 
 
@@ -127,3 +130,14 @@ def test_the_console_docstring_points_at_the_rule() -> None:
     assert "docs/STATE_MACHINES.md" in doc and "section 8" in doc, (
         "the console docstring must link to the retention rule instead of holding it"
     )
+    for phrase in (
+        "Three ways it stops being",
+        "the value moved",
+        "the holders changed",
+        "shortcut:",
+    ):
+        assert phrase not in doc, (
+            f"the console docstring still carries the rule body ({phrase!r}); "
+            "the document owns it"
+        )
+    assert len(doc.splitlines()) <= 6, "the console docstring grew back toward a rule"

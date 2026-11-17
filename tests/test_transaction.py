@@ -23,7 +23,12 @@ SRC = ROOT / "src"
 HELPER = SRC / "credarr" / "transaction.py"
 
 # A transaction statement handed to sqlite, wherever it is spelled out.
-STATEMENT = re.compile(r"""\.execute\(\s*(['"])(BEGIN|COMMIT|ROLLBACK)\b""")
+# `executescript` takes a whole SQL document; lowercase is still the same
+# statement; a string prefix (`f"..."`) must not hide it from the scan.
+STATEMENT = re.compile(
+    r"""\.(?:execute|executescript)\(\s*[frbu]{0,2}(['"])\s*(BEGIN|COMMIT|ROLLBACK)\b""",
+    re.IGNORECASE,
+)
 
 
 def database() -> sqlite3.Connection:
@@ -80,13 +85,35 @@ def test_the_write_lock_is_taken_at_entry(tmp_path: Path) -> None:
         second.close()
 
 
+def statements(source: str) -> list[str]:
+    """The transaction keywords a source string spells out, in order."""
+    return [match.group(2).upper() for match in STATEMENT.finditer(source)]
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('.execute("BEGIN IMMEDIATE")', ["BEGIN"]),
+        (".executescript('BEGIN')", ["BEGIN"]),
+        ('.execute("begin immediate")', ["BEGIN"]),
+        ('.execute(f"ROLLBACK")', ["ROLLBACK"]),
+        ('.execute("  commit  ")', ["COMMIT"]),
+        ('.execute("SELECT 1")', []),
+        ('.execute("BEGINNING")', []),
+    ],
+)
+def test_the_scan_catches_every_spelling(source: str, expected: list[str]) -> None:
+    """The scan is the ratchet: prove it on the spellings a hand copy uses."""
+    assert statements(source) == expected
+
+
 def test_transaction_statements_live_in_one_place() -> None:
     offenders = []
     for path in sorted(SRC.rglob("*.py")):
         if path == HELPER or "__pycache__" in path.parts:
             continue
-        for match in STATEMENT.finditer(path.read_text(encoding="utf-8")):
-            offenders.append(f"{path.relative_to(ROOT)}:{match.group(2)}")
+        for keyword in statements(path.read_text(encoding="utf-8")):
+            offenders.append(f"{path.relative_to(ROOT)}:{keyword}")
     assert not offenders, (
         "hand-rolled transactions (use credarr.transaction.transaction): "
         + repr(offenders)
