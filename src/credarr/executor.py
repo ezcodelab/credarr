@@ -63,6 +63,7 @@ from .writers import (
     MINT_SOURCES,
     REISSUERS,
     Holder,
+    MintSource,
     Reissue,
     api_version,
     auth_kwargs,
@@ -548,193 +549,209 @@ class Executor:
         """
         problems: list[str] = []
         services = {step.target for step in plan.steps if step.kind is StepKind.MINT}
+        self._preflight_mints(services, problems)
+        self._preflight_holders(plan, problems)
+        self._preflight_notes(problems)
+        self._preflight_unfinished(problems)
+        return problems
 
+    def _preflight_mints(self, services: set[str], problems: list[str]) -> None:
         # 1. The mint target must answer, and must have a key to authenticate
         #    the command with. A service that is down or has no key cannot be
         #    rotated at all.
         for service in sorted(services):
-            answered = self._checked_call(
-                service, "GET", readiness_path(service),
-                **auth_kwargs(service, self._ctx.vault_value))
-            if answered is None:
-                continue
-            status, _ = answered
-            if status not in (200, 401, 403):
-                problems.append(
-                    f"{service}: {readiness_path(service)} returned HTTP "
-                    f"{status}; it must answer before its key can be rotated"
-                )
-            source = MINT_SOURCES.get(service)
-            if source is not None and source.mechanism in ("rotate", "regenerate"):
-                # These responses carry the only copy of the new key, and the
-                # old one is already revoked when they arrive, so a crash
-                # between the response and the store write loses it. The
-                # pending store is the only place that can park it first.
-                if self._ctx.pending is None:
-                    problems.append(
-                        f"{service}: no pending-secret store is available, so "
-                        f"the {source.mechanism} mint cannot survive a crash "
-                        "after the old key is revoked"
-                    )
-                if self._ctx.vault_value is None:
-                    problems.append(
-                        f"{service}: the store holds no value for this "
-                        "credential, so the mint cannot authenticate"
-                    )
-                continue
-            if source is not None and source.mechanism == "reset":
-                if self._reconstruct_config():
-                    problems.extend(self._reconstruct_preflight(service))
-                    continue
-                if self._manual_mint():
-                    problems.extend(self._manual_preflight(service))
-                    if (
-                        self._ctx.vault_value is not None
-                        and self._ctx.provided is not None
-                    ):
-                        problems.extend(
-                            self._manual_mint_problems(
-                                service, self._ctx.vault_value,
-                                self._ctx.provided,
-                            )
-                        )
-                    continue
-                problems.extend(self._backup_preflight(service)[0])
-                continue
-            # A reissue mint's own preconditions, checked read-only so the
-            # dry run does not promise a plan whose first step is a 403. The
-            # per-service differences come from the registry row.
-            write_mechanism = str(
-                self._ctx.credential.write.get("mechanism") or ""
-            )
-            if (
-                source is not None
-                and source.system in REISSUERS
-                and REISSUERS[source.system].mechanism == write_mechanism
-            ):
-                spec = REISSUERS[source.system]
-                if self._ctx.vault_value is None:
-                    problems.append(
-                        f"{service}: the vault holds no value for this "
-                        "credential, and the mint authenticates with it"
-                    )
-                else:
-                    write = self._ctx.credential.write
-                    try:
-                        kwargs, raw, rotator = self._reissue_call_kwargs(
-                            service, spec
-                        )
-                        account = self._reissue_account(service, spec, raw)
-                        username = str(write.get("username") or "")
-                        rows = self._reissue_rows(
-                            service, spec, kwargs, account=account,
-                            username=username,
-                        )
-                        current = self._reissue_current(
-                            service, spec, rows, self._ctx.vault_value, write
-                        )
-                    except (RotationError, TransportError) as exc:
-                        problems.append(str(exc))
-                    else:
-                        declared = (
-                            str(write.get(spec.declared_name_field) or "")
-                            if spec.declared_name_field else ""
-                        )
-                        base = (
-                            re.sub(r"\.credarr\.\d+$", "",
-                                   str(current.get("name") or ""))
-                            if current else ""
-                        )
-                        if current is None:
-                            problems.append(
-                                f"{service}: the stored value is not in the "
-                                f"{spec.list_label}"
-                            )
-                        elif any(current.get(field)
-                                 for field in spec.protected_fields):
-                            problems.append(
-                                f"{service}: {current.get('name')!r} is "
-                                f"protected from deletion "
-                                f"({spec.protected_hint})"
-                            )
-                        elif declared and declared != base:
-                            problems.append(
-                                f"{service}: write.{spec.declared_name_field} "
-                                f"is {declared!r} but the credential in use is "
-                                f"named {base!r}"
-                            )
-                        if (
-                            spec.system == "arcane"
-                            and rotator
-                            and current is not None
-                        ):
-                            rotator_row = self._reissue_current(
-                                service, spec, rows, raw, write
-                            )
-                            if rotator_row is None:
-                                problems.append(
-                                    f"{service}: rotator {rotator!r} is not "
-                                    f"in the {spec.list_label}"
-                                )
-                            else:
-                                have = {
-                                    grant.get("permission")
-                                    for grant in rotator_row.get(
-                                        "permissions") or []
-                                    if isinstance(grant, dict)
-                                }
-                                missing = {
-                                    "apikeys:list", "apikeys:create",
-                                    "apikeys:delete",
-                                } - have
-                                if missing:
-                                    problems.append(
-                                        f"{service}: rotator {rotator!r} "
-                                        f"lacks {', '.join(sorted(missing))}"
-                                    )
-                                declared_values = write.get(
-                                    spec.declared_values_field
-                                )
-                                if (isinstance(declared_values, list)
-                                        and declared_values):
-                                    wanted = {
-                                        str(item) for item in declared_values
-                                    }
-                                else:
-                                    wanted = {
-                                        grant.get("permission")
-                                        for grant in current.get(
-                                            "permissions") or []
-                                        if isinstance(grant, dict)
-                                    }
-                                over = {
-                                    item for item in wanted if item
-                                } - have
-                                if over:
-                                    problems.append(
-                                        f"{service}: rotator {rotator!r} "
-                                        f"cannot grant "
-                                        f"{', '.join(sorted(over))}"
-                                    )
-                continue
-            if write_mechanism == "gitea_hook_secret":
-                try:
-                    self._gitea_hook(service)
-                except (RotationError, TransportError) as exc:
-                    problems.append(str(exc))
-                continue
-            # Jellyfin's create mint, and every other non-reset source,
-            # authenticate with the stored credential itself.
-            if source is None:
-                problems.append(
-                    f"{service}: no mint source is registered for this service"
-                )
-            elif self._ctx.vault_value is None:
-                problems.append(
-                    f"{service}: the vault holds no value for this credential, "
-                    "and the mint authenticates with it"
-                )
+            self._preflight_mint(service, problems)
 
+    def _preflight_mint(self, service: str, problems: list[str]) -> None:
+        answered = self._checked_call(
+            service, "GET", readiness_path(service),
+            **auth_kwargs(service, self._ctx.vault_value))
+        if answered is None:
+            return
+        status, _ = answered
+        if status not in (200, 401, 403):
+            problems.append(
+                f"{service}: {readiness_path(service)} returned HTTP "
+                f"{status}; it must answer before its key can be rotated"
+            )
+        source = MINT_SOURCES.get(service)
+        if source is not None and source.mechanism in ("rotate", "regenerate"):
+            # These responses carry the only copy of the new key, and the
+            # old one is already revoked when they arrive, so a crash
+            # between the response and the store write loses it. The
+            # pending store is the only place that can park it first.
+            if self._ctx.pending is None:
+                problems.append(
+                    f"{service}: no pending-secret store is available, so "
+                    f"the {source.mechanism} mint cannot survive a crash "
+                    "after the old key is revoked"
+                )
+            if self._ctx.vault_value is None:
+                problems.append(
+                    f"{service}: the store holds no value for this "
+                    "credential, so the mint cannot authenticate"
+                )
+            return
+        if source is not None and source.mechanism == "reset":
+            if self._reconstruct_config():
+                problems.extend(self._reconstruct_preflight(service))
+                return
+            if self._manual_mint():
+                problems.extend(self._manual_preflight(service))
+                if (
+                    self._ctx.vault_value is not None
+                    and self._ctx.provided is not None
+                ):
+                    problems.extend(
+                        self._manual_mint_problems(
+                            service, self._ctx.vault_value,
+                            self._ctx.provided,
+                        )
+                    )
+                return
+            problems.extend(self._backup_preflight(service)[0])
+            return
+        # A reissue mint's own preconditions, checked read-only so the
+        # dry run does not promise a plan whose first step is a 403. The
+        # per-service differences come from the registry row.
+        write_mechanism = str(
+            self._ctx.credential.write.get("mechanism") or ""
+        )
+        if (
+            source is not None
+            and source.system in REISSUERS
+            and REISSUERS[source.system].mechanism == write_mechanism
+        ):
+            self._preflight_reissue(service, source, problems)
+            return
+        if write_mechanism == "gitea_hook_secret":
+            try:
+                self._gitea_hook(service)
+            except (RotationError, TransportError) as exc:
+                problems.append(str(exc))
+            return
+        # Jellyfin's create mint, and every other non-reset source,
+        # authenticate with the stored credential itself.
+        if source is None:
+            problems.append(
+                f"{service}: no mint source is registered for this service"
+            )
+        elif self._ctx.vault_value is None:
+            problems.append(
+                f"{service}: the vault holds no value for this credential, "
+                "and the mint authenticates with it"
+            )
+
+    def _preflight_reissue(
+        self, service: str, source: MintSource, problems: list[str]
+    ) -> None:
+        spec = REISSUERS[source.system]
+        if self._ctx.vault_value is None:
+            problems.append(
+                f"{service}: the vault holds no value for this "
+                "credential, and the mint authenticates with it"
+            )
+        else:
+            write = self._ctx.credential.write
+            try:
+                kwargs, raw, rotator = self._reissue_call_kwargs(
+                    service, spec
+                )
+                account = self._reissue_account(service, spec, raw)
+                username = str(write.get("username") or "")
+                rows = self._reissue_rows(
+                    service, spec, kwargs, account=account,
+                    username=username,
+                )
+                current = self._reissue_current(
+                    service, spec, rows, self._ctx.vault_value, write
+                )
+            except (RotationError, TransportError) as exc:
+                problems.append(str(exc))
+            else:
+                declared = (
+                    str(write.get(spec.declared_name_field) or "")
+                    if spec.declared_name_field else ""
+                )
+                base = (
+                    re.sub(r"\.credarr\.\d+$", "",
+                           str(current.get("name") or ""))
+                    if current else ""
+                )
+                if current is None:
+                    problems.append(
+                        f"{service}: the stored value is not in the "
+                        f"{spec.list_label}"
+                    )
+                elif any(current.get(field)
+                         for field in spec.protected_fields):
+                    problems.append(
+                        f"{service}: {current.get('name')!r} is "
+                        f"protected from deletion "
+                        f"({spec.protected_hint})"
+                    )
+                elif declared and declared != base:
+                    problems.append(
+                        f"{service}: write.{spec.declared_name_field} "
+                        f"is {declared!r} but the credential in use is "
+                        f"named {base!r}"
+                    )
+                if (
+                    spec.system == "arcane"
+                    and rotator
+                    and current is not None
+                ):
+                    rotator_row = self._reissue_current(
+                        service, spec, rows, raw, write
+                    )
+                    if rotator_row is None:
+                        problems.append(
+                            f"{service}: rotator {rotator!r} is not "
+                            f"in the {spec.list_label}"
+                        )
+                    else:
+                        have = {
+                            grant.get("permission")
+                            for grant in rotator_row.get(
+                                "permissions") or []
+                            if isinstance(grant, dict)
+                        }
+                        missing = {
+                            "apikeys:list", "apikeys:create",
+                            "apikeys:delete",
+                        } - have
+                        if missing:
+                            problems.append(
+                                f"{service}: rotator {rotator!r} "
+                                f"lacks {', '.join(sorted(missing))}"
+                            )
+                        declared_values = write.get(
+                            spec.declared_values_field
+                        )
+                        if (isinstance(declared_values, list)
+                                and declared_values):
+                            wanted = {
+                                str(item) for item in declared_values
+                            }
+                        else:
+                            wanted = {
+                                grant.get("permission")
+                                for grant in current.get(
+                                    "permissions") or []
+                                if isinstance(grant, dict)
+                            }
+                        over = {
+                            item for item in wanted if item
+                        } - have
+                        if over:
+                            problems.append(
+                                f"{service}: rotator {rotator!r} "
+                                f"cannot grant "
+                                f"{', '.join(sorted(over))}"
+                            )
+        return
+
+    def _preflight_holders(self, plan: RotationPlan, problems: list[str]) -> None:
         # 2. Every consumer must be reachable and listable with the CURRENT
         #    key. A consumer that cannot be listed cannot be written either.
         for step in plan.steps:
@@ -749,234 +766,259 @@ class Executor:
                 )
                 continue
             if described.write == "qui_api":
-                row = self._row_name(step.target)
-                if row is None:
-                    problems.append(
-                        f"{step.target}: does not name which qui instance to "
-                        "write"
-                    )
-                    continue
-                try:
-                    api_key = self._service_key(system)
-                except (ConfigError, TransportError) as exc:
-                    problems.append(
-                        f"{step.target}: cannot read {system}'s own API key "
-                        f"({exc}), so no write to it could be authenticated"
-                    )
-                    continue
-                if not api_key:
-                    problems.append(
-                        f"{step.target}: no API key for {system!r}; store "
-                        f"{system}'s own key before rotating a credential it holds"
-                    )
-                    continue
-                answered = self._checked_call(
-                    system, "GET", described.api_path, key=api_key,
-                    auth_header=described.auth_header_name,
-                    auth_transport=described.auth_transport,
-                )
-                if answered is None:
-                    problems.append(
-                        f"{step.target}: {system} was unreachable during "
-                        "preflight; the write could not be confirmed"
-                    )
-                    continue
-                status, body = answered
-                if status != 200 or not isinstance(body, list):
-                    problems.append(
-                        f"{step.target}: cannot list {system} instances "
-                        f"(HTTP {status}); the write would fail after the key "
-                        "was already revoked"
-                    )
-                    continue
-                matches = [
-                    item for item in body
-                    if isinstance(item, dict) and item.get("name") == row
-                ]
-                if not matches:
-                    problems.append(
-                        f"{step.target}: no {system} instance named {row!r} "
-                        "exists to update"
-                    )
-                elif len(matches) > 1:
-                    problems.append(
-                        f"{step.target}: {len(matches)} {system} instances are "
-                        f"named {row!r}; which one holds this credential is "
-                        "ambiguous"
-                    )
+                self._preflight_qui(step, system, described, problems)
                 continue
             if described.write == "bazarr_api":
-                row = self._row_name(step.target)
-                if row is None:
-                    problems.append(
-                        f"{step.target}: does not name which Bazarr settings "
-                        "section to write"
-                    )
-                    continue
-                try:
-                    api_key = self._service_key(system)
-                except (ConfigError, TransportError) as exc:
-                    problems.append(
-                        f"{step.target}: cannot read {system}'s own API key "
-                        f"({exc}), so no write to it could be authenticated"
-                    )
-                    continue
-                if not api_key:
-                    problems.append(
-                        f"{step.target}: no API key for {system!r}; store "
-                        f"{system}'s own key before rotating a credential it holds"
-                    )
-                    continue
-                answered = self._checked_call(
-                    system, "GET", described.readback_path, key=api_key,
-                    auth_header=described.auth_header_name,
-                    auth_transport=described.auth_transport,
-                )
-                if answered is None:
-                    problems.append(
-                        f"{step.target}: {system} was unreachable during "
-                        "preflight; the write could not be confirmed"
-                    )
-                    continue
-                status, body = answered
-                if status != 200 or not isinstance(body, dict):
-                    problems.append(
-                        f"{step.target}: cannot read {system}'s settings "
-                        f"(HTTP {status}); the write would fail after the key "
-                        "was already revoked"
-                    )
-                elif not isinstance(body.get(row), dict) or not body[row].get(
-                    described.readback_field
-                ):
-                    problems.append(
-                        f"{step.target}: {system} has no {row} settings entry "
-                        "holding a key, so a rotation would revoke the old key "
-                        "and update nothing"
-                    )
+                self._preflight_bazarr(step, system, described, problems)
                 continue
             if described.write == "seerr_api":
-                row = self._row_name(step.target)
-                if row is None:
-                    problems.append(
-                        f"{step.target}: does not name which holder to write"
-                    )
-                    continue
-                try:
-                    url = self._ctx.host.url(system)
-                except ConfigError:
-                    problems.append(f"{step.target}: no URL for {system}")
-                    continue
-                if url is None:
-                    problems.append(f"{step.target}: no URL for {system}")
-                    continue
-                try:
-                    api_key = self._service_key(system)
-                except (ConfigError, TransportError) as exc:
-                    problems.append(
-                        f"{step.target}: cannot read {system}'s own API key "
-                        f"({exc}), so no write to it could be authenticated"
-                    )
-                    continue
-                if not api_key:
-                    problems.append(
-                        f"{step.target}: no API key for {system!r}; store "
-                        f"{system}'s own key before rotating a credential it holds"
-                    )
-                    continue
-                answered = self._checked_call(
-                    system, "GET", described.readback_path.format(service=row),
-                    key=api_key,
-                    auth_header=described.auth_header_name,
-                    auth_transport=described.auth_transport,
-                )
-                if answered is None:
-                    problems.append(
-                        f"{step.target}: {system} was unreachable during preflight; "
-                        "the write could not be confirmed"
-                    )
-                else:
-                    status, body = answered
-                    if status != 200:
-                        problems.append(
-                            f"{step.target}: the read-back that would confirm this "
-                            f"write returned HTTP {status}; the write would succeed "
-                            "but could not be confirmed"
-                        )
-                    elif row == "jellyfin":
-                        if not isinstance(body, dict) or not body:
-                            problems.append(
-                                f"{step.target}: {system} has no Jellyfin "
-                                "settings object, so a rotation would revoke the "
-                                "old key and update nothing"
-                            )
-                    elif not isinstance(body, list):
-                        problems.append(
-                            f"{step.target}: {system} returned an unexpected "
-                            f"settings shape for {row!r}; refusing a write that "
-                            "could not be confirmed"
-                        )
-                    elif not body:
-                        problems.append(
-                            f"{step.target}: the settings section holds no "
-                            f"{row} instances, so a rotation would revoke the "
-                            "old key and update nothing"
-                        )
-                    elif len(body) > 1:
-                        problems.append(
-                            f"{step.target}: the settings section holds "
-                            f"{len(body)} {row} instances and this build can "
-                            "update exactly one; which instance holds this "
-                            "credential is not in the manifest, so the write is "
-                            "refused rather than made into the wrong one"
-                        )
+                self._preflight_seerr(step, system, described, problems)
                 continue
-            try:
-                self._resolve_field(step)
-            except RotationError as exc:
-                problems.append(str(exc))
-                continue
-            try:
-                holder_key = self._service_key(system)
-            except TransportError as exc:
-                problems.append(
-                    f"{step.target}: cannot read the holder's own API key "
-                    f"({exc}), so no write to it could be authenticated"
-                )
-                continue
-            if not holder_key:
-                problems.append(
-                    f"{step.target}: no API key for the holder service "
-                    f"{system!r}; nothing could authenticate a write to it"
-                )
-                continue
-            answered = self._checked_call(system, "GET", f"/{described.api_path}",
-                                          key=holder_key)
-            if answered is None:
-                continue
-            status, rows = answered
-            if status != 200 or not isinstance(rows, list):
-                problems.append(
-                    f"{step.target}: cannot list rows (HTTP {status}); the "
-                    f"write would fail after the key was already revoked"
-                )
-                continue
-            try:
-                selected = self._select_rows(step.target, rows)
-            except RotationError as exc:
-                problems.append(str(exc))
-                continue
-            if not selected:
-                problems.append(
-                    f"{step.target}: no rows to update, so a rotation would "
-                    f"change nothing while still invalidating the old key"
-                )
+            self._preflight_holder(step, system, described, problems)
 
+    def _preflight_qui(
+        self, step: Step, system: str, described: Holder, problems: list[str]
+    ) -> None:
+        row = self._row_name(step.target)
+        if row is None:
+            problems.append(
+                f"{step.target}: does not name which qui instance to "
+                "write"
+            )
+            return
+        try:
+            api_key = self._service_key(system)
+        except (ConfigError, TransportError) as exc:
+            problems.append(
+                f"{step.target}: cannot read {system}'s own API key "
+                f"({exc}), so no write to it could be authenticated"
+            )
+            return
+        if not api_key:
+            problems.append(
+                f"{step.target}: no API key for {system!r}; store "
+                f"{system}'s own key before rotating a credential it holds"
+            )
+            return
+        answered = self._checked_call(
+            system, "GET", described.api_path, key=api_key,
+            auth_header=described.auth_header_name,
+            auth_transport=described.auth_transport,
+        )
+        if answered is None:
+            problems.append(
+                f"{step.target}: {system} was unreachable during "
+                "preflight; the write could not be confirmed"
+            )
+            return
+        status, body = answered
+        if status != 200 or not isinstance(body, list):
+            problems.append(
+                f"{step.target}: cannot list {system} instances "
+                f"(HTTP {status}); the write would fail after the key "
+                "was already revoked"
+            )
+            return
+        matches = [
+            item for item in body
+            if isinstance(item, dict) and item.get("name") == row
+        ]
+        if not matches:
+            problems.append(
+                f"{step.target}: no {system} instance named {row!r} "
+                "exists to update"
+            )
+        elif len(matches) > 1:
+            problems.append(
+                f"{step.target}: {len(matches)} {system} instances are "
+                f"named {row!r}; which one holds this credential is "
+                "ambiguous"
+            )
+        return
+
+    def _preflight_bazarr(
+        self, step: Step, system: str, described: Holder, problems: list[str]
+    ) -> None:
+        row = self._row_name(step.target)
+        if row is None:
+            problems.append(
+                f"{step.target}: does not name which Bazarr settings "
+                "section to write"
+            )
+            return
+        try:
+            api_key = self._service_key(system)
+        except (ConfigError, TransportError) as exc:
+            problems.append(
+                f"{step.target}: cannot read {system}'s own API key "
+                f"({exc}), so no write to it could be authenticated"
+            )
+            return
+        if not api_key:
+            problems.append(
+                f"{step.target}: no API key for {system!r}; store "
+                f"{system}'s own key before rotating a credential it holds"
+            )
+            return
+        answered = self._checked_call(
+            system, "GET", described.readback_path, key=api_key,
+            auth_header=described.auth_header_name,
+            auth_transport=described.auth_transport,
+        )
+        if answered is None:
+            problems.append(
+                f"{step.target}: {system} was unreachable during "
+                "preflight; the write could not be confirmed"
+            )
+            return
+        status, body = answered
+        if status != 200 or not isinstance(body, dict):
+            problems.append(
+                f"{step.target}: cannot read {system}'s settings "
+                f"(HTTP {status}); the write would fail after the key "
+                "was already revoked"
+            )
+        elif not isinstance(body.get(row), dict) or not body[row].get(
+            described.readback_field
+        ):
+            problems.append(
+                f"{step.target}: {system} has no {row} settings entry "
+                "holding a key, so a rotation would revoke the old key "
+                "and update nothing"
+            )
+        return
+
+    def _preflight_seerr(
+        self, step: Step, system: str, described: Holder, problems: list[str]
+    ) -> None:
+        row = self._row_name(step.target)
+        if row is None:
+            problems.append(
+                f"{step.target}: does not name which holder to write"
+            )
+            return
+        try:
+            url = self._ctx.host.url(system)
+        except ConfigError:
+            problems.append(f"{step.target}: no URL for {system}")
+            return
+        if url is None:
+            problems.append(f"{step.target}: no URL for {system}")
+            return
+        try:
+            api_key = self._service_key(system)
+        except (ConfigError, TransportError) as exc:
+            problems.append(
+                f"{step.target}: cannot read {system}'s own API key "
+                f"({exc}), so no write to it could be authenticated"
+            )
+            return
+        if not api_key:
+            problems.append(
+                f"{step.target}: no API key for {system!r}; store "
+                f"{system}'s own key before rotating a credential it holds"
+            )
+            return
+        answered = self._checked_call(
+            system, "GET", described.readback_path.format(service=row),
+            key=api_key,
+            auth_header=described.auth_header_name,
+            auth_transport=described.auth_transport,
+        )
+        if answered is None:
+            problems.append(
+                f"{step.target}: {system} was unreachable during preflight; "
+                "the write could not be confirmed"
+            )
+        else:
+            status, body = answered
+            if status != 200:
+                problems.append(
+                    f"{step.target}: the read-back that would confirm this "
+                    f"write returned HTTP {status}; the write would succeed "
+                    "but could not be confirmed"
+                )
+            elif row == "jellyfin":
+                if not isinstance(body, dict) or not body:
+                    problems.append(
+                        f"{step.target}: {system} has no Jellyfin "
+                        "settings object, so a rotation would revoke the "
+                        "old key and update nothing"
+                    )
+            elif not isinstance(body, list):
+                problems.append(
+                    f"{step.target}: {system} returned an unexpected "
+                    f"settings shape for {row!r}; refusing a write that "
+                    "could not be confirmed"
+                )
+            elif not body:
+                problems.append(
+                    f"{step.target}: the settings section holds no "
+                    f"{row} instances, so a rotation would revoke the "
+                    "old key and update nothing"
+                )
+            elif len(body) > 1:
+                problems.append(
+                    f"{step.target}: the settings section holds "
+                    f"{len(body)} {row} instances and this build can "
+                    "update exactly one; which instance holds this "
+                    "credential is not in the manifest, so the write is "
+                    "refused rather than made into the wrong one"
+                )
+        return
+
+    def _preflight_holder(
+        self, step: Step, system: str, described: Holder, problems: list[str]
+    ) -> None:
+        try:
+            self._resolve_field(step)
+        except RotationError as exc:
+            problems.append(str(exc))
+            return
+        try:
+            holder_key = self._service_key(system)
+        except TransportError as exc:
+            problems.append(
+                f"{step.target}: cannot read the holder's own API key "
+                f"({exc}), so no write to it could be authenticated"
+            )
+            return
+        if not holder_key:
+            problems.append(
+                f"{step.target}: no API key for the holder service "
+                f"{system!r}; nothing could authenticate a write to it"
+            )
+            return
+        answered = self._checked_call(system, "GET", f"/{described.api_path}",
+                                      key=holder_key)
+        if answered is None:
+            return
+        status, rows = answered
+        if status != 200 or not isinstance(rows, list):
+            problems.append(
+                f"{step.target}: cannot list rows (HTTP {status}); the "
+                f"write would fail after the key was already revoked"
+            )
+            return
+        try:
+            selected = self._select_rows(step.target, rows)
+        except RotationError as exc:
+            problems.append(str(exc))
+            return
+        if not selected:
+            problems.append(
+                f"{step.target}: no rows to update, so a rotation would "
+                f"change nothing while still invalidating the old key"
+            )
+
+    def _preflight_notes(self, problems: list[str]) -> None:
         # Notes are appended, not pre-pended: they explain a check that could
         # not run, and they must not crowd out a reason that says why to stop.
         for note in self._ctx.preflight_notes:
             if note.split(":")[0] not in {p.split(":")[0] for p in problems}:
                 problems.append(note)
 
+    def _preflight_unfinished(self, problems: list[str]) -> None:
         # 3. A rotation must not start while a previous one is unfinished.
         # This credential's own steps are exactly what `take_over` is for, so
         # with it they are simply not a problem - the run closes them and
@@ -1001,7 +1043,6 @@ class Executor:
                 f"({listed}); take it over with --take-over, or wait "
                 f"{minutes} minutes for it to age out"
             )
-        return problems
 
     def _journal_holders(self) -> None:
         """Mirror the in-run holder state into the journal.
