@@ -49,6 +49,10 @@ ever share a language, revisit; until then the split is the honest shape.
 src/credarr/model.py        the manifest: declared state, parsed unforgivingly
 src/credarr/rotate.py       the planner: refuses what cannot be delivered
 src/credarr/executor.py     preflight, propagation, verification, restart
+src/credarr/executor_steps/{mint,propagate,record,revoke,support,types,verify}.py
+                            the step kinds behind Executor: mint, propagate,
+                            revoke, record and verify, plus the shared types
+                            and transport helpers they all use
 src/credarr/writers.py      holders: who can write a value into what
 src/credarr/targets.py      the static target registry (no local read path)
 src/credarr/provenance.py   the version each capability was measured against;

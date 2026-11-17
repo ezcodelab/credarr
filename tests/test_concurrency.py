@@ -208,7 +208,7 @@ def _lease_executor(journal: Journal, state: FakeState, token: str) -> Executor:
         return _api_xml(state.service_key[service]), "backup.zip"
 
     def restore(host, service, *, key, xml, transport):
-        from credarr.executor import _config_xml_api_key
+        from credarr.executor_steps.support import _config_xml_api_key
         state.service_key[service] = _config_xml_api_key(xml.decode())
         return 200, None
 

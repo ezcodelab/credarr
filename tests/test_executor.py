@@ -31,19 +31,16 @@ import pytest
 
 from credarr.config import HostConfig
 from credarr.errors import RotationError, TransportError
-from credarr.executor import (
+from credarr.executor import ExecutionResult, Executor, RotationContext, Verdict
+from credarr.executor_steps.support import (
     CONFIG_READ_TIMEOUT,
     MAX_JSON_RESPONSE_BYTES,
-    ExecutionResult,
-    Executor,
-    RotationContext,
-    Verdict,
     _config_xml_api_key,
     _config_xml_from_host,
     _servarr_backup_config,
     _servarr_restore_config,
 )
-from credarr.executor import _servarr_call as real_servarr_call
+from credarr.executor_steps.support import _servarr_call as real_servarr_call
 from credarr.journal import Journal
 from credarr.model import Manifest
 from credarr.pending import FilePending
@@ -3511,7 +3508,7 @@ def test_an_oversized_backup_still_deletes_the_service_copy(monkeypatch) -> None
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        monkeypatch.setattr("credarr.executor.MAX_BACKUP_BYTES", 1024)
+        monkeypatch.setattr("credarr.executor_steps.support.MAX_BACKUP_BYTES", 1024)
         host = HostConfig(
             name="local",
             urls={"prowlarr": f"http://127.0.0.1:{server.server_port}"},

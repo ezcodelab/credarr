@@ -18,7 +18,7 @@ import pytest
 
 from credarr import __version__
 from credarr.config import HostConfig
-from credarr.executor import _servarr_call
+from credarr.executor_steps.support import _servarr_call
 
 HOST = HostConfig(
     name="t",
