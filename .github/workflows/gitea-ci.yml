@@ -1,0 +1,63 @@
+name: gitea-ci
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitea-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pull-request:
+    if: github.server_url != 'https://github.com'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache pip downloads
+        continue-on-error: true
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-${{ runner.os }}-
+
+      - name: Python venv
+        run: |
+          set -euo pipefail
+          python3 -m venv .venv 2>/dev/null || {
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends python3-venv
+            python3 -m venv .venv
+          }
+          .venv/bin/python -m pip install --quiet --upgrade pip
+          .venv/bin/python -m pip install --quiet -e '.[dev]'
+
+      - name: Lint
+        run: make lint
+
+      - name: Which tests cover this diff
+        id: affected
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          ./scripts/affected-tests --base "origin/${{ github.base_ref }}" | tee /tmp/affected
+          echo "args=$(cat /tmp/affected)" >> "$GITHUB_OUTPUT"
+
+      - name: Affected tests
+        run: |
+          set -euo pipefail
+          arg="${{ steps.affected.outputs.args }}"
+          if [ "$arg" = "none" ]; then
+            echo "No Python test observes this diff."
+            exit 0
+          fi
+          [ "$arg" = "all" ] && arg=""
+          .venv/bin/python -m pytest -o addopts="" -m "not integration" -q \
+            -p no:cacheprovider -n auto $arg
