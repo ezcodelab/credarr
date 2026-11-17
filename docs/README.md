@@ -17,6 +17,7 @@ Start with `../README.md` (install, first boot, connect an app), then:
 | `API.md` | `/api/v1` reference seed (full contract: the live `/openapi.json`) |
 | `LIMITATIONS.md` | Known v1 limits and troubleshooting. Read before exposing or trusting a rotation |
 | `TESTING.md` | Test layers, measured coverage, gaps and the rules for new tests |
+| `auto-merge.md` | AGit PRs, the scoped gate, consumer scripts, and protected paths |
 | `CONTRIBUTING.md` | Toolchain, checks, conventions |
 | `ADDING_A_SERVICE.md` | Lifecycle checklist for adding/measuring service support |
 
