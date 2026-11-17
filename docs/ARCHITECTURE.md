@@ -75,8 +75,14 @@ src/credarr/audit.py        observed state (statuses + reason codes)
 src/credarr/report.py       human + versioned JSON output
 src/credarr_server/store.py the topology store: the manifest as rows, imported
                             and exported through the engine
-src/credarr_server/app.py   the BFF: /api/v1 (pinned contract), the audit loop
-                            thread, and the health signal when it dies
+src/credarr_server/app.py   the BFF process: the audit loop thread, the CLI
+                            bootstrap, and the health signal when it dies
+src/credarr_server/api/{auth,context,credential_edit,credentials,http,models,
+                        notifications,payloads,rotation,service_edit,services,
+                        status,topology,values}.py
+                            the /api/v1 surface split by domain behind one
+                            ApiContext, which carries the process state and
+                            the shared write guards
 src/credarr_server/auth.py  single admin: argon2id password, lockout, hashed
                             server-side sessions, API keys stored hashed
 src/credarr_server/{source,audit_log,scheduler}.py

@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 STATE_MACHINES = ROOT / "docs/STATE_MACHINES.md"
-APP = SRC / "credarr_server/app.py"
+PAYLOADS = SRC / "credarr_server/api/payloads.py"
 
 MAX_LINES = 20
 
@@ -123,7 +123,7 @@ def test_the_retention_rule_lives_in_the_state_machine_doc() -> None:
 
 
 def test_the_console_docstring_points_at_the_rule() -> None:
-    doc = function_docstring(APP, "_console_credential_json")
+    doc = function_docstring(PAYLOADS, "_console_credential_json")
     assert "docs/STATE_MACHINES.md" in doc and "section 8" in doc, (
         "the console docstring must link to the retention rule instead of holding it"
     )

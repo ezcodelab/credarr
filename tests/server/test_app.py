@@ -661,7 +661,7 @@ def test_a_stored_key_is_never_sent_to_another_url(server, monkeypatch) -> None:
         calls.append((args, kwargs))
         raise AssertionError("the probe must not run with the stored key")
 
-    monkeypatch.setattr("credarr_server.app.probe_service_connection", record)
+    monkeypatch.setattr("credarr_server.api.services.probe_service_connection", record)
     with TestClient(server) as client:
         setup_admin(client)
         for url in ("http://attacker.invalid:8989", "http://127.0.0.1:9"):
@@ -684,7 +684,7 @@ def test_a_typed_key_may_test_any_url(server, monkeypatch) -> None:
         seen.append((system, url, key))
         return SimpleNamespace(ok=True, detail="accepted", version=None)
 
-    monkeypatch.setattr("credarr_server.app.probe_service_connection", record)
+    monkeypatch.setattr("credarr_server.api.services.probe_service_connection", record)
     with TestClient(server) as client:
         setup_admin(client)
         response = client.post(
@@ -1033,6 +1033,73 @@ def test_the_openapi_contract_is_pinned(server) -> None:
         "/docs",
         "/docs/oauth2-redirect",
         "/redoc",
+    }
+
+
+def test_the_openapi_operations_are_pinned(server) -> None:
+    """Every method/path pair is the surface, not only the path.
+
+    `_mount` is split into per-domain routers; a moved route that changed its
+    method, its path, or silently disappeared must fail here. The count is the
+    audit's 47 operations, so a new endpoint is a deliberate addition to this
+    list, never a side effect of the move.
+    """
+    document = TestClient(server).get("/openapi.json").json()
+    methods = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+    operations = {
+        (method.upper(), path)
+        for path, item in document["paths"].items()
+        for method in item
+        if method in methods
+    }
+    assert operations == {
+        ("GET", "/api/v1/audit"),
+        ("POST", "/api/v1/audit"),
+        ("GET", "/api/v1/audit/jobs/{job_id}"),
+        ("POST", "/api/v1/auth/login"),
+        ("POST", "/api/v1/auth/logout"),
+        ("GET", "/api/v1/auth/me"),
+        ("POST", "/api/v1/auth/password"),
+        ("DELETE", "/api/v1/auth/sessions"),
+        ("GET", "/api/v1/auth/sessions"),
+        ("DELETE", "/api/v1/auth/sessions/{session_id}"),
+        ("POST", "/api/v1/auth/setup"),
+        ("GET", "/api/v1/auth/state"),
+        ("GET", "/api/v1/credentials"),
+        ("POST", "/api/v1/credentials"),
+        ("DELETE", "/api/v1/credentials/{name}"),
+        ("PATCH", "/api/v1/credentials/{name}"),
+        ("GET", "/api/v1/credentials/{name}/auto-rotation"),
+        ("PUT", "/api/v1/credentials/{name}/auto-rotation"),
+        ("PUT", "/api/v1/credentials/{name}/holders"),
+        ("POST", "/api/v1/credentials/{name}/plan"),
+        ("POST", "/api/v1/credentials/{name}/rotate"),
+        ("GET", "/api/v1/credentials/{name}/rotation-options"),
+        ("POST", "/api/v1/credentials/{name}/rotation/abandon"),
+        ("DELETE", "/api/v1/credentials/{name}/value"),
+        ("PUT", "/api/v1/credentials/{name}/value"),
+        ("GET", "/api/v1/discovery"),
+        ("GET", "/api/v1/events"),
+        ("GET", "/api/v1/health"),
+        ("GET", "/api/v1/keys"),
+        ("POST", "/api/v1/keys"),
+        ("DELETE", "/api/v1/keys/{key_id}"),
+        ("GET", "/api/v1/notifications/services"),
+        ("POST", "/api/v1/notifications/services"),
+        ("POST", "/api/v1/notifications/services/test"),
+        ("DELETE", "/api/v1/notifications/services/{name}"),
+        ("PATCH", "/api/v1/notifications/services/{name}"),
+        ("POST", "/api/v1/notifications/services/{name}/test"),
+        ("GET", "/api/v1/services"),
+        ("POST", "/api/v1/services"),
+        ("POST", "/api/v1/services/test"),
+        ("DELETE", "/api/v1/services/{name}"),
+        ("PATCH", "/api/v1/services/{name}"),
+        ("GET", "/api/v1/settings/audit"),
+        ("PUT", "/api/v1/settings/audit"),
+        ("GET", "/api/v1/status"),
+        ("GET", "/api/v1/topology/export"),
+        ("POST", "/api/v1/topology/import"),
     }
 
 
