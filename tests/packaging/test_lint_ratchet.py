@@ -1,16 +1,18 @@
 """The lint size ratchet is pinned to the tree.
 
 `[tool.ruff.lint]` selects C901/PLR0912/PLR0915 behind thresholds measured to
-leave only `executor.preflight` and `app._mount` over them. Both halves are
-load-bearing: a looser threshold or a broader ignore is the ratchet slipping,
-and the exemption may only shrink. Removing an entry is safe because
-`ruff check .` re-proves the function was actually fixed; adding a path, or a
-code outside the three, fails here so the loosening is a visible diff.
+leave only `executor.preflight` over them. `app._mount` was split into the
+`credarr_server.api` routers, so its entry is gone and the exemption list may
+only shrink. Both halves are load-bearing: a looser threshold or a broader
+ignore is the ratchet slipping, and an added entry is a loosening. Removing an
+entry is safe because `ruff check .` re-proves the function was actually fixed;
+adding a path, or a code outside the three, fails here so the change shows in
+this file's diff.
 
 The exemption is per file, not per function: ruff has no function-scoped
-ignore, so a new oversized function inside either file is caught by review,
-not by this test. A global `ignore` would disable the rule everywhere, so it
-is checked by name as well.
+ignore, so a new oversized function inside the remaining file is caught by
+review, not by this test. A global `ignore` would disable the rule everywhere,
+so it is checked by name as well.
 """
 
 from __future__ import annotations
@@ -26,7 +28,6 @@ PYPROJECT = ROOT / "pyproject.toml"
 SIZE_RULES = ("C901", "PLR0912", "PLR0915")
 EXEMPT = {
     "src/credarr/executor.py": {"C901", "PLR0912", "PLR0915"},
-    "src/credarr_server/app.py": {"C901", "PLR0912", "PLR0915"},
 }
 
 

@@ -1630,7 +1630,7 @@ def test_services_answers_with_the_engines_document(server, monkeypatch) -> None
             ),
         )
 
-    monkeypatch.setattr("credarr_server.app.service_report", fake)
+    monkeypatch.setattr("credarr_server.api.services.service_report", fake)
     with TestClient(server) as client:
         setup_admin(client)
         response = client.get("/api/v1/services")
@@ -1666,8 +1666,8 @@ def test_services_can_return_definitions_without_probing(
     def unexpected(*args, **kwargs):
         raise AssertionError("observe=false must not probe services")
 
-    monkeypatch.setattr("credarr_server.app.service_report", unexpected)
-    monkeypatch.setattr("credarr_server.app.stored_service_keys", unexpected)
+    monkeypatch.setattr("credarr_server.api.services.service_report", unexpected)
+    monkeypatch.setattr("credarr_server.api.services.stored_service_keys", unexpected)
     with TestClient(server) as client:
         setup_admin(client)
         response = client.get("/api/v1/services?observe=false")
