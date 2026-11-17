@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from credarr.model import Target, parse_row_selector, split_target
+from credarr.provenance import MEASURED_VERSIONS
 from credarr.writers import (
     API_VERSIONS,
     AUTH_SHAPES,
@@ -328,6 +329,19 @@ def test_every_mint_source_owns_auth_shape():
     known = set(MINT_SOURCES) | set(REISSUERS)
     missing = sorted(known - set(AUTH_SHAPES))
     assert not missing, f"mint sources with no auth shape: {missing}"
+
+
+def test_every_auth_shape_names_a_measured_version():
+    """A row is a measurement, not a guess: the version record must have it.
+
+    `AUTH_SHAPES` is pinned by value above; this ties each value to the live
+    run that produced it, so a new service cannot inherit a default row and a
+    version claim with nothing behind it.
+    """
+    missing = sorted(
+        system for system in AUTH_SHAPES if not MEASURED_VERSIONS.get(system)
+    )
+    assert not missing, f"auth shapes with no measured version: {missing}"
 
 
 def test_auth_shapes_are_the_measured_transports():
