@@ -64,6 +64,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -344,8 +345,8 @@ class SeerrRow:
     an update must fill them in.
     """
 
-    readback_shape: str              # "object" | "list"
-    write_method: str                # "POST" | "PUT"
+    readback_shape: Literal["object", "list"]
+    write_method: Literal["POST", "PUT"]
     write_path: str
     drop_fields: tuple[str, ...]
     write_defaults: tuple[tuple[str, object], ...] = ()

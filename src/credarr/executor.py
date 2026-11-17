@@ -66,6 +66,7 @@ from .writers import (
     auth_kwargs,
     holder_for,
     readiness_path,
+    seerr_row,
 )
 
 
@@ -485,7 +486,7 @@ class Executor(MintSteps, PropagateSteps, VerifySteps, RecordSteps, RevokeSteps)
                     f"write returned HTTP {status}; the write would succeed "
                     "but could not be confirmed"
                 )
-            elif row == "jellyfin":
+            elif seerr_row(row).readback_shape == "object":
                 if not isinstance(body, dict) or not body:
                     problems.append(
                         f"{step.target}: {system} has no Jellyfin "
