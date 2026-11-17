@@ -1191,8 +1191,8 @@ async function main() {
     );
     // The password was saved a moment ago; the plan runs preflight against it.
     // Poll in bounded, paced attempts, never at animation-frame rate: each
-    // plan logs in to the service, and a 60/s storm can saturate the fixture
-    // and make the next plan report a transient login wall.
+    // plan performs a preflight login, and a request per frame is a burst of
+    // logins that can leave the next plan with a transient login-wall answer.
     const planToken = await csrf();
     let ready = null;
     for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -1214,6 +1214,7 @@ async function main() {
       (answer) =>
         answer.url().endsWith("/credentials/sonarr_api_key/plan") &&
         answer.request().method() === "POST",
+      { timeout: 30_000 },
     );
     await page.getByRole("button", { name: "Preview rotation", exact: true }).click();
     try {
