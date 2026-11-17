@@ -14,7 +14,7 @@ from credarr.errors import ConfigError, RotationError, TransportError
 from credarr.model import split_target
 from credarr.redact import scrub
 from credarr.rotate import Step
-from credarr.writers import Holder, holder_for, known_systems
+from credarr.writers import Holder, holder_for, known_systems, seerr_row
 
 from .support import (
     MAX_WRITE_INTERVAL,
@@ -439,27 +439,15 @@ class PropagateSteps:
                 )
 
             instance, label = self._seerr_instance(holder, row, api_key)
-            # These fields identify the stored object or are derived from the
-            # server and are read-only in Seerr's settings schema; sending any
-            # back makes the write a validation error.
+            spec = seerr_row(row)
+            # Server-owned fields are read-only in Seerr's schema; sending one
+            # back is a validation error. The row table names them per shape.
             update = {
-                k: v for k, v in instance.items()
-                if k not in (
-                    ("id", "serverId", "name", "libraries")
-                    if row == "jellyfin" else ("id",)
-                )
+                k: v for k, v in instance.items() if k not in spec.drop_fields
             }
             update["apiKey"] = minted
-            if row == "jellyfin":
-                status, _ = self._call(
-                    self._ctx.host, holder.system, "POST",
-                    "/settings/jellyfin", body=update, key=api_key,
-                    auth_header=holder.auth_header_name,
-                    auth_transport=holder.auth_transport,
-                    transport=self._ctx.transport,
-                )
-            else:
-                instance_id = instance.get("id")
+            instance_id = instance.get("id")
+            if spec.write_method == "PUT":
                 if instance_id is None:
                     raise RotationError(
                         f"the {row} instance has no id, so the write cannot "
@@ -467,19 +455,16 @@ class PropagateSteps:
                         hint="the settings section changed shape; nothing was "
                         "written to it",
                     )
-                # Seerr's OpenAPI schema marks these required and a stored
-                # instance need not carry them: without them the PUT is a
-                # measured 400 ("must have required property ..."), not an
-                # update.
-                update.setdefault("enableSeasonFolders", False)
-                update.setdefault("minimumAvailability", "In Cinema")
-                status, _ = self._call(
-                    self._ctx.host, holder.system, "PUT",
-                    f"/settings/{row}/{instance_id}", body=update, key=api_key,
-                    auth_header=holder.auth_header_name,
-                    auth_transport=holder.auth_transport,
-                    transport=self._ctx.transport,
-                )
+                for key, value in spec.write_defaults:
+                    update.setdefault(key, value)
+            status, _ = self._call(
+                self._ctx.host, holder.system, spec.write_method,
+                spec.write_path.format(service=row, id=instance_id),
+                body=update, key=api_key,
+                auth_header=holder.auth_header_name,
+                auth_transport=holder.auth_transport,
+                transport=self._ctx.transport,
+            )
             if status != 200:
                 raise RotationError(
                     f"Seerr refused the {row} settings write (HTTP {status})",
@@ -519,7 +504,7 @@ class PropagateSteps:
                 hint="the old key is already revoked; restore access and "
                 "re-run to finish",
             )
-        if row == "jellyfin":
+        if seerr_row(row).readback_shape == "object":
             if not isinstance(body, dict) or not body:
                 raise RotationError(
                     "Seerr has no Jellyfin settings object, so there is "
@@ -589,7 +574,7 @@ class PropagateSteps:
 
     @staticmethod
     def _seerr_holds(body: object, row: str, minted: str) -> bool:
-        if row == "jellyfin":
+        if seerr_row(row).readback_shape == "object":
             return isinstance(body, dict) and body.get("apiKey") == minted
         return (
             isinstance(body, list)
