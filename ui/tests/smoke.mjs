@@ -1190,31 +1190,44 @@ async function main() {
       !(await page.content()).includes(UI_PASSWORD),
     );
     // The password was saved a moment ago; the plan runs preflight against it.
-    // Wait for the server to report a runnable plan instead of racing the save.
+    // Poll in bounded, paced attempts, never at animation-frame rate: each
+    // plan performs a preflight login, and a request per frame is a burst of
+    // logins that can leave the next plan with a transient login-wall answer.
     const planToken = await csrf();
-    await page.waitForFunction(
-      async (token) => {
-        const answer = await fetch(
-          "/api/v1/credentials/sonarr_api_key/plan",
-          {
-            method: "POST",
-            headers: { "content-type": "application/json", "X-CSRF-Token": token },
-            body: "{}",
-          },
-        );
-        if (!answer.ok) return false;
+    let ready = null;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const answer = await page.request.post(
+        `${BASE}/api/v1/credentials/sonarr_api_key/plan`,
+        { data: {}, headers: { "X-CSRF-Token": planToken } },
+      );
+      if (answer.ok()) {
         const plan = await answer.json();
-        return plan.exit_code === 0;
-      },
-      planToken,
-      { timeout: 60000 },
+        if (plan.exit_code === 0 && (plan.problems ?? []).length === 0) {
+          ready = plan;
+          break;
+        }
+      }
+      await page.waitForTimeout(200 + attempt * 100);
+    }
+    if (!ready) throw new Error("the Sonarr plan never became runnable");
+    const previewAnswer = page.waitForResponse(
+      (answer) =>
+        answer.url().endsWith("/credentials/sonarr_api_key/plan") &&
+        answer.request().method() === "POST",
+      { timeout: 30_000 },
     );
     await page.getByRole("button", { name: "Preview rotation", exact: true }).click();
     try {
+      const answer = await previewAnswer;
+      const plan = await answer.json();
+      check(
+        "the clicked preview returns a runnable plan",
+        plan.exit_code === 0 && (plan.problems ?? []).length === 0,
+      );
       await page
         .locator("#rotation-card")
         .getByText(/Checks passed: sign-in works, the backup answers/)
-        .waitFor({ timeout: 15000 });
+        .waitFor({ timeout: 30000 });
     } catch (failure) {
       const plan = await page.request
         .post(`${BASE}/api/v1/credentials/sonarr_api_key/plan`, {
