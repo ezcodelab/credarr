@@ -46,7 +46,7 @@ from .docker_api import DockerApiError
 from .docker_api import containers as docker_containers
 from .docker_api import endpoint as docker_endpoint
 from .errors import ConfigError, RotationError, TransportError
-from .executor import _servarr_call
+from .executor_steps.support import _servarr_call
 from .model import Manifest
 from .redact import Secret
 from .rotate import service_for

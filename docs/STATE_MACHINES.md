@@ -32,8 +32,8 @@ the function names are the stable reference.
 | 2 | Rotation attempt | explicit column | `journal.py` | SM-1, SM-1d, SM-10 |
 | 3 | Rotation step | explicit column | `journal.py` | SM-1, SM-1b |
 | 4 | Pending secret | explicit table + implicit ownership | `pending.py`, `store.py` | SM-2, SM-2b |
-| 5 | Holder outcome | explicit vocabulary | `executor.py` | SM-4 |
-| 6 | Executor run and recovery | implicit lifecycle | `executor.py`, `facade.py` | SM-1, SM-1c, SM-2, SM-2b, SM-9, SM-10 |
+| 5 | Holder outcome | explicit vocabulary | `executor.py`, `executor_steps/propagate.py` | SM-4 |
+| 6 | Executor run and recovery | implicit lifecycle | `executor.py`, `executor_steps/*`, `facade.py` | SM-1, SM-1c, SM-2, SM-2b, SM-9, SM-10 |
 | 7 | Auto-rotation policy | explicit table + implicit gate | `auto_rotation.py`, `store.py` | SM-3 |
 | 8 | Audit run and status ledger | explicit columns + derived status | `audit.py`, `audit_log.py` | — |
 | 9 | Notification delivery | explicit column | `notifier.py` | — |
@@ -218,8 +218,8 @@ One row per `(attempt, ordinal)` in `steps`. A step is written as started
 3. A closed attempt accepts no new step and no new holder row.
 4. A step that a takeover marked abandoned is final; the old owner's finish
    cannot rewrite it.
-5. The failure detail is scrubbed before it is journaled (`executor.py` failure
-   handler); no value, fingerprint, or token enters `outcome`.
+5. The failure detail is scrubbed before it is journaled (`executor.py`
+   failure handler); no value, fingerprint, or token enters `outcome`.
 6. A completed step is `outcome_state(...) is Outcome.COMPLETED`. A successful
    step stores its own description, so the absence of a keyword is not the
    absence of success — `outcome = ''` is a completion too.
@@ -289,7 +289,7 @@ explicit manual mint. It is stored beside the surface's canonical store
   canonical key at the mint, it generated a third key and revoked the one every
   holder had just received. Reproduced with `Executor.execute` and a seeded
   open attempt whose RECORD step was finished or reclaimed.
-  Fixed by `_resume_after_record` (`executor.py:1009-1080`): when the previous
+  Fixed by `_resume_after_record` (`executor_steps/record.py`): when the previous
   attempt reached RECORD, the mint is pending-backed, the parked value is absent
   or equal to canonical, and the canonical value authenticates at the issuer,
   the run loads the dead attempt's holder rows, skips every step before RECORD,
