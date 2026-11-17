@@ -14,13 +14,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from credarr import facade
 from credarr.rotate import service_for
 from credarr_server.api.context import ApiContext
-from credarr_server.api.credentials import (
-    _ROTATION_FIELDS,
-    _candidate_manifest,
-    _holder_spec,
-)
+from credarr_server.api.credentials import _candidate_manifest, _holder_spec
 from credarr_server.api.http import _actor, new_routers
-from credarr_server.api.models import CredentialPatch
+from credarr_server.api.models import _ROTATION_FIELDS, CredentialPatch
 from credarr_server.api.payloads import _console_credential_json
 
 

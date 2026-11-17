@@ -78,13 +78,6 @@ def _candidate_manifest(
     except ManifestError as exc:
         raise HTTPException(status_code=400, detail=exc.render()) from None
 
-# CredentialPatch fields that change the rotation plan a resume would follow.
-# Metadata (description, provisioned, max_age_days) is deliberately absent.
-_ROTATION_FIELDS = frozenset(
-    {"credential_class", "never_rotate", "canonical", "write", "vault", "consumers"}
-)
-
-
 def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
     """The domain's routes, over the one process context."""
     store = ctx.store
