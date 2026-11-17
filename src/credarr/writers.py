@@ -332,6 +332,53 @@ def _seerr() -> None:
 _seerr()
 
 
+@dataclass(frozen=True)
+class SeerrRow:
+    """How Seerr's settings API shapes one holder row.
+
+    Reading and writing are separate facts: a Jellyfin row is one object and
+    answers POST `/settings/{service}`, while an arr row is a list and answers
+    PUT `/settings/{service}/{id}`. `drop_fields` are server-owned and are read
+    only; sending them back is a validation error. `write_defaults` are marked
+    required by Seerr's OpenAPI schema even when the stored row omits them, so
+    an update must fill them in.
+    """
+
+    readback_shape: str              # "object" | "list"
+    write_method: str                # "POST" | "PUT"
+    write_path: str
+    drop_fields: tuple[str, ...]
+    write_defaults: tuple[tuple[str, object], ...] = ()
+
+
+SEERR_ROWS: dict[str, SeerrRow] = {
+    "jellyfin": SeerrRow(
+        readback_shape="object",
+        write_method="POST",
+        write_path="/settings/{service}",
+        drop_fields=("id", "serverId", "name", "libraries"),
+    ),
+}
+
+DEFAULT_SEERR_ROW = SeerrRow(
+    readback_shape="list",
+    write_method="PUT",
+    write_path="/settings/{service}/{id}",
+    drop_fields=("id",),
+    # Measured: a stored instance need not carry these, but the PUT is a 400
+    # without them ("must have required property ..."), not an update.
+    write_defaults=(
+        ("enableSeasonFolders", False),
+        ("minimumAvailability", "In Cinema"),
+    ),
+)
+
+
+def seerr_row(row: str) -> SeerrRow:
+    """One Seerr settings row's shape; every row but Jellyfin is an arr row."""
+    return SEERR_ROWS.get(row, DEFAULT_SEERR_ROW)
+
+
 # Bazarr holds Sonarr and Radarr keys in its settings. The write is a form POST
 # (`settings-sonarr-apikey`), and `GET /api/system/settings` returns the value
 # the running process holds under `sonarr.apikey` / `radarr.apikey`. Measured

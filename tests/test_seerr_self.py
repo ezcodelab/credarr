@@ -21,6 +21,7 @@ from credarr.journal import Journal
 from credarr.model import Manifest
 from credarr.redact import Secret
 from credarr.rotate import Step, StepKind, plan_rotation
+from credarr.writers import DEFAULT_SEERR_ROW, SEERR_ROWS, seerr_row
 
 OLD = "o" * 32
 NEW = "n" * 32
@@ -239,3 +240,31 @@ def test_preflight_requires_the_pending_store_and_a_stored_value(tmp_path: Path)
     executor, _ctx = _executor(tmp_path, api, FakePending(), vault_value=None)
     problems = executor.preflight(plan)
     assert any("no value for this credential" in problem for problem in problems)
+
+
+def test_seerr_rows_pin_the_two_write_shapes() -> None:
+    """Jellyfin is one object over POST; every arr row is a list over PUT.
+
+    The propagate path reads this table instead of branching on the row name:
+    the dropped fields, the method and the required defaults are one measured
+    row each, so a new settings section cannot inherit the wrong shape.
+    """
+    jellyfin = seerr_row("jellyfin")
+    assert jellyfin is SEERR_ROWS["jellyfin"]
+    assert jellyfin.readback_shape == "object"
+    assert jellyfin.write_method == "POST"
+    assert jellyfin.write_path == "/settings/{service}"
+    assert jellyfin.drop_fields == ("id", "serverId", "name", "libraries")
+    assert jellyfin.write_defaults == ()
+
+    for row in ("sonarr", "radarr"):
+        arr = seerr_row(row)
+        assert arr is DEFAULT_SEERR_ROW
+        assert arr.readback_shape == "list"
+        assert arr.write_method == "PUT"
+        assert arr.write_path == "/settings/{service}/{id}"
+        assert arr.drop_fields == ("id",)
+        assert arr.write_defaults == (
+            ("enableSeasonFolders", False),
+            ("minimumAvailability", "In Cinema"),
+        )
