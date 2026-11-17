@@ -49,6 +49,10 @@ ever share a language, revisit; until then the split is the honest shape.
 src/credarr/model.py        the manifest: declared state, parsed unforgivingly
 src/credarr/rotate.py       the planner: refuses what cannot be delivered
 src/credarr/executor.py     preflight, propagation, verification, restart
+src/credarr/executor_steps/{mint,propagate,record,revoke,support,types,verify}.py
+                            the step kinds behind Executor: mint, propagate,
+                            revoke, record and verify, plus the shared types
+                            and transport helpers they all use
 src/credarr/writers.py      holders: who can write a value into what
 src/credarr/targets.py      the static target registry (no local read path)
 src/credarr/provenance.py   the version each capability was measured against;
@@ -75,8 +79,14 @@ src/credarr/audit.py        observed state (statuses + reason codes)
 src/credarr/report.py       human + versioned JSON output
 src/credarr_server/store.py the topology store: the manifest as rows, imported
                             and exported through the engine
-src/credarr_server/app.py   the BFF: /api/v1 (pinned contract), the audit loop
-                            thread, and the health signal when it dies
+src/credarr_server/app.py   the BFF process: the audit loop thread, the CLI
+                            bootstrap, and the health signal when it dies
+src/credarr_server/api/{auth,context,credential_edit,credentials,http,models,
+                        notifications,payloads,rotation,service_edit,services,
+                        status,topology,values}.py
+                            the /api/v1 surface split by domain behind one
+                            ApiContext, which carries the process state and
+                            the shared write guards
 src/credarr_server/auth.py  single admin: argon2id password, lockout, hashed
                             server-side sessions, API keys stored hashed
 src/credarr_server/{source,audit_log,scheduler}.py

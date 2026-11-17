@@ -368,14 +368,18 @@ def recorded_sleeps(monkeypatch):
     test must not produce.
     Tests that exercise the timeout explicitly override this.
     """
-    import credarr.executor as executor
+    import time
+
+    import credarr.executor_steps.propagate as propagate
+    import credarr.executor_steps.verify as verify
 
     slept: list[float] = []
-    monkeypatch.setattr(executor.time, "sleep", slept.append, raising=False)
-    monkeypatch.setattr(executor, "READINESS_TIMEOUT", 0.5)
-    monkeypatch.setattr(executor, "READINESS_INTERVAL", 0.01)
-    monkeypatch.setattr(executor, "SEERR_READBACK_TIMEOUT", 0.5)
-    monkeypatch.setattr(executor, "SEERR_READBACK_INTERVAL", 0.01)
+    # One module object, so the patch caps the clock for every step module.
+    monkeypatch.setattr(time, "sleep", slept.append)
+    monkeypatch.setattr(verify, "READINESS_TIMEOUT", 0.5)
+    monkeypatch.setattr(verify, "READINESS_INTERVAL", 0.01)
+    monkeypatch.setattr(propagate, "SEERR_READBACK_TIMEOUT", 0.5)
+    monkeypatch.setattr(propagate, "SEERR_READBACK_INTERVAL", 0.01)
     request = pytest.MonkeyPatch()
     # One test genuinely needs the clock to move.
     yield slept

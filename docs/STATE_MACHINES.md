@@ -32,14 +32,14 @@ the function names are the stable reference.
 | 2 | Rotation attempt | explicit column | `journal.py` | SM-1, SM-1d, SM-10 |
 | 3 | Rotation step | explicit column | `journal.py` | SM-1, SM-1b |
 | 4 | Pending secret | explicit table + implicit ownership | `pending.py`, `store.py` | SM-2, SM-2b |
-| 5 | Holder outcome | explicit vocabulary | `executor.py` | SM-4 |
-| 6 | Executor run and recovery | implicit lifecycle | `executor.py`, `facade.py` | SM-1, SM-1c, SM-2, SM-2b, SM-9, SM-10 |
+| 5 | Holder outcome | explicit vocabulary | `executor.py`, `executor_steps/propagate.py` | SM-4 |
+| 6 | Executor run and recovery | implicit lifecycle | `executor.py`, `executor_steps/*`, `facade.py` | SM-1, SM-1c, SM-2, SM-2b, SM-9, SM-10 |
 | 7 | Auto-rotation policy | explicit table + implicit gate | `auto_rotation.py`, `store.py` | SM-3 |
 | 8 | Audit run and status ledger | explicit columns + derived status | `audit.py`, `audit_log.py` | — |
 | 9 | Notification delivery | explicit column | `notifier.py` | — |
 | 10 | Admin lockout and sessions | explicit table + implicit expiry | `auth.py` | SM-6 |
-| 11 | Topology import and working copies | implicit merge lifecycle | `store.py`, `app.py` | SM-3, SM-7, SM-8 |
-| 12 | Loop health | implicit thread state | `app.py`, `scheduler.py` | SM-5 |
+| 11 | Topology import and working copies | implicit merge lifecycle | `store.py`, `api/topology.py` | SM-3, SM-7, SM-8 |
+| 12 | Loop health | implicit thread state | `app.py`, `api/status.py`, `scheduler.py` | SM-5 |
 
 ---
 
@@ -218,8 +218,8 @@ One row per `(attempt, ordinal)` in `steps`. A step is written as started
 3. A closed attempt accepts no new step and no new holder row.
 4. A step that a takeover marked abandoned is final; the old owner's finish
    cannot rewrite it.
-5. The failure detail is scrubbed before it is journaled (`executor.py` failure
-   handler); no value, fingerprint, or token enters `outcome`.
+5. The failure detail is scrubbed before it is journaled (`executor.py`
+   failure handler); no value, fingerprint, or token enters `outcome`.
 6. A completed step is `outcome_state(...) is Outcome.COMPLETED`. A successful
    step stores its own description, so the absence of a keyword is not the
    absence of success — `outcome = ''` is a completion too.
@@ -289,7 +289,7 @@ explicit manual mint. It is stored beside the surface's canonical store
   canonical key at the mint, it generated a third key and revoked the one every
   holder had just received. Reproduced with `Executor.execute` and a seeded
   open attempt whose RECORD step was finished or reclaimed.
-  Fixed by `_resume_after_record` (`executor.py:1009-1080`): when the previous
+  Fixed by `_resume_after_record` (`executor_steps/record.py`): when the previous
   attempt reached RECORD, the mint is pending-backed, the parked value is absent
   or equal to canonical, and the canonical value authenticates at the issuer,
   the run loads the dead attempt's holder rows, skips every step before RECORD,
@@ -495,8 +495,8 @@ topology; it survives re-imports for names that still exist.
   again; moving the service URL made a resume target a different destination.
   The same value write is reachable through the service patch's key re-send
   branch, so it takes the same guard. Fixed by `value_change_guard`
-  (`app.py:929-975`), the URL-move journal check (`app.py:2215-2235`), and the
-  guard on `patch_service`'s key branch (`app.py:2208`). Regressions:
+  (`api/context.py`), the URL-move journal check (`api/service_edit.py`), and
+  the guard on `patch_service`'s key branch (`api/service_edit.py`). Regressions:
   `test_a_value_change_is_refused_while_an_unfinished_rotation_exists`,
   `test_a_url_move_refuses_an_unfinished_rotation_without_a_parked_key`,
   `test_a_service_key_resend_is_refused_while_a_rotation_is_unfinished`.
@@ -504,7 +504,7 @@ topology; it survives re-imports for names that still exist.
   `patch_credential` and `put_holders` take only the stack lease, so after a
   crash an operator could change a credential's holder set, class, vault or mint
   configuration and change what the resume is recovering toward. Those fields
-  now take `rotation_edit_guard` (`app.py:955-975`); metadata that changes no
+  now take `rotation_edit_guard` (`api/context.py`); metadata that changes no
   step (description, notes, `provisioned`, `max_age_days`) stays editable.
   Regression: `test_a_plan_change_is_refused_while_an_unfinished_rotation_exists`.
 - No policy transition that produces `enabled + paused` or a same-request run
@@ -752,7 +752,7 @@ is the only path that can move names, values, policies and holders together.
   the canonical value for the new issuer. The copy is kept (clearing it is
   destructive); the import response now carries an `issuer_changed` warning
   naming both services, next to the existing `audit_only` warning
-  (`app.py:900-938`). The console renders it as its own sentence.
+  (`api/topology.py`). The console renders it as its own sentence.
   Regression: `test_import_warns_when_a_surviving_name_changes_issuer` and the
   `importWarningLines` unit test.
 

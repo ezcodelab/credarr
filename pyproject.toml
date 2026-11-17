@@ -120,8 +120,8 @@ ignore = [
 ]
 
 # The size ratchet. Ruff's defaults (complexity 10) flag the whole tree at
-# once; these thresholds were measured to leave exactly the two functions
-# exempted below. The numbers and the exemption are pinned by
+# once; these thresholds were measured to leave no function over them. The
+# numbers and the (empty) exemption map are pinned by
 # tests/packaging/test_lint_ratchet.py, so loosening either is a visible diff.
 [tool.ruff.lint.mccabe]
 max-complexity = 35
@@ -132,11 +132,6 @@ max-statements = 100
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S", "ANN", "S105", "S106"]
-# The ratchet's two measured exemptions, pinned by
-# tests/packaging/test_lint_ratchet.py. Fix the function and delete its entry;
-# never add a path here.
-"src/credarr/executor.py" = ["C901", "PLR0912", "PLR0915"]
-"src/credarr_server/app.py" = ["C901", "PLR0912", "PLR0915"]
 
 [tool.ruff.lint.flake8-annotations]
 suppress-dummy-args = true
