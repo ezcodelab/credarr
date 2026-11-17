@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import time
 
-from credarr.errors import RotationError, TransportError
+from credarr.errors import ConfigError, RotationError, TransportError
 from credarr.model import parse_row_selector, split_target
 from credarr.redact import scrub
 from credarr.rotate import Step
 from credarr.writers import Holder, auth_kwargs, auth_shape, holder_for, readiness_path
 
-from .support import READINESS_INTERVAL, exercise_holder, log_line
+from .support import READINESS_INTERVAL, READINESS_TIMEOUT, exercise_holder, log_line
 from .types import Verdict
 
 
@@ -242,4 +242,99 @@ class VerifySteps:
                 self._ctx.minted.reveal() if self._ctx.minted is not None else None,
                 self._ctx.vault_value,
             ),
+        )
+
+    def _restart_service(self, service: str, *, key: str) -> None:
+        """Ask a Servarr app to restart itself over its own API.
+
+        The request is authenticated with the still-live key. A dropped
+        connection is treated as accepted because Servarr commonly closes the
+        socket while it restarts; the key-transition poll that follows is what
+        proves whether the restart actually happened.
+        """
+        try:
+            status, _ = self._call(
+                self._ctx.host, service, "POST", "/system/restart",
+                key=key, transport=self._ctx.transport,
+            )
+        except ConfigError as exc:
+            raise RotationError(
+                f"{service}: no URL is configured for the service-native "
+                f"restart ({exc})",
+                hint="declare the service URL. The "
+                "new key is parked in the pending store; nothing has been "
+                "written to any holder.",
+            ) from exc
+        except TransportError as exc:
+            log_line(
+                f"      {service}: the restart request dropped the connection "
+                f"({type(exc).__name__}); waiting for the service to come back"
+            )
+            return
+        if status not in (200, 201, 202):
+            raise RotationError(
+                f"{service} refused the service-native restart (HTTP {status})",
+                hint="the backup/restore path needs POST /api/.../system/restart "
+                "and a supervisor that starts the app again after that call "
+                "(for example the LinuxServer s6 image). The new key is parked "
+                "in the pending store. The restored config is staged: starting "
+                "the service now activates the parked key while every holder "
+                "still uses the old, now-revoked one. Re-run as soon as it is "
+                "reachable and do not use the service until holders are written.",
+            )
+
+    def _await_restart_key(
+        self, service: str, *, old_key: str, new_key: str,
+    ) -> None:
+        """Wait until the new key is accepted and the old key is not still live.
+
+        This is the restart's proof. A 200 from the restart route only says the
+        request was queued; the service can still be running the old config, or
+        never come back. A 403 or unknown old-key answer proceeds without
+        exercise-only proof; only the status the registry records for the
+        service's revoked key sets `old_key_dead`. The pending value is parked
+        before the restore, so a timeout is a recoverable stall rather than a
+        lost credential.
+        """
+        dead_status = auth_shape(service).dead_status
+        deadline = time.time() + READINESS_TIMEOUT
+        old_verdict = new_verdict = Verdict("unknown", None, "no attempt completed")
+        while time.time() < deadline:
+            old_verdict = self._authenticate(service, old_key)
+            new_verdict = self._authenticate(service, new_key)
+            if new_verdict.state == "live" and old_verdict.state != "live":
+                # Only the service's measured rejection proves the old key is
+                # dead. A bare 403 is not a credential verdict in general; the
+                # callers that measured it pass the service's own answer.
+                self._ctx.old_key_dead = (
+                    old_verdict.state == "dead"
+                    and old_verdict.status == dead_status
+                )
+                if not self._ctx.old_key_dead:
+                    log_line(
+                        f"      {service}: the old key was {old_verdict.detail}, "
+                        "which is not proof it is dead; exercise-only "
+                        "confirmation will not be claimed"
+                    )
+                return
+            time.sleep(READINESS_INTERVAL)
+        if new_verdict.state != "live":
+            raise RotationError(
+                f"{service}: the service-native restart did not make the "
+                f"restored key usable within {READINESS_TIMEOUT}s "
+                f"(old key: {old_verdict.detail}; "
+                f"new key: {new_verdict.detail})",
+                hint="the new key is parked in the pending store. The service "
+                "may have no supervisor to start it again after "
+                "POST /api/.../system/restart; start it manually and re-run. "
+                "If the service pins its API key in an environment variable "
+                "(for example AUTH__APIKEY), a config restore cannot change "
+                "it; use write.manual_mint or unset it. Do not mint again.",
+            )
+        raise RotationError(
+            f"{service}: the service accepted the restored key but the old "
+            f"key still authenticates after {READINESS_TIMEOUT}s",
+            hint="the restart did not take effect, or the service is accepting "
+            "both keys. The new key is parked in the pending store; restart "
+            "the service and re-run. Nothing has been written to any holder.",
         )

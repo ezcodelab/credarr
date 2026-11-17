@@ -368,16 +368,15 @@ def recorded_sleeps(monkeypatch):
     test must not produce.
     Tests that exercise the timeout explicitly override this.
     """
-    import credarr.executor as executor
+    import time
+
     import credarr.executor_steps.propagate as propagate
     import credarr.executor_steps.verify as verify
 
     slept: list[float] = []
-    # `time` is one module object, so patching it through the executor caps the
-    # clock for every step module that imported it.
-    monkeypatch.setattr(executor.time, "sleep", slept.append, raising=False)
-    monkeypatch.setattr(executor, "READINESS_TIMEOUT", 0.5)
-    monkeypatch.setattr(executor, "READINESS_INTERVAL", 0.01)
+    # One module object, so the patch caps the clock for every step module.
+    monkeypatch.setattr(time, "sleep", slept.append)
+    monkeypatch.setattr(verify, "READINESS_TIMEOUT", 0.5)
     monkeypatch.setattr(verify, "READINESS_INTERVAL", 0.01)
     monkeypatch.setattr(propagate, "SEERR_READBACK_TIMEOUT", 0.5)
     monkeypatch.setattr(propagate, "SEERR_READBACK_INTERVAL", 0.01)

@@ -29,7 +29,7 @@ MAX_LINES = 20
 # file's own docstring. Only shrink; delete an entry when it is at the cap.
 BASELINE = {
     "src/credarr/executor.py:<module>": 33,
-    "src/credarr/executor.py:_revoke_jellyfin": 24,
+    "src/credarr/executor_steps/revoke.py:_revoke_jellyfin": 24,
     "src/credarr/journal.py:<module>": 25,
     "src/credarr/model.py:<module>": 23,
     "src/credarr/provenance.py:<module>": 21,

@@ -915,7 +915,8 @@ def test_a_401_with_an_unusual_body_is_still_proof_the_stored_key_is_dead():
     text: a detail carrying a body is still a dead key, and a 403 is still
     ambiguous.
     """
-    from credarr.executor import Executor, Verdict
+    from credarr.executor import Executor
+    from credarr.executor_steps.types import Verdict
 
     class Probe(Executor):
         def __init__(self, *verdicts):

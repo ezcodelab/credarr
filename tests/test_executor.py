@@ -31,7 +31,7 @@ import pytest
 
 from credarr.config import HostConfig
 from credarr.errors import RotationError, TransportError
-from credarr.executor import ExecutionResult, Executor, RotationContext, Verdict
+from credarr.executor import ExecutionResult, Executor, RotationContext
 from credarr.executor_steps.support import (
     CONFIG_READ_TIMEOUT,
     MAX_JSON_RESPONSE_BYTES,
@@ -41,6 +41,7 @@ from credarr.executor_steps.support import (
     _servarr_restore_config,
 )
 from credarr.executor_steps.support import _servarr_call as real_servarr_call
+from credarr.executor_steps.types import Verdict
 from credarr.journal import Journal
 from credarr.model import Manifest
 from credarr.pending import FilePending
@@ -2230,7 +2231,7 @@ def test_restart_key_waits_through_connection_resets(tmp_path, monkeypatch):
     back looked like a hard failure - and the rotation aborted moments after it
     had already succeeded.
     """
-    monkeypatch.setattr("credarr.executor.READINESS_INTERVAL", 0.01)
+    monkeypatch.setattr("credarr.executor_steps.verify.READINESS_INTERVAL", 0.01)
     state = FakeState()
     state.service_key["prowlarr"] = NEW_KEY
     executor, _ = _executor(tmp_path, state)
@@ -2254,8 +2255,8 @@ def test_restart_key_waits_through_connection_resets(tmp_path, monkeypatch):
 
 
 def test_restart_key_fails_when_the_new_key_never_authenticates(tmp_path, monkeypatch):
-    monkeypatch.setattr("credarr.executor.READINESS_TIMEOUT", 0.05)
-    monkeypatch.setattr("credarr.executor.READINESS_INTERVAL", 0.01)
+    monkeypatch.setattr("credarr.executor_steps.verify.READINESS_TIMEOUT", 0.05)
+    monkeypatch.setattr("credarr.executor_steps.verify.READINESS_INTERVAL", 0.01)
 
     state = FakeState()
     executor, _ = _executor(tmp_path, state)
@@ -2288,8 +2289,8 @@ def test_restart_key_proceeds_when_the_old_key_probe_is_inconclusive(tmp_path):
 
 
 def test_restart_key_fails_when_the_old_key_stays_live(tmp_path, monkeypatch):
-    monkeypatch.setattr("credarr.executor.READINESS_TIMEOUT", 0.05)
-    monkeypatch.setattr("credarr.executor.READINESS_INTERVAL", 0.01)
+    monkeypatch.setattr("credarr.executor_steps.verify.READINESS_TIMEOUT", 0.05)
+    monkeypatch.setattr("credarr.executor_steps.verify.READINESS_INTERVAL", 0.01)
 
     state = FakeState()
     executor, _ = _executor(tmp_path, state)
