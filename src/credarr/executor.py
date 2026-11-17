@@ -837,25 +837,3 @@ class Executor(MintSteps, PropagateSteps, VerifySteps, RecordSteps, RevokeSteps)
     # that makes the shape safe: never revoke before the replacement exists,
     # never call a revoke clean without an answered 401, and never guess which
     # row belongs to a credential.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
