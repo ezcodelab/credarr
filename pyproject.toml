@@ -120,8 +120,8 @@ ignore = [
 ]
 
 # The size ratchet. Ruff's defaults (complexity 10) flag the whole tree at
-# once; these thresholds were measured to leave exactly the two functions
-# exempted below. The numbers and the exemption are pinned by
+# once; these thresholds were measured to leave no function over them. The
+# numbers and the (empty) exemption map are pinned by
 # tests/packaging/test_lint_ratchet.py, so loosening either is a visible diff.
 [tool.ruff.lint.mccabe]
 max-complexity = 35

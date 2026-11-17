@@ -218,8 +218,8 @@ One row per `(attempt, ordinal)` in `steps`. A step is written as started
 3. A closed attempt accepts no new step and no new holder row.
 4. A step that a takeover marked abandoned is final; the old owner's finish
    cannot rewrite it.
-5. The failure detail is scrubbed before it is journaled (`executor_steps/propagate.py` failure
-   handler); no value, fingerprint, or token enters `outcome`.
+5. The failure detail is scrubbed before it is journaled (`executor.py`
+   failure handler); no value, fingerprint, or token enters `outcome`.
 6. A completed step is `outcome_state(...) is Outcome.COMPLETED`. A successful
    step stores its own description, so the absence of a keyword is not the
    absence of success — `outcome = ''` is a completion too.
