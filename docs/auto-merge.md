@@ -40,6 +40,14 @@ checks. The verifier adds policy, secret, and private-path checks.
 Require `auto-merge / verify` plus the PR CI checks on `main`; disable force
 pushes and branch deletion.
 
+## GitHub Actions policy
+
+GitHub's default policy blocks `pull_request_target` in public repositories from
+2026-12-02 unless an applicable Actions policy explicitly allows it. This
+repository has an active policy that allows only
+`.github/workflows/auto-merge.yml` to use `pull_request_target`. If the policy
+is removed or the workflow path changes, the gate will not run.
+
 ## Gitea mirror
 
 Gitea pulls GitHub `main` and tags read-only. It does not accept PRs and never

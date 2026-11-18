@@ -40,6 +40,9 @@ jobs:
           path: base
           fetch-depth: 0
 
+      # actions/checkout is pinned to v4.4.0. If upgrading, the fork merge ref
+      # requires allow-unsafe-pr-checkout: true; this tree is scanned as data,
+      # never executed.
       - name: Check out the PR merge ref
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -84,7 +87,7 @@ jobs:
     needs: verify
     if: needs.verify.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     permissions:
       contents: write
       pull-requests: write
