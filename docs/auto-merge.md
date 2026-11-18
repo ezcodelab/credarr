@@ -57,3 +57,7 @@ pushes back. See the harness mirror doc for the migration policy.
 
 Workflow, build, dependency, deploy, and gate changes are blocked from
 auto-merge. A gate change requires a manual reviewed merge.
+
+## First proof
+
+The GitHub gate was first exercised on 2026-11-17 with a docs-only PR.
