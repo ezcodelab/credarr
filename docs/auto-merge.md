@@ -56,7 +56,9 @@ pushes back. See the harness mirror doc for the migration policy.
 ## Protected paths
 
 Workflow, build, dependency, deploy, and gate changes are blocked from
-auto-merge. A gate change requires a manual reviewed merge.
+auto-merge. A gate change requires a manual reviewed merge. Repo admins can use
+the GitHub admin override for these changes after review; the auto-merge bot
+cannot.
 
 ## First proof
 

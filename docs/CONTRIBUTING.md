@@ -25,9 +25,11 @@
 
 ## Publishing
 
-GitHub is canonical; Gitea is a read-only pull mirror.
-`make publish` pushes `main` to GitHub, and `make release VERSION=x.y.z`
-builds and pushes the image first, then the code and the release tag.
+GitHub is canonical; Gitea is a read-only pull mirror. `origin` is GitHub and
+`gitea` is the read-only mirror. Run `git config core.hooksPath .githooks` once
+per clone; the pre-push hook rejects the mirror. `make publish` pushes `main` to
+GitHub, and `make release VERSION=x.y.z` builds and pushes the image first, then
+the code and the release tag.
 
 ```sh
 make publish

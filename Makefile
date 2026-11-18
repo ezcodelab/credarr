@@ -91,7 +91,7 @@ ship:  ## Build, push, pin and deploy (TAG= optional; a branch tags <branch>-<sh
 	scripts/deploy-gitea --deploy $(if $(TAG),--tag $(TAG),)
 
 publish:  ## Push main to GitHub (Gitea pulls it read-only)
-	git push github main
+	git push origin main
 
 release:  ## Build and push the image, then publish (VERSION=x.y.z)
 	@if [ -z "$(VERSION)" ]; then echo "usage: make release VERSION=1.2.3"; exit 2; fi
