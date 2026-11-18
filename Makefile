@@ -90,8 +90,7 @@ image:  ## Build the one image (needs Docker; the console is built inside it)
 ship:  ## Build, push, pin and deploy (TAG= optional; a branch tags <branch>-<sha>)
 	scripts/deploy-gitea --deploy $(if $(TAG),--tag $(TAG),)
 
-publish:  ## Push main to both remotes (Gitea and GitHub)
-	git push origin main
+publish:  ## Push main to GitHub (Gitea pulls it read-only)
 	git push github main
 
 release:  ## Build and push the image, then publish (VERSION=x.y.z)

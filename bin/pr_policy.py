@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Independent policy gate for trusted Gitea auto-merge.
+"""Independent policy gate for trusted Gitea or GitHub auto-merge.
 
-The auto-merge workflow runs this from the base branch with the built-in
-GITEA_TOKEN. It checks PR metadata, size, protected paths, and forbidden files.
-It never executes PR code and never prints the token.
+The auto-merge workflow runs this from the base branch with the platform token.
+It checks PR metadata, size, protected paths, and forbidden files. It never
+executes PR code and never prints the token.
 """
 
 # ruff: noqa: S310
@@ -29,11 +29,7 @@ PROTECTED_PREFIXES = (
     "SECURITY.md",
     "bin/check_spdx.py",
     "bin/docs_lint.py",
-    "bin/gitea_auth.py",
-    "bin/mirror_public.py",
-    "bin/pr_merge.py",
     "bin/pr_policy.py",
-    "bin/pr_status.py",
     "bin/pr_watch.py",
     "bin/scan_private.py",
     "bin/verify_pr.sh",
@@ -84,55 +80,80 @@ class PolicyError(RuntimeError):
     pass
 
 
-def api(path: str, token: str, api_url: str) -> object:
+def api(path: str, token: str, api_url: str, forge: str) -> object:
+    label = "GitHub" if forge == "github" else "Gitea"
+    auth = f"Bearer {token}" if forge == "github" else f"token {token}"
+    accept = (
+        "application/vnd.github+json"
+        if forge == "github"
+        else "application/json"
+    )
     request = urllib.request.Request(
         f"{api_url.rstrip('/')}{path}",
-        headers={
-            "Authorization": f"token {token}",
-            "Accept": "application/json",
-        },
+        headers={"Authorization": auth, "Accept": accept},
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
-        raise PolicyError(f"Gitea API {path}: HTTP {error.code}") from None
+        raise PolicyError(f"{label} API {path}: HTTP {error.code}") from None
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as error:
-        raise PolicyError(f"Gitea API {path}: {error}") from None
+        raise PolicyError(f"{label} API {path}: {error}") from None
 
 
 def pull_files(
-    repo: str, pr: int, token: str, api_url: str, limit: int
+    repo: str,
+    pr: int,
+    token: str,
+    api_url: str,
+    forge: str,
+    limit: int,
 ) -> list[object]:
     files = []
     page = 1
+    page_size = 100 if forge == "github" else PAGE_SIZE
     while len(files) <= limit:
+        if forge == "github":
+            query = f"?per_page={page_size}&page={page}"
+        else:
+            query = f"?limit={page_size}&page={page}"
         batch = api(
-            f"/repos/{repo}/pulls/{pr}/files?limit={PAGE_SIZE}&page={page}",
+            f"/repos/{repo}/pulls/{pr}/files{query}",
             token,
             api_url,
+            forge,
         )
         if not isinstance(batch, list):
             raise PolicyError("PR files response is not a list")
         files.extend(batch)
-        if len(batch) < PAGE_SIZE:
+        if len(batch) < page_size:
             break
         page += 1
     return files
 
 
-def pull_diff(repo: str, pr: int, token: str, api_url: str) -> str:
+def pull_diff(repo: str, pr: int, token: str, api_url: str, forge: str) -> str:
+    if forge == "github":
+        path = f"/repos/{repo}/pulls/{pr}"
+        accept = "application/vnd.github.v3.diff"
+        auth = f"Bearer {token}"
+        label = "GitHub"
+    else:
+        path = f"/repos/{repo}/pulls/{pr}.diff"
+        accept = "text/plain"
+        auth = f"token {token}"
+        label = "Gitea"
     request = urllib.request.Request(
-        f"{api_url.rstrip('/')}/repos/{repo}/pulls/{pr}.diff",
-        headers={"Authorization": f"token {token}", "Accept": "text/plain"},
+        f"{api_url.rstrip('/')}{path}",
+        headers={"Authorization": auth, "Accept": accept},
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return response.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as error:
-        raise PolicyError(f"Gitea API PR diff: HTTP {error.code}") from None
+        raise PolicyError(f"{label} API PR diff: HTTP {error.code}") from None
     except (urllib.error.URLError, OSError) as error:
-        raise PolicyError(f"Gitea API PR diff: {error}") from None
+        raise PolicyError(f"{label} API PR diff: {error}") from None
 
 
 def protected_path(filename: str) -> bool:
@@ -161,6 +182,7 @@ def evaluate(
     base: str,
     max_files: int,
     max_changes: int,
+    allow_forks: bool = False,
 ) -> tuple[list[str], dict]:
     errors = []
     if not isinstance(pr, dict):
@@ -184,8 +206,10 @@ def evaluate(
     head_repo = str(
         (((pr.get("head") or {}).get("repo") or {}).get("full_name")) or ""
     )
-    if head_repo != repo:
-        errors.append(f"PR head is {head_repo or 'unknown'}, expected {repo}")
+    if not head_repo:
+        errors.append("PR head has no repository")
+    elif not allow_forks and head_repo != repo:
+        errors.append(f"PR head is {head_repo}, expected {repo}")
 
     labels = {
         str(label.get("name"))
@@ -243,6 +267,7 @@ def evaluate(
         "repo": repo,
         "pr": pr.get("number"),
         "head": head_sha,
+        "head_repo": head_repo,
         "base": base_ref,
         "files": len(files),
         "changes": changes,
@@ -253,34 +278,56 @@ def evaluate(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--forge", choices=("gitea", "github"), default="gitea"
+    )
     parser.add_argument("--repo", required=True, help="OWNER/REPO")
     parser.add_argument("--pr", type=int, required=True)
     parser.add_argument("--head", required=True, help="expected head SHA")
     parser.add_argument("--base", default="main")
     parser.add_argument(
         "--api",
-        default=os.environ.get("GITEA_URL", ""),
-        help="Gitea API base; defaults to GITEA_URL",
+        default=None,
+        help="API base; defaults to GITEA_URL or GITHUB_API_URL",
     )
     parser.add_argument("--max-files", type=int, default=MAX_FILES)
     parser.add_argument("--max-changes", type=int, default=MAX_CHANGES)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    token = os.environ.get("GITEA_TOKEN", "")
+    if args.forge == "github":
+        auth_var = "GITHUB_TOKEN"
+        api_var = "GITHUB_API_URL"
+    else:
+        auth_var = "GITEA_TOKEN"
+        api_var = "GITEA_URL"
+    token = os.environ.get(auth_var, "")
+    api_url = args.api or os.environ.get(api_var, "")
     if not token:
-        print("pr_policy: GITEA_TOKEN is not set", file=sys.stderr)
+        print(f"pr_policy: {auth_var} is not set", file=sys.stderr)
         return 2
-    if not args.api:
-        print("pr_policy: GITEA_URL or --api is required", file=sys.stderr)
+    if not api_url:
+        print(f"pr_policy: {api_var} or --api is required", file=sys.stderr)
         return 2
 
     try:
-        pr = api(f"/repos/{args.repo}/pulls/{args.pr}", token, args.api)
-        files = pull_files(
-            args.repo, args.pr, token, args.api, args.max_files
+        pr = api(
+            f"/repos/{args.repo}/pulls/{args.pr}",
+            token,
+            api_url,
+            args.forge,
         )
-        diff = pull_diff(args.repo, args.pr, token, args.api)
+        files = pull_files(
+            args.repo,
+            args.pr,
+            token,
+            api_url,
+            args.forge,
+            args.max_files,
+        )
+        diff = pull_diff(
+            args.repo, args.pr, token, api_url, args.forge
+        )
         errors, summary = evaluate(
             pr,
             files,
@@ -290,13 +337,18 @@ def main() -> int:
             args.base,
             args.max_files,
             args.max_changes,
+            allow_forks=args.forge == "github",
         )
     except PolicyError as error:
         print(f"pr_policy: {error}", file=sys.stderr)
         return 2
 
     if args.json:
-        print(json.dumps({"ok": not errors, "errors": errors, **summary}, indent=2))
+        print(
+            json.dumps(
+                {"ok": not errors, "errors": errors, **summary}, indent=2
+            )
+        )
     elif errors:
         print("pr_policy: FAIL")
         for error in errors:

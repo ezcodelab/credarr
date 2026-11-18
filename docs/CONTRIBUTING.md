@@ -25,8 +25,8 @@
 
 ## Publishing
 
-Both remotes hold the same history: one root commit with the product tree.
-`make publish` pushes `main` to Gitea and GitHub, and `make release VERSION=x.y.z`
+GitHub is canonical; Gitea is a read-only pull mirror.
+`make publish` pushes `main` to GitHub, and `make release VERSION=x.y.z`
 builds and pushes the image first, then the code and the release tag.
 
 ```sh

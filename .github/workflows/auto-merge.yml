@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: MIT
+name: auto-merge
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - edited
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: auto-merge / verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      HEAD: ${{ github.event.pull_request.head.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - name: Check out the trusted base
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          fetch-depth: 0
+
+      - name: Check out the PR merge ref
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.repository }}
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          path: pr
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          version=8.30.1
+          curl -fsSLo /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+
+      - name: Reject symlinks and submodules
+        run: |
+          set -euo pipefail
+          if git -C pr diff --summary "$BASE_SHA...$HEAD" | grep -Eq '120000|160000'; then
+            echo "symlinks and submodules are not allowed in auto-merged PRs"
+            exit 1
+          fi
+
+      - name: Policy and repository checks
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_API_URL: ${{ github.api_url }}
+        run: |
+          set -euo pipefail
+          python3 base/bin/pr_policy.py --forge github --repo "$REPO" --pr "$PR" --head "$HEAD" --base main
+          if [ -x base/bin/verify_pr.sh ]; then
+            BASE_ROOT=base PR_ROOT=pr base/bin/verify_pr.sh
+          else
+            echo "no repo-specific verifier; generic checks only"
+          fi
+          /tmp/gitleaks detect --source pr --config base/.gitleaks.toml --redact --verbose
+          git -C pr diff --check "$BASE_SHA...$HEAD"
+
+  merge:
+    name: auto-merge / merge
+    needs: verify
+    if: needs.verify.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Wait for required checks
+        run: gh pr checks "$PR" --watch --required --interval 20
+
+      - name: Merge the exact verified head
+        run: gh pr merge "$PR" --merge --match-head-commit "$HEAD"
