@@ -3,7 +3,7 @@
 # tag in homelab-applications, and deploy the stack through Arcane.
 #
 #   scripts/deploy-gitea                # build and push the image only
-#   scripts/deploy-gitea --deploy       # also bump the compose pin and deploy
+#   scripts/deploy-gitea --deploy       # also pin (AGit PR) and deploy
 #   scripts/deploy-gitea --tag NAME     # use NAME instead of the short SHA
 #   scripts/deploy-gitea --dry-run      # print what would run
 #
@@ -11,6 +11,13 @@
 # other branch, so a branch deployment is identifiable and cannot be mistaken
 # for a main build. Only main moves :latest. A dirty tree is refused: an image
 # that cannot be traced to a commit cannot be rebuilt or reviewed later.
+#
+# `homelab-applications` main is protected, so the pin travels as a pull
+# request: the commit goes in with AGit (refs/for/main plus a topic), never as
+# a push to main. With GITEA_TOKEN in the environment the script merges that PR
+# and waits for its checks; without it the PR is opened and the deploy stops,
+# so a second run after the merge finishes the job. The token is
+# operator-supplied and never enters argv or the log.
 #
 # This machine must already be logged in to git.ezcloud.casa for `docker push`.
 # The Gitea package is public, so Arcane pulls it without a registry credential.
@@ -20,6 +27,10 @@ root=$(git rev-parse --show-toplevel)
 apps=${APPS_REPO:-$(dirname "$root")/homelab-applications}
 registry=git.ezcloud.casa/admin/credarr
 compose=$apps/compose/credarr/compose.yaml
+gitea_url=${GITEA_URL:-https://git.ezcloud.casa}
+gitea_url=${gitea_url%/}
+apps_slug=admin/homelab-applications
+merge_timeout=${MERGE_TIMEOUT:-900}
 tag=""
 deploy=0
 dry_run=0
@@ -63,6 +74,14 @@ if [ "$deploy" = 1 ]; then
         echo "error: $apps is on '$apps_branch', not main; GitOps deploys main" >&2
         exit 1
     fi
+    # The deploy reads this tree (compose and registry) for its env check, so
+    # unrelated local changes would validate a different stack than Arcane
+    # syncs.
+    if [ -n "$(git -C "$apps" status --porcelain)" ]; then
+        echo "error: $apps has uncommitted changes; commit or stash them first" >&2
+        git -C "$apps" status --short >&2
+        exit 1
+    fi
 fi
 
 echo "source: $(git rev-parse HEAD)"
@@ -78,8 +97,16 @@ if [ "$dry_run" = 1 ]; then
         echo "  would run: docker push $image (no :latest from a branch)"
     fi
     if [ "$deploy" = 1 ]; then
-        echo "  would set $compose to $image"
-        echo "  would commit and push $apps main"
+        echo "  would fetch $apps origin main and check whether it already pins $tag"
+        echo "  if origin/main does not already pin it, would set $compose to $image"
+        echo "    and push it as an AGit pull request (refs/for/main, topic"
+        echo "    credarr-deploy-$tag); main is protected"
+        if [ -n "${GITEA_TOKEN:-}" ]; then
+            echo "  would merge that PR through $gitea_url and wait $merge_timeout s for checks"
+        else
+            echo "  without GITEA_TOKEN it would open the PR and deploy nothing;"
+            echo "    a second run after the merge finishes the deploy"
+        fi
         echo "  would run: make -C $apps deploy SERVICES=credarr"
     fi
     exit 0
@@ -100,7 +127,38 @@ if [ "$deploy" = 0 ]; then
     exit 0
 fi
 
-python3 - "$compose" "$image" <<'PY'
+# Fetch before deciding, and compare origin/main rather than the local file:
+# an interrupted run can leave a pin commit that was never merged, and a local
+# comparison against it is how a ship once reported success while Arcane kept
+# the old image.
+git -C "$apps" fetch --quiet origin main
+ahead=$(git -C "$apps" rev-list --count origin/main..HEAD)
+if [ "$ahead" != 0 ]; then
+    echo "error: $apps main has $ahead commit(s) that origin/main does not have." >&2
+    echo "       Bring it back to origin/main first (a stale pin commit is the usual cause)." >&2
+    exit 1
+fi
+# Fast-forward only when there is nothing local to lose: the operator may have
+# merged the pin PR between runs, and refusing on "behind" would make the
+# second half of the two-run flow a manual step.
+git -C "$apps" merge --ff-only --quiet origin/main
+
+pinned=$(git -C "$apps" show origin/main:compose/credarr/compose.yaml \
+    | sed -n 's/^[[:space:]]*image:[[:space:]]*//p' | head -1)
+
+if [ "$pinned" = "$image" ]; then
+    echo "origin/main already pins $tag"
+else
+    # Commit in a throwaway worktree. The operator's checkout keeps its branch
+    # and nothing has to be reset, so an interrupted run cannot leave a local
+    # pin commit that later reads as real work.
+    pin=$(mktemp -d "${TMPDIR:-/tmp}/credarr-pin.XXXXXX")
+    # No --force: a clean worktree is removed, and anything unexpected is left
+    # where the operator can see it instead of being deleted.
+    trap 'git -C "$apps" worktree remove "$pin" >/dev/null 2>&1 || rmdir "$pin" 2>/dev/null || echo "note: left the pin worktree at $pin" >&2' EXIT
+    git -C "$apps" worktree add --quiet --detach "$pin" origin/main
+
+    python3 - "$pin/compose/credarr/compose.yaml" "$image" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -113,16 +171,101 @@ if count != 1:
 path.write_text(updated)
 PY
 
-if git -C "$apps" diff --quiet -- compose/credarr/compose.yaml; then
-    echo "compose already pins $tag"
-else
-    git -C "$apps" add compose/credarr/compose.yaml
-    git -C "$apps" commit -m "credarr: deploy $tag" -- compose/credarr/compose.yaml
-fi
+    git -C "$pin" add compose/credarr/compose.yaml
+    git -C "$pin" commit -m "credarr: deploy $tag" -- compose/credarr/compose.yaml >/dev/null
+    sha=$(git -C "$pin" rev-parse HEAD)
+    topic="credarr-deploy-$tag"
 
-# Push unconditionally. An interrupted earlier run can leave the pin committed
-# locally and unpushed; skipping the push then made every later step report
-# success while Arcane kept deploying the old image.
-git -C "$apps" push origin main
+    echo "opening the pin PR (AGit refs/for/main, topic $topic)"
+    set +e
+    out=$(git -C "$pin" push origin HEAD:refs/for/main -o "topic=$topic" 2>&1)
+    rc=$?
+    set -e
+    printf '%s\n' "$out"
+    pr=$(printf '%s\n' "$out" | grep -oE 'https?://[^ ]+/pulls/[0-9]+' | head -1)
+
+    if [ "$rc" != 0 ] || [ -z "$pr" ]; then
+        echo "error: could not open the pin PR; the throwaway commit is discarded" >&2
+        exit 1
+    fi
+    echo "pin PR: $pr"
+
+    if [ -z "${GITEA_TOKEN:-}" ]; then
+        echo "main is protected, so the pin waits for a merge." >&2
+        echo "merge $pr, then run this again (make ship) to deploy." >&2
+        exit 1
+    fi
+
+    number=${pr##*/}
+    if ! GITEA_TOKEN=$GITEA_TOKEN python3 - \
+        "$gitea_url/api/v1/repos/$apps_slug/pulls/$number" "$sha" "$merge_timeout" <<'PY'
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+
+api, head, timeout = sys.argv[1], sys.argv[2], int(sys.argv[3])
+token = os.environ["GITEA_TOKEN"]
+
+
+def call(method, url, payload=None):
+    data = None if payload is None else json.dumps(payload).encode()
+    request = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": "token " + token,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, json.load(response)
+    except urllib.error.HTTPError as error:
+        return error.code, error.read(400).decode("utf-8", "replace")
+
+
+status, body = call("POST", api + "/merge", {
+    "Do": "merge",
+    "merge_when_checks_succeed": True,
+    "head_commit_id": head,
+})
+if status not in (200, 201, 202):
+    print(f"error: merge request failed: HTTP {status} {body}", file=sys.stderr)
+    raise SystemExit(1)
+
+deadline = time.time() + timeout
+while time.time() < deadline:
+    status, pull = call("GET", api)
+    if status in (401, 403, 404):
+        print(f"error: cannot read the pull request: HTTP {status} {pull}", file=sys.stderr)
+        raise SystemExit(1)
+    if status == 200 and isinstance(pull, dict):
+        if pull.get("merged"):
+            print(f"merged {pull.get('html_url') or api}")
+            break
+        if pull.get("state") == "closed":
+            print("error: the pull request closed without merging", file=sys.stderr)
+            raise SystemExit(1)
+    time.sleep(5)
+else:
+    print(f"error: not merged after {timeout}s; merge the PR by hand and re-run",
+          file=sys.stderr)
+    raise SystemExit(1)
+PY
+    then
+        echo "error: the pin PR was not merged; the throwaway commit is discarded" >&2
+        exit 1
+    fi
+
+    # main equalled origin/main before the PR, so the merge only moves it
+    # forward; a rebase or squash merge still fast-forwards.
+    git -C "$apps" fetch --quiet origin main
+    git -C "$apps" merge --ff-only --quiet origin/main
+fi
 
 make -C "$apps" deploy SERVICES=credarr

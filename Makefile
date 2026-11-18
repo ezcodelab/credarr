@@ -87,7 +87,7 @@ wheel: web  ## Build the wheel with the console inside (the image's input)
 image:  ## Build the one image (needs Docker; the console is built inside it)
 	docker build -t credarr:dev .
 
-ship:  ## Build, push, pin and deploy (TAG= optional; a branch tags <branch>-<sha>)
+ship:  ## Build, push, pin via PR and deploy (TAG= optional; a branch tags <branch>-<sha>)
 	scripts/deploy-gitea --deploy $(if $(TAG),--tag $(TAG),)
 
 publish:  ## Push main to GitHub (Gitea pulls it read-only)
