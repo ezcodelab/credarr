@@ -17,6 +17,7 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import ClassVar
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "deploy-gitea"
 TEXT = SCRIPT.read_text(encoding="utf-8")
@@ -47,7 +48,7 @@ def test_merge_token_is_operator_supplied():
 
 
 class FakeGitea(BaseHTTPRequestHandler):
-    state = {}
+    state: ClassVar[dict] = {}
 
     def log_message(self, *args):
         pass
