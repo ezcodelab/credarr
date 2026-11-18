@@ -184,8 +184,14 @@ PY
     printf '%s\n' "$out"
     pr=$(printf '%s\n' "$out" | grep -oE 'https?://[^ ]+/pulls/[0-9]+' | head -1)
 
-    if [ "$rc" != 0 ] || [ -z "$pr" ]; then
-        echo "error: could not open the pin PR; the throwaway commit is discarded" >&2
+    if [ "$rc" != 0 ]; then
+        echo "error: the AGit push failed; the throwaway commit is discarded" >&2
+        exit 1
+    fi
+    if [ -z "$pr" ]; then
+        echo "error: the AGit push created no readable PR URL." >&2
+        echo "       Gitea prints one only when PULL_REQUEST_PUSH_MESSAGE is on;" >&2
+        echo "       the throwaway commit is discarded." >&2
         exit 1
     fi
     echo "pin PR: $pr"
@@ -224,9 +230,19 @@ def call(method, url, payload=None):
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            return response.status, json.load(response)
+            status = response.status
+            raw = response.read()
     except urllib.error.HTTPError as error:
         return error.code, error.read(400).decode("utf-8", "replace")
+    # Gitea answers a successful merge with an empty body (200 merged, 201
+    # scheduled), so only the status code is meaningful there; the poll below
+    # is what reads JSON.
+    if not raw.strip():
+        return status, None
+    try:
+        return status, json.loads(raw)
+    except json.JSONDecodeError:
+        return status, raw.decode("utf-8", "replace")
 
 
 status, body = call("POST", api + "/merge", {
