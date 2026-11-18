@@ -124,7 +124,7 @@ def test_empty_201_scheduled_body_polls_until_merged(tmp_path):
     assert FakeGitea.state["polls"] >= 2
 
 
-def test_failed_merge_request_reports_the_body(tmp_path):
+def test_failed_merge_request_stops(tmp_path):
     result = run_helper(tmp_path, merge_status=405)
     assert result.returncode == 1
     assert "HTTP 405" in result.stderr
