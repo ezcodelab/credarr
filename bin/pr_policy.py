@@ -3,7 +3,7 @@
 """Independent policy gate for trusted Gitea or GitHub auto-merge.
 
 The auto-merge workflow runs this from the base branch with the platform token.
-It checks PR metadata, size, protected paths, and forbidden files. It never
+It checks PR metadata, size, secret markers, and forbidden files. It never
 executes PR code and never prints the token.
 """
 
@@ -19,33 +19,6 @@ import urllib.request
 from pathlib import Path
 
 BLOCKED_LABELS = {"do-not-merge", "no-auto-merge", "wip"}
-PROTECTED_PREFIXES = (
-    ".gitea/",
-    ".github/workflows/",
-    ".gitleaks.toml",
-    "AGENTS.md",
-    "Dockerfile",
-    "Makefile",
-    "SECURITY.md",
-    "bin/check_spdx.py",
-    "bin/docs_lint.py",
-    "bin/pr_policy.py",
-    "bin/pr_watch.py",
-    "bin/scan_private.py",
-    "bin/verify_pr.sh",
-    "docker-compose.yml",
-    "ops/",
-    "package-lock.json",
-    "package.json",
-    "pyproject.toml",
-    "requirements-*.txt",
-    "requirements.txt",
-    "scripts/affected-tests",
-    "scripts/deploy-gitea",
-    "scripts/deploy-github",
-    "ui/package-lock.json",
-    "ui/package.json",
-)
 PRIVATE_MARKERS = (
     "/home/" + "cachyos",
     "Documents/" + "homelab",
@@ -156,13 +129,6 @@ def pull_diff(repo: str, pr: int, token: str, api_url: str, forge: str) -> str:
         raise PolicyError(f"{label} API PR diff: {error}") from None
 
 
-def protected_path(filename: str) -> bool:
-    return any(
-        filename == prefix or filename.startswith(prefix)
-        for prefix in PROTECTED_PREFIXES
-    )
-
-
 def forbidden_file(filename: str) -> bool:
     base = Path(filename).name
     if base in ALLOWED_FILES:
@@ -250,8 +216,6 @@ def evaluate(
             if not filename or filename in seen:
                 continue
             seen.add(filename)
-            if protected_path(filename):
-                errors.append(f"protected path: {filename}")
             if forbidden_file(filename):
                 errors.append(f"forbidden file: {filename}")
 

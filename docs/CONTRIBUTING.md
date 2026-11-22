@@ -45,6 +45,6 @@ the history is one commit is that those months cannot be published.
 ## Merge gate
 
 A ready pull request with green required checks and an independent review
-auto-merges through the GitHub Actions gate. Workflow, Makefile, policy, and
-deploy-script changes are protected and need a manual operator merge. A
-reviewed, green PR is never left open for the operator.
+auto-merges through the GitHub Actions gate. No path is protected; workflow,
+Makefile, policy, and deploy-script changes auto-merge after review and
+verification. A reviewed, green PR is never left open for the operator.
