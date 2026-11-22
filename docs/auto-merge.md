@@ -14,7 +14,7 @@ needed. Draft PRs are ignored.
 ## Gate
 
 `.github/workflows/auto-merge.yml` on `main` uses `pull_request_target`, so the
-workflow comes from the protected base branch.
+workflow comes from the trusted base branch.
 
 - `verify` is read-only. It checks out the trusted base and the PR merge ref,
   runs `bin/pr_policy.py --forge github`, `bin/verify_pr.sh`, gitleaks, and
@@ -27,8 +27,8 @@ workflow comes from the protected base branch.
 
 ## Consumer scripts
 
-- `bin/pr_policy.py --forge github` checks PR metadata, size, protected paths,
-  secret markers, and fork/size rules.
+- `bin/pr_policy.py --forge github` checks PR metadata, size, secret markers,
+  and fork/size rules.
 - `bin/scan_private.py` checks the PR tree for private paths and token shapes.
 - `bin/verify_pr.sh` runs the private-path scan and compiles the gate scripts.
 
@@ -53,12 +53,11 @@ is removed or the workflow path changes, the gate will not run.
 Gitea pulls GitHub `main` and tags read-only. It does not accept PRs and never
 pushes back. See the harness mirror doc for the migration policy.
 
-## Protected paths
+## No protected paths
 
-Workflow, build, dependency, deploy, and gate changes are blocked from
-auto-merge. A gate change requires a manual reviewed merge. Repo admins can use
-the GitHub admin override for these changes after review; the auto-merge bot
-cannot.
+No path is protected. A ready PR with green required checks and a recorded
+verdict auto-merges. Irreversible actions still need the operator: production
+deploy, data deletion, force-push, or live secret rotation.
 
 ## First proof
 
