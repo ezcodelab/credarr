@@ -63,15 +63,10 @@ async function until(predicate, what, timeout = 30000) {
   throw new Error(`FAILED: timed out waiting for ${what}`);
 }
 
-// Soft-delete then purge is the product's two-step removal. The confirmation
-// name is typed, and the purge checkbox is an explicit second assertion.
-async function purgeApp(page, name) {
-  await page.getByLabel("Type the credential name to soft-delete").fill(name);
-  await page.getByRole("button", { name: "Soft-delete this key" }).click();
-  await page.getByRole("button", { name: "Purge permanently" }).waitFor();
-  await page.getByLabel("Type the credential name to purge").fill(name);
-  await page.getByLabel("I understand this purge is permanent").check();
-  await page.getByRole("button", { name: "Purge permanently" }).click();
+// Delete removes the Credarr record; it never touches the live service.
+async function deleteApp(page) {
+  await page.getByRole("button", { name: "Delete this app key" }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
 }
 
 // Automated WCAG A/AA checks. Axe catches contrast, names, roles and other
@@ -772,15 +767,9 @@ async function main() {
       (await page.getByLabel("API key").getAttribute("placeholder")) === "••••••••••••••••",
     );
 
-    // Reveal is the one audited path that returns a value. It must be explicit,
-    // visible only in the dialog, and cleared after its TTL.
+    // Reveal is the one audited path that returns a value. One press shows it;
+    // it clears itself after the TTL.
     await page.getByRole("button", { name: "Reveal", exact: true }).click();
-    check(
-      "reveal is explicit and requires the audit acknowledgment",
-      await page.getByLabel("I understand this is audited").isVisible(),
-    );
-    await page.getByLabel("I understand this is audited").check();
-    await page.getByRole("button", { name: "Reveal value", exact: true }).click();
     await page.getByLabel("Revealed credential value").waitFor();
     check(
       "the reveal shows the stored value once",
@@ -1287,7 +1276,7 @@ async function main() {
     await openMenu("Apps");
     await page.locator("aside .nav-sub button").filter({ hasText: /UI Password/ }).click();
     await page.getByRole("heading", { name: "Sonarr UI Password" }).waitFor();
-    await purgeApp(page, "sonarr_ui_password");
+    await deleteApp(page);
     await page.getByRole("heading", { name: "Sonarr API Key", exact: true }).waitFor();
     check("the stored password is removed again", true);
     await page.getByText("Backup & restore isn't available.").waitFor();
@@ -2045,10 +2034,10 @@ async function main() {
     await page.locator(".app-card h3", { hasText: "UI Created Key" }).click();
     await page.getByRole("heading", { name: "UI Created Key", exact: true }).waitFor();
 
-    await purgeApp(page, "ui_created_key");
+    await deleteApp(page);
     await page.getByRole("heading", { name: "Sonarr API Key", exact: true }).waitFor();
     check(
-      "an app key can be soft-deleted and purged after confirmation",
+      "an app key can be deleted after confirmation",
       (await page.getByText("UI Created Key").count()) === 0,
     );
 

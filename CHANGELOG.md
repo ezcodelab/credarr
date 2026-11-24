@@ -1,6 +1,14 @@
 # Changelog
 
-### 1.3.1 — 2026-11-24
+#### 1.3.2 — 2026-11-24
+
+- Reveal is one press and an inline value beside the button; no dialog, stage
+  picker or audit checkbox. The audit and the 30-second auto-clear remain.
+- The soft-delete/recover/purge UI is gone. The visible action is Delete, which
+  removes the Credarr record and stored copy only; the live service secret is
+  untouched. The lifecycle API remains available for callers that need it.
+
+# 1.3.1 — 2026-11-24
 
 Fix the first-boot migration and tighten the two new console surfaces.
 

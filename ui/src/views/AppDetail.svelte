@@ -13,7 +13,7 @@
   import EmptyState from "../lib/EmptyState.svelte";
   import HoldersTable from "../lib/HoldersTable.svelte";
   import KeyTile from "../lib/KeyTile.svelte";
-  import LifecyclePanel from "../lib/LifecyclePanel.svelte";
+  import DeleteCredential from "../lib/DeleteCredential.svelte";
   import PageHeader from "../lib/PageHeader.svelte";
   import RecoveryBanner from "../lib/RecoveryBanner.svelte";
   import RevealButton from "../lib/RevealButton.svelte";
@@ -1214,5 +1214,5 @@
     />
   {/if}
 
-  <LifecyclePanel name={row.name} {onrefresh} {onsignout} />
+  <DeleteCredential name={row.name} {onrefresh} {onsignout} />
 {/if}
