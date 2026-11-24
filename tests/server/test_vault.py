@@ -183,6 +183,15 @@ def test_the_strategy_view_does_not_claim_a_blocked_plan_is_rotatable(
     assert document["blockers"]
 
 
+def test_a_missing_kek_is_a_503_sentence_not_a_bare_500(app, tmp_path) -> None:
+    (tmp_path / "kek.json").unlink()
+    with TestClient(make_server(app, tmp_path)) as client:
+        setup_admin(client)
+        response = client.post("/api/v1/credentials/sonarr_api_key/plan")
+    assert response.status_code == 503
+    assert "KEK" in response.json()["detail"]
+
+
 def test_a_second_reveal_is_rate_limited(app, tmp_path) -> None:
     with TestClient(make_server(app, tmp_path)) as client:
         setup_admin(client)

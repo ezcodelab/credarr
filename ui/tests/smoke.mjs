@@ -777,9 +777,9 @@ async function main() {
     await page.getByRole("button", { name: "Reveal", exact: true }).click();
     check(
       "reveal is explicit and requires the audit acknowledgment",
-      await page.getByLabel("I understand this reveal will be audited").isVisible(),
+      await page.getByLabel("I understand this is audited").isVisible(),
     );
-    await page.getByLabel("I understand this reveal will be audited").check();
+    await page.getByLabel("I understand this is audited").check();
     await page.getByRole("button", { name: "Reveal value", exact: true }).click();
     await page.getByLabel("Revealed credential value").waitFor();
     check(

@@ -78,10 +78,16 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
             raise HTTPException(
                 status_code=404, detail=f"no credential named {name}"
             ) from None
-        service_keys = stored_service_keys(store, manifest)
+        try:
+            service_keys = stored_service_keys(store, manifest)
+        except KekUnavailable as exc:
+            raise HTTPException(status_code=503, detail=exc.render()) from None
         effective = runtime_config(config, store)
         credential, host, plan = facade.plan_rotation_for(effective, manifest, name)
-        mint_values = stored_mint_values(store, manifest, credential)
+        try:
+            mint_values = stored_mint_values(store, manifest, credential)
+        except KekUnavailable as exc:
+            raise HTTPException(status_code=503, detail=exc.render()) from None
         if plan.blocked_by:
             return (credential, host, plan, [], ExitCode.REFUSED, service_keys,
                     mint_values)

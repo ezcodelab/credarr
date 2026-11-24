@@ -141,6 +141,27 @@ def test_the_live_manifest_survives_the_store(tmp_path: Path) -> None:
     assert parse(store.export_text(), origin=LIVE) == original
 
 
+def test_a_legacy_plaintext_database_bootstraps_a_kek_on_first_migration(
+    tmp_path: Path,
+) -> None:
+    """A pre-vault database has plaintext values and no KEK; that is not key loss."""
+    store = TopologyStore(tmp_path / "app.db")
+    store.import_manifest(manifest_file(tmp_path, FULL), REGISTRY)
+    with sqlite3.connect(tmp_path / "app.db") as connection:
+        connection.execute("DELETE FROM secret_versions")
+        connection.execute("DELETE FROM store_meta WHERE key = 'vault_initialised'")
+        connection.execute(
+            "INSERT INTO working_copies (credential, value, updated_at) "
+            "VALUES ('sonarr_api_key', 'legacy-value', 1.0)"
+        )
+    (tmp_path / "kek.json").unlink()
+    reopened = TopologyStore(tmp_path / "app.db")
+    assert (tmp_path / "kek.json").is_file()
+    assert reopened.get_value("sonarr_api_key").reveal() == "legacy-value"
+    with sqlite3.connect(tmp_path / "app.db") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM working_copies").fetchone()[0] == 0
+
+
 def test_a_working_copy_survives_a_re_import(tmp_path: Path) -> None:
     """Re-importing an edited file is routine; the values the app holds are
     the part nothing can regenerate, so the replace-all must not take them."""

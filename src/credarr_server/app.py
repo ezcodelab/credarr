@@ -56,7 +56,7 @@ from credarr_server.scheduler import (
 )
 from credarr_server.store import TopologyStore
 from credarr_server.sync_store import SyncLoop, SyncStore
-from credarr_server.vault import VaultMaintenanceLoop, VaultTree
+from credarr_server.vault import KekUnavailable, VaultError, VaultMaintenanceLoop, VaultTree
 
 # The console binds every interface on purpose: it exists to be reached over
 # the LAN, and the container publishes a single port. `--host` narrows it.
@@ -431,6 +431,14 @@ def create_app(settings: ServerSettings) -> FastAPI:
     ) -> JSONResponse:
         """Answer a bad request without echoing the rejected value."""
         return JSONResponse(status_code=422, content={"detail": _validation_details(exc)})
+
+    @app.exception_handler(VaultError)
+    async def vault_error(_request: Request, exc: VaultError) -> JSONResponse:
+        """Expected value-store refusals are a sentence, not a bare 500."""
+        return JSONResponse(
+            status_code=503 if isinstance(exc, KekUnavailable) else 409,
+            content={"detail": exc.render()},
+        )
 
     app.state.settings = settings
     app.state.store = store

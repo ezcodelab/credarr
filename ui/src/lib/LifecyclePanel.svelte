@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, ApiError, errorText, timestamp } from "./api.js";
   import Banner from "./Banner.svelte";
+  import StatusPill from "./StatusPill.svelte";
 
   let { name, onrefresh = null, onsignout = null } = $props();
 
@@ -63,20 +64,25 @@
 <section class="card section" id="danger">
   <div class="section-head">
     <div>
-      <h3>Lifecycle</h3>
-      <p class="muted">Soft delete is recoverable. Purge is not.</p>
+      <h3>Delete or recover</h3>
+      <p class="muted">
+        Soft delete keeps the encrypted value for the recovery window. Purge is
+        permanent and removes it from Credarr. The live service is not changed.
+      </p>
     </div>
   </div>
   {#if error}<Banner tone="danger">{error}</Banner>{/if}
   {#if message}<Banner tone="ok">{message}</Banner>{/if}
   {#if loading}
-    <p class="muted">Reading lifecycle…</p>
+    <p class="muted">Reading recovery state…</p>
   {:else if state?.lifecycle}
-    <p>
-      Soft-deleted {timestamp(state.lifecycle.deleted_at)}. Recovery window ends
-      {timestamp(state.lifecycle.purge_after)}. Reveal, rotate, adopt and sync
-      are refused until it is restored.
-    </p>
+    <div class="toolbar">
+      <StatusPill status="unverifiable" label="soft-deleted" />
+      <span class="muted">
+        Recovery ends {timestamp(state.lifecycle.purge_after)}. Reveal, rotate,
+        adopt and sync are refused until restored.
+      </span>
+    </div>
     <label class="field">
       Type the credential name to purge
       <input bind:value={confirm} autocomplete="off" spellcheck="false" />
@@ -98,16 +104,17 @@
       </button>
     </div>
   {:else}
-    <p class="muted">
-      A soft delete keeps the ciphertext for the recovery window, then the
-      maintenance sweep purges it. The live service is never changed.
-    </p>
     <label class="field">
       Type the credential name to soft-delete
       <input bind:value={confirm} autocomplete="off" spellcheck="false" />
     </label>
     <div class="toolbar">
-      <button class="danger" type="button" onclick={() => act("soft_delete")} disabled={busy || confirm.trim() !== name}>
+      <button
+        class="danger"
+        type="button"
+        onclick={() => act("soft_delete")}
+        disabled={busy || confirm.trim() !== name}
+      >
         Soft-delete this key
       </button>
     </div>

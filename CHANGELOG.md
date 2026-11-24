@@ -1,6 +1,20 @@
 # Changelog
 
-## 1.3.0 — 2026-11-23
+### 1.3.1 — 2026-11-24
+
+Fix the first-boot migration and tighten the two new console surfaces.
+
+- A legacy database with plaintext `working_copies` and no KEK now bootstraps
+  the key and migrates on first start. A database that already holds encrypted
+  versions but has lost its KEK still fails closed.
+- Expected value-store refusals answer 503/409 with a sentence, never a bare
+  500; the rotation plan paths map `KekUnavailable` explicitly.
+- Reveal is a compact anchored panel, not a full-screen dialog: short audit
+  acknowledgment, one stage selector, value + copy/hide, 30-second clear.
+- The lifecycle section is now "Delete or recover" with the same card, muted
+  copy, field and toolbar pattern as the rest of the app detail.
+
+# 1.3.0 — 2026-11-23
 
 The next-generation value lifecycle: an encrypted version store, audited Reveal,
 soft delete, adoption, durable sync jobs and an mTLS deploy agent.
