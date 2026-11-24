@@ -19,6 +19,7 @@ import contextlib
 import math
 import os
 import sqlite3
+import ssl
 import sys
 import threading
 import urllib.parse
@@ -39,6 +40,7 @@ from credarr.instance import DEFAULT_CONFIG_DIR, InstanceLock
 from credarr.redact import disable_core_dumps
 from credarr.targets import build_registry
 from credarr_server import auto_rotation, mounts
+from credarr_server.agent_control import AgentControlPlane
 from credarr_server.api import mount_api
 from credarr_server.api.context import ApiContext
 from credarr_server.api.http import _validation_details
@@ -87,6 +89,14 @@ class ServerSettings:
     # would be no value source an agent could use.
     vault_tree: Path | None = None
     vault_tree_key: Path | None = None
+    # The agent control plane. Zero disables the listener; a negative or
+    # out-of-range value is a configuration error at parse time.
+    agent_port: int = 0
+    agent_bind: str | None = None
+    # The DNS name or IP an agent will put in its --server URL. It is added to
+    # the listener certificate's SAN list; without it a remote agent cannot
+    # verify the self-signed listener.
+    agent_hostname: str | None = None
     # The zone the console renders timestamps in. It comes from TZ, the same
     # variable the container uses for its clock; an invalid value falls back to
     # UTC rather than letting Intl throw in the browser.
@@ -521,6 +531,21 @@ def _parser() -> argparse.ArgumentParser:
         help="seconds between audits (env CREDARR_AUDIT_INTERVAL, default 3600)",
     )
     parser.add_argument(
+        "--agent-port", type=int,
+        default=int(os.environ.get("CREDARR_AGENT_PORT", "8443")),
+        help="mTLS agent listener port; 0 disables it (env CREDARR_AGENT_PORT, "
+        "default 8443)",
+    )
+    parser.add_argument(
+        "--agent-bind", default=os.environ.get("CREDARR_AGENT_BIND", DEFAULT_HOST),
+        help="address for the mTLS agent listener (env CREDARR_AGENT_BIND)",
+    )
+    parser.add_argument(
+        "--agent-hostname", default=os.environ.get("CREDARR_AGENT_HOSTNAME") or None,
+        help="name or IP an agent uses to reach the listener; added to its "
+        "certificate SANs (env CREDARR_AGENT_HOSTNAME)",
+    )
+    parser.add_argument(
         "--secure-cookies", action="store_true",
         help="set the Secure cookie flag: use when serving over HTTPS",
     )
@@ -606,6 +631,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.json and not args.once:
         parser.error("--json is only for --once")
+    if not 0 <= args.agent_port <= 65535:
+        parser.error("--agent-port must be 0 (disabled) or a TCP port")
     if os.environ.get("CREDARR_RESTART_URL"):
         print(
             "error: CREDARR_RESTART_URL is gone; credarr now asks each service "
@@ -644,6 +671,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             if os.environ.get("CREDARR_VAULT_TREE_KEY")
             else None
         ),
+        agent_port=args.agent_port,
+        agent_bind=args.agent_bind,
+        agent_hostname=args.agent_hostname,
         timezone=_configured_timezone(),
     )
     try:
@@ -656,6 +686,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             app = create_app(settings)
             import uvicorn
 
+            plane: AgentControlPlane | None = None
+            if settings.agent_port:
+                plane = AgentControlPlane(
+                    app.state.sync,
+                    settings.config_dir,
+                    host=settings.agent_bind or settings.host,
+                    port=settings.agent_port,
+                    hostname=settings.agent_hostname,
+                )
+                try:
+                    plane.start()
+                except (OSError, ssl.SSLError, ValueError) as exc:
+                    print(
+                        f"warning: the agent listener did not start on "
+                        f"{settings.agent_bind or settings.host}:{settings.agent_port}: {exc}",
+                        file=sys.stderr,
+                    )
+                    plane = None
+                app.state.agent_plane = plane
+                app.state.api_context.agent_plane = plane
             try:
                 uvicorn.run(app, host=settings.host, port=settings.port)
             except OSError as exc:
@@ -663,6 +713,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 # report it as such instead of the setup handler below.
                 print(f"error: the server could not run: {exc}", file=sys.stderr)
                 return int(ExitCode.CONFIG)
+            finally:
+                if plane is not None:
+                    plane.stop()
         return 0
     except CredctlError as exc:
         # Same contract as the CLI: a misconfiguration is exit 3 with the

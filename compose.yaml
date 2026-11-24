@@ -22,6 +22,8 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
+      # The agent listener has its own mTLS port. It is not the console port.
+      - "8443:8443"
     environment:
       PUID: "1000"
       PGID: "1000"
@@ -31,6 +33,16 @@ services:
       # Optional read-only Docker discovery. Point it at a socket proxy, never
       # at the raw socket.
       # CREDARR_DOCKER_URL: "http://socket-proxy:2375"
+      # The agent control plane is a separate TLS 1.3 mTLS listener. Change the
+      # published port if 8443 is taken; 0 disables it.
+      # CREDARR_AGENT_PORT: "8443"
+      # The DNS name or IP an agent puts in --server; added to the listener
+      # certificate SANs. Set it for every remote agent.
+      # CREDARR_AGENT_HOSTNAME: "credarr.example.com"
+      # The shared delivery tree the agent reads. Mount it read/write here and
+      # read-only on the agent host; the key file stays outside the tree.
+      # CREDARR_VAULT_TREE: "/vault"
+      # CREDARR_VAULT_TREE_KEY: "/config/vault-tree.key"
       # Behind a TLS reverse proxy, declare the URL or set the flag. Leave both
       # unset for plain HTTP, or the browser drops the session cookie.
       # CREDARR_EXTERNAL_URL: "https://credarr.example.com"
