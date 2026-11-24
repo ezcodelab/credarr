@@ -53,6 +53,8 @@ from credarr_server.scheduler import (
     Scheduler,
 )
 from credarr_server.store import TopologyStore
+from credarr_server.sync_store import SyncLoop, SyncStore
+from credarr_server.vault import VaultMaintenanceLoop, VaultTree
 
 # The console binds every interface on purpose: it exists to be reached over
 # the LAN, and the container publishes a single port. `--host` narrows it.
@@ -80,6 +82,11 @@ class ServerSettings:
     # Optional, read-only Docker API used by the discovery endpoint. None is
     # the default posture: no socket, no scan.
     docker_url: str | None = None
+    # The shared, encrypted delivery tree the agent reads. Off unless the
+    # operator mounts one; a target cannot be created without it because there
+    # would be no value source an agent could use.
+    vault_tree: Path | None = None
+    vault_tree_key: Path | None = None
     # The zone the console renders timestamps in. It comes from TZ, the same
     # variable the container uses for its clock; an invalid value falls back to
     # UTC rather than letting Intl throw in the browser.
@@ -168,7 +175,12 @@ def _mount(app: FastAPI) -> None:
         config=app.state.config,
         scheduler=app.state.loop.scheduler,
         registry=app.state.loop.scheduler.registry,
+        sync=app.state.sync,
+        sync_loop=app.state.sync_loop,
+        agent_plane=getattr(app.state, "agent_plane", None),
+        maintenance=app.state.maintenance,
     )
+    app.state.api_context = ctx
     mount_api(app, ctx)
 
 
@@ -335,7 +347,13 @@ def create_app(settings: ServerSettings) -> FastAPI:
     _bootstrap_config(settings)
     config = load_config(settings.config_path)
     _check_local_filesystem(settings, config)
-    store = TopologyStore(settings.database)
+    tree = None
+    if settings.vault_tree is not None:
+        tree = VaultTree(
+            settings.vault_tree,
+            settings.vault_tree_key or settings.config_dir / "vault-tree.key",
+        )
+    store = TopologyStore(settings.database, vault_tree=tree)
     _seed_services(store, config, store.load_manifest())
     auth = AdminAuth(settings.database)
     log = AuditLog(settings.database)
@@ -377,14 +395,21 @@ def create_app(settings: ServerSettings) -> FastAPI:
     # able to disagree across a restart.
     notifier = Notifier(settings.database)
     delivery = DeliveryLoop(notifier)
+    sync = SyncStore(settings.database, tree_configured=tree is not None)
+    sync_loop = SyncLoop(sync)
+    maintenance = VaultMaintenanceLoop(store.vault)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> Iterator[None]:
         loop.start()
         delivery.start()
+        sync_loop.start()
+        maintenance.start()
         try:
             yield
         finally:
+            maintenance.stop()
+            sync_loop.stop()
             loop.stop()
             delivery.stop()
 
@@ -406,6 +431,9 @@ def create_app(settings: ServerSettings) -> FastAPI:
     app.state.auto = auto
     app.state.notifier = notifier
     app.state.delivery = delivery
+    app.state.sync = sync
+    app.state.sync_loop = sync_loop
+    app.state.maintenance = maintenance
     app.state.config = config
 
     @app.middleware("http")
@@ -606,6 +634,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         secure_cookies=secure_cookies,
         allow_network_config=os.environ.get("CREDARR_ALLOW_NETWORK_CONFIG") == "1",
         docker_url=os.environ.get("CREDARR_DOCKER_URL") or None,
+        vault_tree=(
+            Path(os.environ["CREDARR_VAULT_TREE"])
+            if os.environ.get("CREDARR_VAULT_TREE")
+            else None
+        ),
+        vault_tree_key=(
+            Path(os.environ["CREDARR_VAULT_TREE_KEY"])
+            if os.environ.get("CREDARR_VAULT_TREE_KEY")
+            else None
+        ),
         timezone=_configured_timezone(),
     )
     try:

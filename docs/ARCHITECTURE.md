@@ -84,8 +84,8 @@ src/credarr_server/store.py the topology store: the manifest as rows, imported
 src/credarr_server/app.py   the BFF process: the audit loop thread, the CLI
                             bootstrap, and the health signal when it dies
 src/credarr_server/api/{auth,context,credential_edit,credentials,http,models,
-                        notifications,payloads,rotation,service_edit,services,
-                        status,topology,values}.py
+                        notifications,payloads,rotation,secrets,service_edit,
+                        services,status,sync,topology,values}.py
                             the /api/v1 surface split by domain behind one
                             ApiContext, which carries the process state and
                             the shared write guards
@@ -112,6 +112,9 @@ src/credarr_server/{database,event_schema,reveal}.py
 src/credarr_server/vault.py
                             the encrypted version store, KEK keyring,
                             lifecycle, generations and sync outbox
+src/credarr_server/sync_store.py
+                            durable delivery jobs, agents and the outbox
+                            dispatcher
 src/credarr_server/kek_cli.py
                             `credarr-kek` status, init and rewrap
 src/credarr_server/mounts.py
