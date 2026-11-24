@@ -11,7 +11,9 @@ Start with `../README.md` (install, first boot, connect an app), then:
 | `CONCEPTS.md` | Holder map, audit statuses and reason codes, classes, exit codes |
 | `ARCHITECTURE.md` | Engine / server / console layout, stores, load-bearing invariants |
 | `STATE_MACHINES.md` | Explicit and implicit lifecycle states, invariants, transition tables, and the confirmed invalid transitions |
-| `OPERATING.md` | Audit, rotation, Servarr routes, auto-rotation, notifications, backups, discovery, console map |
+| `OPERATING.md` | Audit, rotation, Servarr routes, auto-rotation, notifications, values, sync, backups, discovery, console map |
+| `SECURITY.md` | Threat model, crypto inventory, KEK lifecycle and drills, reveal, TLS/PQ posture |
+| `SYNC.md` | Sync state machine, targets, shared vault tree, enrollment runbook, agent privilege |
 | `UI_SYSTEM.md` | Console design system: tokens, components, states, accessibility, gallery, how to extend |
 | `SERVICES.md` | Mint shapes and per-service coverage with measured versions |
 | `API.md` | `/api/v1` reference seed (full contract: the live `/openapi.json`) |

@@ -565,7 +565,7 @@ class AutoRotator:
                 plan=plan,
                 credential=credential,
                 host=host,
-                secrets=StoreSource(self.store),
+                secrets=StoreSource(self.store, actor="auto:schedule", origin="auto"),
                 journal=self.journal,
                 canonical=None,
                 canonical_getter=lambda: self.store.get_value(name),

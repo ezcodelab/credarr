@@ -48,7 +48,11 @@ from credarr.redact import disable_core_dumps
 from .store import connect
 
 MAGIC = b"CREDARR-BACKUP\n"
-FORMAT_VERSION = 1
+# Format 2 adds the key material carried in `keys/`. Format 1 archives remain
+# readable: they predate envelope encryption and cannot restore a database with
+# encrypted versions unless the target already holds the same KEK.
+FORMAT_VERSION = 2
+READABLE_FORMATS = (1, 2)
 SALT_BYTES = 16
 NONCE_BYTES = 12
 MIN_PASSPHRASE_LENGTH = 12
@@ -62,6 +66,18 @@ SCRYPT_P = 1
 DATABASE_NAME = "app.db"
 MANIFEST_NAME = "manifest.json"
 CONFIG_PREFIX = "config/"
+KEYS_PREFIX = "keys/"
+
+# Key files that live beside the database and are required to read it. The
+# agent keys are optional: a deployment without agents has none. A backup that
+# omits the KEK restores metadata but no value, which is exactly the KEK-loss
+# drill rather than a working restore.
+KEY_FILES = (
+    "kek.json",
+    "vault-tree.key",
+    "agent-ca.key",
+    "agent-server.key",
+)
 
 # What a restored database must have to be this app's store. Integrity alone
 # proves a SQLite file; these tables prove whose it is. The audit log and the
@@ -150,7 +166,9 @@ def write_backup(*, config_path: Path, config_dir: Path, out: Path, passphrase: 
     if not out.parent.is_dir():
         raise BackupError(f"no directory at {out.parent}")
 
-    blob = encrypt(_archive(_snapshot(database), config_path), passphrase)
+    blob = encrypt(
+        _archive(_snapshot(database), config_path, config_dir), passphrase
+    )
     temporary = out.with_name(out.name + ".tmp")
     try:
         handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -185,7 +203,7 @@ def restore_backup(
         blob = path.read_bytes()
     except OSError as exc:
         raise BackupError(f"cannot read {path}: {exc.strerror}") from None
-    database_bytes, config_name, config_bytes = _unpack(decrypt(blob, passphrase))
+    database_bytes, config_name, config_bytes, keys = _unpack(decrypt(blob, passphrase))
 
     if not config_dir.is_dir():
         raise BackupError(
@@ -203,6 +221,17 @@ def restore_backup(
     destination_config = Path(config_path) if config_path is not None else config_dir / config_name
     if not destination_config.parent.is_dir():
         raise BackupError(f"no directory at {destination_config.parent}")
+    if (
+        "kek.json" not in keys
+        and _has_encrypted_versions(database_bytes)
+        and not (config_dir / "kek.json").is_file()
+    ):
+        raise BackupError(
+            "this archive has encrypted values but carries no KEK, and the "
+            "target directory has none",
+            hint="restore a format-2 backup written by this build, or restore "
+            "the matching kek.json first; without it the values are unrecoverable",
+        )
 
     database = config_dir / DATABASE_NAME
     previous = config_dir / "app.db.pre-restore"
@@ -230,8 +259,15 @@ def restore_backup(
             )
         staged_database = _stage(work / DATABASE_NAME, database_bytes, database)
         staged_config = _stage(config_work / "config", config_bytes, destination_config)
+        key_paths = {name: config_dir / name for name in keys}
+        staged_keys = {
+            name: _stage(work / name, data, key_paths[name])
+            for name, data in keys.items()
+        }
+        old_keys = {name: _read_existing(path) for name, path in key_paths.items()}
         config_published = False
         database_published = False
+        published_keys: list[str] = []
         try:
             _publish(staged_config, destination_config)
             config_published = True
@@ -241,10 +277,22 @@ def restore_backup(
                 os.link(database, previous)
             _publish(staged_database, database)
             database_published = True
+            # The KEK is published last: until the database and its key are
+            # both in place the target still holds the previous pair (or none),
+            # never a database whose key was silently replaced.
+            for name, staged in staged_keys.items():
+                _publish(staged, key_paths[name])
+                published_keys.append(name)
             fsync_directory(config_dir)
             if destination_config.parent != config_dir:
                 fsync_directory(destination_config.parent)
         except BaseException:
+            for name in published_keys:
+                path = key_paths[name]
+                if old_keys[name] is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    _write(path, old_keys[name] or b"")
             if database_published:
                 if previous.exists():
                     _publish(previous, database)
@@ -265,7 +313,7 @@ def restore_backup(
         shutil.rmtree(work, ignore_errors=True)
         if config_work != work:
             shutil.rmtree(config_work, ignore_errors=True)
-    return [database, destination_config]
+    return [database, destination_config, *key_paths.values()]
 
 
 def _snapshot(database: Path) -> bytes:
@@ -290,16 +338,26 @@ def _snapshot(database: Path) -> bytes:
         target.close()
 
 
-def _archive(snapshot: bytes, config_path: Path) -> bytes:
+def _archive(snapshot: bytes, config_path: Path, config_dir: Path) -> bytes:
     try:
         config = config_path.read_bytes()
     except OSError as exc:
         raise BackupError(f"cannot read {config_path}: {exc.strerror}") from None
+    keys: dict[str, bytes] = {}
+    for name in KEY_FILES:
+        candidate = config_dir / name
+        if not candidate.is_file():
+            continue
+        try:
+            keys[name] = candidate.read_bytes()
+        except OSError as exc:
+            raise BackupError(f"cannot read {candidate}: {exc.strerror}") from None
     manifest = {
         "format": FORMAT_VERSION,
         "created_at": time.time(),
         "credarr": __version__,
         "config_name": config_path.name,
+        "keys": sorted(keys),
     }
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
@@ -311,12 +369,14 @@ def _archive(snapshot: bytes, config_path: Path) -> bytes:
 
         add(DATABASE_NAME, snapshot)
         add(CONFIG_PREFIX + config_path.name, config)
+        for name, data in keys.items():
+            add(KEYS_PREFIX + name, data)
         add(MANIFEST_NAME, json.dumps(manifest, indent=2).encode())
     return buffer.getvalue()
 
 
-def _unpack(payload: bytes) -> tuple[bytes, str, bytes]:
-    """The archive's three files, validated. Never extracts to a path."""
+def _unpack(payload: bytes) -> tuple[bytes, str, bytes, dict[str, bytes]]:
+    """The archive's files, validated. Never extracts to a path."""
     try:
         with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
 
@@ -333,7 +393,7 @@ def _unpack(payload: bytes) -> tuple[bytes, str, bytes]:
                 manifest = json.loads(member(MANIFEST_NAME))
             except json.JSONDecodeError:
                 raise BackupError("the backup's manifest is not JSON") from None
-            if not isinstance(manifest, dict) or manifest.get("format") != FORMAT_VERSION:
+            if not isinstance(manifest, dict) or manifest.get("format") not in READABLE_FORMATS:
                 raise BackupError("the backup's manifest names a format this build does not read")
             name = manifest.get("config_name")
             if (
@@ -345,11 +405,41 @@ def _unpack(payload: bytes) -> tuple[bytes, str, bytes]:
                 raise BackupError("the backup names an unusable config file")
             database = member(DATABASE_NAME)
             config = member(CONFIG_PREFIX + name)
+            keys: dict[str, bytes] = {}
+            if manifest.get("format") == 2:
+                listed = manifest.get("keys") or []
+                if not isinstance(listed, list) or any(
+                    not isinstance(item, str) or item not in KEY_FILES
+                    for item in listed
+                ):
+                    raise BackupError("the backup names an unusable key file")
+                for item in listed:
+                    keys[item] = member(KEYS_PREFIX + item)
     except tarfile.TarError:
         raise BackupError("the backup's contents are not readable") from None
 
     _check_snapshot(database)
-    return database, name, config
+    return database, name, config, keys
+
+
+def _has_encrypted_versions(data: bytes) -> bool:
+    """Whether the snapshot holds a value that needs a KEK to open."""
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.deserialize(data)
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        if "secret_versions" not in tables:
+            return False
+        return connection.execute("SELECT 1 FROM secret_versions LIMIT 1").fetchone() is not None
+    except sqlite3.Error as exc:
+        raise BackupError(f"the database inside this backup is not readable: {exc}") from None
+    finally:
+        connection.close()
 
 
 def _check_snapshot(data: bytes) -> None:

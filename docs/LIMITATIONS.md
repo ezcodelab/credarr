@@ -7,10 +7,27 @@ v1 limit, not a roadmap promise.
   `CREDARR_SECURE_COOKIES=1`. The scheme is not inferred from `X-Forwarded-Proto`: that header is client-supplied,
   and trusting it without a verified proxy would let a caller decide the cookie policy. A contradiction (an `https`
   URL with secure cookies off, or an `http` URL with them on) refuses to start.
-- **Plaintext at rest:** working copies, digests, hashes and notification
-  secrets live in one `0600` SQLite file. Full-host compromise is full
-  credential compromise. Default compose is HTTP. Bind to localhost or use a
-  trusted TLS proxy. `--secure-cookies` is not TLS.
+- **What the KEK does and does not protect.** Credential values are AES-256-GCM
+  under a per-version DEK wrapped by `kek.json` (mode `0600`); the database and
+  WAL are scrubbed after migration. A stolen database or backup without the KEK
+  is unreadable. A live BFF process compromise is not mitigated: it can decrypt
+  CURRENT. The KEK file sits beside the database, so the same host compromise
+  that reads the database usually reads the key. Do not claim HSM/KMS
+  equivalence. Losing the KEK is unrecoverable; restore it from a format-2
+  backup.
+- **Agent and tree compromise.** Docker lives only in the agent. Rootless is
+  the default; rootful is root-equivalent and needs an explicit acknowledgment.
+  The shared tree key is a file on the agent host: a tree copy plus its key is
+  a value copy. The BFF's own console port is still the operator's TLS-proxy
+  surface; only the agent control plane terminates TLS itself. Default compose
+  is HTTP. `--secure-cookies` is not TLS.
+- **Hybrid PQ is not claimed.** The listener tries `X25519MLKEM768` and falls
+  back to `X25519` when the linked OpenSSL does not expose it. No "post-quantum
+  Credarr" wording is allowed until the real images exercise the hybrid group.
+- **Sync is advisory.** A failed or pending delivery does not change a rotation
+  exit code and does not remint. A partial deploy is `retry_wait`, never
+  success. A soft-deleted or purged value is not remotely wiped from a holder
+  that already received it.
 - **Admin surface:** API keys are admin-equivalent, no scopes, no step-up, no
   email reset (operator recovery of `app.db` is the fallback). A proxy rate
   limit is still recommended in front of the public login.

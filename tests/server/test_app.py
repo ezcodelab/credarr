@@ -525,6 +525,22 @@ def test_the_server_entry_point_disables_core_dumps_before_config(
     assert calls == ["called"]
 
 
+def test_a_hook_api_key_marks_the_mutations_it_makes(server) -> None:
+    _key_id, key = server.state.auth.create_key("hook")
+    headers = {"Authorization": f"Bearer {key}"}
+    with TestClient(server) as hook:
+        response = hook.put(
+            "/api/v1/credentials/sonarr_api_key/value",
+            json={"value": "hook-written-0123456789"},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        events = hook.get("/api/v1/events", headers=headers).json()["events"]
+    event = next(item for item in events if item["kind"] == "secret.current_changed")
+    assert event["origin"] == "hook"
+    assert event["credential"] == "sonarr_api_key"
+
+
 def test_api_key_lifecycle(server) -> None:
     with TestClient(server) as client:
         setup_admin(client)
@@ -979,6 +995,12 @@ def test_the_openapi_contract_is_pinned(server) -> None:
         "/api/v1/credentials/{name}/rotate",
         "/api/v1/credentials/{name}/rotation/abandon",
         "/api/v1/credentials/{name}/rotation-options",
+        "/api/v1/credentials/{name}/reveal",
+        "/api/v1/credentials/{name}/adopt",
+        "/api/v1/credentials/{name}/versions",
+        "/api/v1/credentials/{name}/lifecycle",
+        "/api/v1/credentials/{name}/strategy",
+        "/api/v1/vault/status",
         "/api/v1/topology/export",
         "/api/v1/topology/import",
         "/api/v1/settings/audit",
@@ -987,6 +1009,15 @@ def test_the_openapi_contract_is_pinned(server) -> None:
         "/api/v1/notifications/services/{name}",
         "/api/v1/notifications/services/{name}/test",
         "/api/v1/events",
+        "/api/v1/sync/targets",
+        "/api/v1/sync/targets/{target_id}",
+        "/api/v1/sync/jobs",
+        "/api/v1/sync/jobs/{job_id}/retry",
+        "/api/v1/sync/jobs/{job_id}/cancel",
+        "/api/v1/agents",
+        "/api/v1/agents/enrollment",
+        "/api/v1/agents/{agent_id}",
+        "/api/v1/agents/{agent_id}/disable",
     }
     assert document["info"]["title"] == "credarr"
     assert document["info"]["version"] == __version__
@@ -1021,6 +1052,12 @@ def test_the_openapi_contract_is_pinned(server) -> None:
         "/api/v1/credentials/{name}/rotate",
         "/api/v1/credentials/{name}/rotation/abandon",
         "/api/v1/credentials/{name}/rotation-options",
+        "/api/v1/credentials/{name}/reveal",
+        "/api/v1/credentials/{name}/adopt",
+        "/api/v1/credentials/{name}/versions",
+        "/api/v1/credentials/{name}/lifecycle",
+        "/api/v1/credentials/{name}/strategy",
+        "/api/v1/vault/status",
         "/api/v1/topology/export",
         "/api/v1/topology/import",
         "/api/v1/settings/audit",
@@ -1029,6 +1066,15 @@ def test_the_openapi_contract_is_pinned(server) -> None:
         "/api/v1/notifications/services/{name}",
         "/api/v1/notifications/services/{name}/test",
         "/api/v1/events",
+        "/api/v1/sync/targets",
+        "/api/v1/sync/targets/{target_id}",
+        "/api/v1/sync/jobs",
+        "/api/v1/sync/jobs/{job_id}/retry",
+        "/api/v1/sync/jobs/{job_id}/cancel",
+        "/api/v1/agents",
+        "/api/v1/agents/enrollment",
+        "/api/v1/agents/{agent_id}",
+        "/api/v1/agents/{agent_id}/disable",
         "/openapi.json",
         "/docs",
         "/docs/oauth2-redirect",
@@ -1078,8 +1124,26 @@ def test_the_openapi_operations_are_pinned(server) -> None:
         ("POST", "/api/v1/credentials/{name}/rotation/abandon"),
         ("DELETE", "/api/v1/credentials/{name}/value"),
         ("PUT", "/api/v1/credentials/{name}/value"),
+        ("POST", "/api/v1/credentials/{name}/reveal"),
+        ("POST", "/api/v1/credentials/{name}/adopt"),
+        ("GET", "/api/v1/credentials/{name}/versions"),
+        ("GET", "/api/v1/credentials/{name}/lifecycle"),
+        ("GET", "/api/v1/credentials/{name}/strategy"),
+        ("POST", "/api/v1/credentials/{name}/lifecycle"),
+        ("GET", "/api/v1/vault/status"),
         ("GET", "/api/v1/discovery"),
         ("GET", "/api/v1/events"),
+        ("GET", "/api/v1/sync/targets"),
+        ("POST", "/api/v1/sync/targets"),
+        ("PATCH", "/api/v1/sync/targets/{target_id}"),
+        ("DELETE", "/api/v1/sync/targets/{target_id}"),
+        ("GET", "/api/v1/sync/jobs"),
+        ("POST", "/api/v1/sync/jobs/{job_id}/retry"),
+        ("POST", "/api/v1/sync/jobs/{job_id}/cancel"),
+        ("GET", "/api/v1/agents"),
+        ("POST", "/api/v1/agents/enrollment"),
+        ("DELETE", "/api/v1/agents/{agent_id}"),
+        ("POST", "/api/v1/agents/{agent_id}/disable"),
         ("GET", "/api/v1/health"),
         ("GET", "/api/v1/keys"),
         ("POST", "/api/v1/keys"),
@@ -1674,8 +1738,12 @@ def test_a_drift_becomes_an_event_and_the_test_button_delivers_it_now(server, si
     with the sentence the audit wrote, not a value."""
     with TestClient(server) as client:
         setup_admin(client)
-        wait_for_audit(client)  # baseline: match, and no event
-        assert client.get("/api/v1/events").json()["events"] == []
+        wait_for_audit(client)  # baseline: match, and no audit event
+        assert [
+            event
+            for event in client.get("/api/v1/events").json()["events"]
+            if not event["kind"].startswith(("secret.", "vault.", "sync_", "agent_"))
+        ] == []
 
         configured = client.post(
             "/api/v1/notifications/services",
@@ -1693,6 +1761,11 @@ def test_a_drift_becomes_an_event_and_the_test_button_delivers_it_now(server, si
         assert client.post("/api/v1/audit").status_code == 200
 
         events = client.get("/api/v1/events").json()
+        events["events"] = [
+            event
+            for event in events["events"]
+            if not event["kind"].startswith(("secret.", "vault.", "sync_", "agent_"))
+        ]
         assert [event["kind"] for event in events["events"]] == ["drift", "test"]
         drift, test_event = events["events"]
         assert drift["credential"] == "sonarr_api_key"

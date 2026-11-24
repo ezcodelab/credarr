@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.3.0 — 2026-11-23
+
+The next-generation value lifecycle: an encrypted version store, audited Reveal,
+soft delete, adoption, durable sync jobs and an mTLS deploy agent.
+
+### 🔐 Values
+
+- `secret_versions` stores every value with AES-256-GCM under a unique DEK
+  wrapped by a file KEK; AAD binds credential, version, stage and attempt id.
+  A stage transition re-encrypts; a missing KEK fails every value operation
+  closed while metadata stays readable.
+- `working_copies` and the plaintext pending table are migrated and emptied;
+  the database and WAL are scrubbed after migration.
+- `credarr-kek status|init|rotate`; backup format 2 carries the KEK and the
+  service keys, and a restore refuses an encrypted snapshot without one.
+- `POST /credentials/{name}/reveal`: audited, rate-limited, no-store, 30-second
+  UI TTL, CURRENT and PREVIOUS only.
+
+### 🔁 Lifecycle
+
+- Soft delete, restore and explicit purge; tombstoned credentials refuse
+  reveal, rotate, adopt, paste and sync.
+- Adoption with `verify=none` (unverified) or `verify=process_readback` (the
+  engine audit must prove a match; otherwise nothing is stored).
+- One CURRENT per credential, one PENDING, bounded retention for abandoned
+  versions, one `secret.current_changed` per committed change.
+
+### 📦 Sync and agent
+
+- Commit-barrier outbox, per-target jobs, coalescing to the newest version,
+  partial deploys as `retry_wait`, expiry/replay/clock-skew refusals.
+- A separate TLS 1.3 mTLS control plane with one-time enrollment, one-day
+  client certificates, renewal and immediate revocation.
+- `credarr-agent` pulls, verifies the shared-tree generation, and runs the
+  allowlisted compose workflow; Docker never enters the BFF.
+- The listener tries the hybrid PQ group and records the classical fallback;
+  no post-quantum claim is made until the real images exercise it.
+- The console gains Reveal, Lifecycle and Agents & sync panels.
+
 ## 1.2.0 — 2026-11-07
 
 A state-machine audit of the rotation engine, with the confirmed defects fixed,

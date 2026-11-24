@@ -19,6 +19,7 @@ import contextlib
 import math
 import os
 import sqlite3
+import ssl
 import sys
 import threading
 import urllib.parse
@@ -39,6 +40,7 @@ from credarr.instance import DEFAULT_CONFIG_DIR, InstanceLock
 from credarr.redact import disable_core_dumps
 from credarr.targets import build_registry
 from credarr_server import auto_rotation, mounts
+from credarr_server.agent_control import AgentControlPlane
 from credarr_server.api import mount_api
 from credarr_server.api.context import ApiContext
 from credarr_server.api.http import _validation_details
@@ -53,6 +55,8 @@ from credarr_server.scheduler import (
     Scheduler,
 )
 from credarr_server.store import TopologyStore
+from credarr_server.sync_store import SyncLoop, SyncStore
+from credarr_server.vault import VaultMaintenanceLoop, VaultTree
 
 # The console binds every interface on purpose: it exists to be reached over
 # the LAN, and the container publishes a single port. `--host` narrows it.
@@ -80,6 +84,19 @@ class ServerSettings:
     # Optional, read-only Docker API used by the discovery endpoint. None is
     # the default posture: no socket, no scan.
     docker_url: str | None = None
+    # The shared, encrypted delivery tree the agent reads. Off unless the
+    # operator mounts one; a target cannot be created without it because there
+    # would be no value source an agent could use.
+    vault_tree: Path | None = None
+    vault_tree_key: Path | None = None
+    # The agent control plane. Zero disables the listener; a negative or
+    # out-of-range value is a configuration error at parse time.
+    agent_port: int = 0
+    agent_bind: str | None = None
+    # The DNS name or IP an agent will put in its --server URL. It is added to
+    # the listener certificate's SAN list; without it a remote agent cannot
+    # verify the self-signed listener.
+    agent_hostname: str | None = None
     # The zone the console renders timestamps in. It comes from TZ, the same
     # variable the container uses for its clock; an invalid value falls back to
     # UTC rather than letting Intl throw in the browser.
@@ -168,7 +185,12 @@ def _mount(app: FastAPI) -> None:
         config=app.state.config,
         scheduler=app.state.loop.scheduler,
         registry=app.state.loop.scheduler.registry,
+        sync=app.state.sync,
+        sync_loop=app.state.sync_loop,
+        agent_plane=getattr(app.state, "agent_plane", None),
+        maintenance=app.state.maintenance,
     )
+    app.state.api_context = ctx
     mount_api(app, ctx)
 
 
@@ -335,7 +357,13 @@ def create_app(settings: ServerSettings) -> FastAPI:
     _bootstrap_config(settings)
     config = load_config(settings.config_path)
     _check_local_filesystem(settings, config)
-    store = TopologyStore(settings.database)
+    tree = None
+    if settings.vault_tree is not None:
+        tree = VaultTree(
+            settings.vault_tree,
+            settings.vault_tree_key or settings.config_dir / "vault-tree.key",
+        )
+    store = TopologyStore(settings.database, vault_tree=tree)
     _seed_services(store, config, store.load_manifest())
     auth = AdminAuth(settings.database)
     log = AuditLog(settings.database)
@@ -377,14 +405,21 @@ def create_app(settings: ServerSettings) -> FastAPI:
     # able to disagree across a restart.
     notifier = Notifier(settings.database)
     delivery = DeliveryLoop(notifier)
+    sync = SyncStore(settings.database, tree_configured=tree is not None)
+    sync_loop = SyncLoop(sync)
+    maintenance = VaultMaintenanceLoop(store.vault)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> Iterator[None]:
         loop.start()
         delivery.start()
+        sync_loop.start()
+        maintenance.start()
         try:
             yield
         finally:
+            maintenance.stop()
+            sync_loop.stop()
             loop.stop()
             delivery.stop()
 
@@ -406,6 +441,9 @@ def create_app(settings: ServerSettings) -> FastAPI:
     app.state.auto = auto
     app.state.notifier = notifier
     app.state.delivery = delivery
+    app.state.sync = sync
+    app.state.sync_loop = sync_loop
+    app.state.maintenance = maintenance
     app.state.config = config
 
     @app.middleware("http")
@@ -493,6 +531,21 @@ def _parser() -> argparse.ArgumentParser:
         help="seconds between audits (env CREDARR_AUDIT_INTERVAL, default 3600)",
     )
     parser.add_argument(
+        "--agent-port", type=int,
+        default=int(os.environ.get("CREDARR_AGENT_PORT", "8443")),
+        help="mTLS agent listener port; 0 disables it (env CREDARR_AGENT_PORT, "
+        "default 8443)",
+    )
+    parser.add_argument(
+        "--agent-bind", default=os.environ.get("CREDARR_AGENT_BIND", DEFAULT_HOST),
+        help="address for the mTLS agent listener (env CREDARR_AGENT_BIND)",
+    )
+    parser.add_argument(
+        "--agent-hostname", default=os.environ.get("CREDARR_AGENT_HOSTNAME") or None,
+        help="name or IP an agent uses to reach the listener; added to its "
+        "certificate SANs (env CREDARR_AGENT_HOSTNAME)",
+    )
+    parser.add_argument(
         "--secure-cookies", action="store_true",
         help="set the Secure cookie flag: use when serving over HTTPS",
     )
@@ -578,6 +631,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.json and not args.once:
         parser.error("--json is only for --once")
+    if not 0 <= args.agent_port <= 65535:
+        parser.error("--agent-port must be 0 (disabled) or a TCP port")
     if os.environ.get("CREDARR_RESTART_URL"):
         print(
             "error: CREDARR_RESTART_URL is gone; credarr now asks each service "
@@ -606,6 +661,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         secure_cookies=secure_cookies,
         allow_network_config=os.environ.get("CREDARR_ALLOW_NETWORK_CONFIG") == "1",
         docker_url=os.environ.get("CREDARR_DOCKER_URL") or None,
+        vault_tree=(
+            Path(os.environ["CREDARR_VAULT_TREE"])
+            if os.environ.get("CREDARR_VAULT_TREE")
+            else None
+        ),
+        vault_tree_key=(
+            Path(os.environ["CREDARR_VAULT_TREE_KEY"])
+            if os.environ.get("CREDARR_VAULT_TREE_KEY")
+            else None
+        ),
+        agent_port=args.agent_port,
+        agent_bind=args.agent_bind,
+        agent_hostname=args.agent_hostname,
         timezone=_configured_timezone(),
     )
     try:
@@ -618,6 +686,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             app = create_app(settings)
             import uvicorn
 
+            plane: AgentControlPlane | None = None
+            if settings.agent_port:
+                plane = AgentControlPlane(
+                    app.state.sync,
+                    settings.config_dir,
+                    host=settings.agent_bind or settings.host,
+                    port=settings.agent_port,
+                    hostname=settings.agent_hostname,
+                )
+                try:
+                    plane.start()
+                except (OSError, ssl.SSLError, ValueError) as exc:
+                    print(
+                        f"warning: the agent listener did not start on "
+                        f"{settings.agent_bind or settings.host}:{settings.agent_port}: {exc}",
+                        file=sys.stderr,
+                    )
+                    plane = None
+                app.state.agent_plane = plane
+                app.state.api_context.agent_plane = plane
             try:
                 uvicorn.run(app, host=settings.host, port=settings.port)
             except OSError as exc:
@@ -625,6 +713,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 # report it as such instead of the setup handler below.
                 print(f"error: the server could not run: {exc}", file=sys.stderr)
                 return int(ExitCode.CONFIG)
+            finally:
+                if plane is not None:
+                    plane.stop()
         return 0
     except CredctlError as exc:
         # Same contract as the CLI: a misconfiguration is exit 3 with the

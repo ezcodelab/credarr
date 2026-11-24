@@ -51,6 +51,8 @@ RUN chmod 0755 /usr/local/bin/credarr-entrypoint
 # refuses a network mount at startup and names the mount in its message.
 VOLUME ["/config"]
 EXPOSE 8080
+# The agent control plane is a separate mTLS listener; it is never the console.
+EXPOSE 8443
 
 # Degraded is unhealthy, on purpose: a process whose audit or delivery loop died
 # still answers requests, and every answer is then the past.

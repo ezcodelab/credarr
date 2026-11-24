@@ -83,6 +83,7 @@ Measured additions (2026-10-30 and 2026-10-31):
 | `server_auto_bazarr.py` | Does the real server auto-rotate Bazarr's own key with a deploy-time Homepage copy? | `auto_manual`; old 401/new 200; policy stays enabled |
 | `server_auto_servarr.py` | Do Radarr, Lidarr, Readarr and Whisparr auto-rotate with Prowlarr's application row as the holder, and Prowlarr with a Sonarr indexer row? | all five `auto_succeeded`; old 401/new 200; the holder row holds the new key |
 | `server_auto_jellyfin.py` | Does the real server auto-rotate Jellyfin's reissued key with Seerr's `jellyfin` section as the holder? | `auto_succeeded`; Seerr reports the new key; old 401/new 200 |
+| `agent_flow.py` | Does the real mTLS control plane enroll the shipped agent client, lease a job, verify the shared-tree generation, and deliver a disposable compose service? | `delivered`; one service true; the stack is removed with a unique project name |
 | `server_auto_qbittorrent.py` | Does the real server auto-rotate qBittorrent's key with qui's instance test as the holder? | `auto_succeeded`; qui test green; old 403/new 200 |
 | `server_auto_manual.py` | Do Seerr, Grafana, Arcane and Gitea mint with only a deploy-time Homepage copy and record `auto_manual`? | all four `auto_manual`; old key refused, new key accepted, policy enabled |
 

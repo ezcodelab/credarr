@@ -19,13 +19,15 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from credarr.audit import AuditResult, CredentialResult, Status
 from credarr.report import exit_code_for
 from credarr.transaction import transaction
 
+from . import event_schema
 from .store import connect, initialise
 
 # Action events: something was done, and nothing about a credential's equality
@@ -203,6 +205,12 @@ class Event:
     detail: str
     # A test event names the one service it probes; None is a broadcast event.
     sink: str | None = None
+    # Who caused the event: cli, user, auto or hook. Sinks exclude hook by
+    # default so a reaction cannot loop back into delivery.
+    origin: str = "auto"
+    # Identifiers for the kind: versions, generations, service names. Never a
+    # credential value or value fragment.
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 def _previous_status(
@@ -343,6 +351,7 @@ class AuditLog:
             }
             if "sink" not in event_columns:
                 connection.execute("ALTER TABLE events ADD COLUMN sink TEXT")
+            event_schema.ensure(connection)
 
     def record(self, result: AuditResult, *, started_at: float) -> int:
         """Write one completed audit and return its run id.
@@ -595,7 +604,13 @@ class AuditLog:
         )
 
     def record_rotation_event(
-        self, kind: str, credential: str, detail: str, *, at: float | None = None
+        self,
+        kind: str,
+        credential: str,
+        detail: str,
+        *,
+        at: float | None = None,
+        origin: str = "user",
     ) -> Event:
         """One manual rotation attempt, in the auto events' action shape.
 
@@ -613,6 +628,7 @@ class AuditLog:
             at=at,
             allowed=MANUAL_ROTATION_KINDS,
             what="manual rotation",
+            origin=origin,
         )
 
     def _record_action(
@@ -624,16 +640,20 @@ class AuditLog:
         at: float | None,
         allowed: tuple[str, ...],
         what: str,
+        origin: str = "auto",
+        data: dict[str, Any] | None = None,
     ) -> Event:
         """The one insert behind both action flavours."""
         if kind not in allowed:
             raise ValueError(f"not a {what} event: {kind}")
         when = time.time() if at is None else at
+        encoded = event_schema.encode(data)
         with connect(self.path) as connection:
             cursor = connection.execute(
-                "INSERT INTO events (at, kind, credential, previous_status, status, detail) "
-                "VALUES (?, ?, ?, NULL, NULL, ?)",
-                (when, kind, credential, detail),
+                "INSERT INTO events "
+                "(at, kind, credential, previous_status, status, detail, origin, data) "
+                "VALUES (?, ?, ?, NULL, NULL, ?, ?, ?)",
+                (when, kind, credential, detail, origin, encoded),
             )
         return Event(
             id=cursor.lastrowid,
@@ -643,6 +663,8 @@ class AuditLog:
             previous_status=None,
             status=None,
             detail=detail,
+            origin=origin,
+            data=dict(data or {}),
         )
 
     def recent_events(self, limit: int = 50) -> tuple[Event, ...]:
@@ -681,7 +703,7 @@ class AuditLog:
         with connect(self.path) as connection:
             cursor = connection.execute(
                 "INSERT INTO events (at, kind, credential, previous_status, status, "
-                "detail, sink) VALUES (?, 'test', NULL, NULL, NULL, ?, ?)",
+                "detail, sink, origin) VALUES (?, 'test', NULL, NULL, NULL, ?, ?, 'user')",
                 (at, detail, sink),
             )
         return Event(
@@ -693,6 +715,7 @@ class AuditLog:
             status=None,
             detail=detail,
             sink=sink,
+            origin="user",
         )
 
 
@@ -708,6 +731,8 @@ def event_from_row(row: sqlite3.Row) -> Event:
         status=Status(row["status"]) if row["status"] else None,
         detail=row["detail"],
         sink=row["sink"],
+        origin=row["origin"],
+        data=event_schema.decode(row["data"]),
     )
 
 

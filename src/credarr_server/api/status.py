@@ -50,9 +50,20 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
         counts for the same reason: a console that records changes nobody hears
         about is a monitor that quietly stopped monitoring.
         """
+        sync_loop = ctx.sync_loop
         for name, alive, failure in (
             ("scheduler", loop.running, loop.failure),
             ("notifier", delivery.running, delivery.failure),
+            (
+                "sync",
+                True if sync_loop is None else sync_loop.running,
+                None if sync_loop is None else sync_loop.failure,
+            ),
+            (
+                "vault_maintenance",
+                True if ctx.maintenance is None else ctx.maintenance.running,
+                None if ctx.maintenance is None else ctx.maintenance.failure,
+            ),
         ):
             if failure is not None:
                 return JSONResponse({"status": "degraded", name: failure}, status_code=503)
@@ -113,6 +124,7 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
                     1 for state in store.auto_rotations().values() if state.enabled
                 ),
             },
+            "sync": ctx.sync.status() if ctx.sync is not None else None,
             "topology": {
                 "imported": bool(manifest.credentials),
                 "credentials": len(manifest.credentials),

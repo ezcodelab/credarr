@@ -78,6 +78,15 @@ EVENT_KINDS = (
     "rotation_failed",
     "rotation_manual",
     "rotation_succeeded",
+    "secret.current_changed",
+    "secret.adopted",
+    "secret.deleted",
+    "secret.restored",
+    "sync_delivered",
+    "sync_failed",
+    "sync_partial",
+    "agent_offline",
+    "agent_policy_violation",
     "test",
 )
 
@@ -90,7 +99,17 @@ EVENT_KINDS = (
 # reader. The decision lives here, in the delivery path, not in the events
 # table - which is why a refusal is not in EVENT_KINDS (a selection that can
 # never fire would be a lie) and why `/events` marks it silent.
-SILENT_KINDS = frozenset({"rotation_refused"})
+SILENT_KINDS = frozenset(
+    {
+        "rotation_refused",
+        # A reveal is an audit fact, not a pager event. `secret.cleared` and
+        # the migration marker are housekeeping; the Activity trail keeps them
+        # without waking a sink.
+        "secret.revealed",
+        "secret.cleared",
+        "vault.migrated",
+    }
+)
 
 # A Service Name is the operator's label and part of the API path, so it is
 # bounded to characters that survive a URL and a log line.
@@ -195,6 +214,12 @@ CREATE TABLE IF NOT EXISTS notification_services (
     smtp_tls         TEXT,
     smtp_auth        TEXT,
     enabled_types    TEXT    NOT NULL DEFAULT '',
+    -- Empty means every credential. A comma-separated list narrows the sink
+    -- without changing the kind selection above.
+    credential_filter TEXT   NOT NULL DEFAULT '',
+    -- Hook-origin events are excluded by default, so a hook that reacts to
+    -- an event cannot feed its own reaction back into this delivery loop.
+    allow_hook_origin INTEGER NOT NULL DEFAULT 0,
     created_at       REAL    NOT NULL,
     updated_at       REAL    NOT NULL
 );
@@ -269,6 +294,14 @@ def _migrate_email_columns(connection: Any) -> None:
             connection.execute(
                 f"ALTER TABLE notification_services ADD COLUMN {name} {kind}"
             )
+    for name, definition in (
+        ("credential_filter", "TEXT NOT NULL DEFAULT ''"),
+        ("allow_hook_origin", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if name not in columns:
+            connection.execute(
+                f"ALTER TABLE notification_services ADD COLUMN {name} {definition}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,16 +330,26 @@ class ServiceConfig:
     enabled_types: tuple[str, ...]
     created_at: float
     updated_at: float
+    credential_filter: tuple[str, ...] = ()
+    allow_hook_origin: bool = False
 
-    def accepts(self, kind: str) -> bool:
-        """Whether this service hears about an event kind.
+    def accepts(self, event: Event) -> bool:
+        """Whether this service hears about one event.
 
         Empty selection means all. `test` is always accepted: it is written
         only by the Test button, whose whole job is proving this service can be
         reached, and filtering it out would turn a broken URL into a silent
-        no-op.
+        no-op. A hook-origin event needs the service's explicit opt-in, and a
+        credential filter excludes every other name (including events with no
+        credential).
         """
-        return kind == "test" or not self.enabled_types or kind in self.enabled_types
+        if event.kind == "test":
+            return True
+        if event.origin == "hook" and not self.allow_hook_origin:
+            return False
+        if self.credential_filter and event.credential not in self.credential_filter:
+            return False
+        return not self.enabled_types or event.kind in self.enabled_types
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,6 +387,8 @@ class ServiceView:
     enabled_types: tuple[str, ...]
     updated_at: float
     stats: ServiceStats
+    credential_filter: tuple[str, ...] = ()
+    allow_hook_origin: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,12 +418,26 @@ def payload(event: Event) -> dict[str, Any]:
         "previous_status": event.previous_status.value if event.previous_status else None,
         "status": event.status.value if event.status else None,
         "detail": event.detail,
+        "origin": event.origin,
+        "data": event.data,
     }
 
 
 def _title(event: Event) -> str:
     if event.kind == "test":
         return "credarr: test notification"
+    if event.kind == "secret.current_changed":
+        return f"credarr: {event.credential} value changed"
+    if event.kind == "secret.adopted":
+        return f"credarr: {event.credential} adopted"
+    if event.kind == "secret.deleted":
+        return f"credarr: {event.credential} soft-deleted"
+    if event.kind == "secret.restored":
+        return f"credarr: {event.credential} restored"
+    if event.kind.startswith("sync_"):
+        return f"credarr: {event.credential} {event.kind.removeprefix('sync_').replace('_', ' ')}"
+    if event.kind.startswith("agent_"):
+        return f"credarr: {event.kind.removeprefix('agent_').replace('_', ' ')}"
     if event.kind == "recovered":
         return f"credarr: {event.credential} recovered"
     if event.kind == "unverifiable":
@@ -400,7 +459,7 @@ def _title(event: Event) -> str:
 def _ntfy_body(event: Event) -> str:
     if event.kind == "test":
         return "If you can read this, the sink is configured and credarr can reach it."
-    if event.kind.startswith(("auto_", "rotation_")):
+    if event.kind.startswith(("auto_", "rotation_", "secret.", "sync_", "agent_")):
         # Action events are actions, not equality transitions; a "? → ?" line
         # would invent a measurement the run never made.
         return event.detail
@@ -508,6 +567,8 @@ def _normalise_service(
     smtp_tls: str,
     smtp_auth: str,
     enabled_types: tuple[str, ...],
+    credential_filter: tuple[str, ...] = (),
+    allow_hook_origin: bool = False,
 ) -> dict[str, Any]:
     """Validate one service and return the values the row stores."""
     if kind not in SINKS:
@@ -557,7 +618,10 @@ def _normalise_service(
     unknown = [item for item in enabled_types if item not in EVENT_KINDS]
     if unknown:
         raise ValueError(f"unknown notification type: {unknown[0]}")
+    cleaned = tuple(dict.fromkeys(item.strip() for item in credential_filter if item.strip()))
     return {
+        "credential_filter": cleaned,
+        "allow_hook_origin": 1 if allow_hook_origin else 0,
         "url": url,
         "topic": (topic or "").strip() or None,
         "token": (token or "").strip() or None,
@@ -672,6 +736,8 @@ class Notifier:
         smtp_auth: str = "auto",
         enabled: bool = True,
         enabled_types: tuple[str, ...] = (),
+        credential_filter: tuple[str, ...] = (),
+        allow_hook_origin: bool = False,
     ) -> ServiceView:
         """Write one service whole.
 
@@ -702,6 +768,8 @@ class Notifier:
             smtp_tls=smtp_tls,
             smtp_auth=smtp_auth,
             enabled_types=enabled_types,
+            credential_filter=credential_filter,
+            allow_hook_origin=allow_hook_origin,
         )
 
         now = time.time()
@@ -721,8 +789,10 @@ class Notifier:
                 "(name, kind, enabled, url, topic, token, secret, auth_header, "
                 " discord_username, discord_avatar, discord_here, "
                 " smtp_host, smtp_port, smtp_username, smtp_from, smtp_to, "
-                " smtp_tls, smtp_auth, enabled_types, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                " smtp_tls, smtp_auth, enabled_types, credential_filter, "
+                " allow_hook_origin, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "?, ?, ?) "
                 "ON CONFLICT(name) DO UPDATE SET kind = excluded.kind, "
                 "enabled = excluded.enabled, url = excluded.url, "
                 "topic = excluded.topic, token = excluded.token, "
@@ -735,6 +805,8 @@ class Notifier:
                 "smtp_from = excluded.smtp_from, smtp_to = excluded.smtp_to, "
                 "smtp_tls = excluded.smtp_tls, smtp_auth = excluded.smtp_auth, "
                 "enabled_types = excluded.enabled_types, "
+                "credential_filter = excluded.credential_filter, "
+                "allow_hook_origin = excluded.allow_hook_origin, "
                 "updated_at = excluded.updated_at",
                 (
                     name,
@@ -756,6 +828,8 @@ class Notifier:
                     normalised["smtp_tls"],
                     normalised["smtp_auth"],
                     ",".join(enabled_types or ()),
+                    ",".join(normalised["credential_filter"]),
+                    normalised["allow_hook_origin"],
                     now,
                     now,
                 ),
@@ -952,7 +1026,7 @@ class Notifier:
             ).fetchall()
         return [
             event for event in (event_from_row(row) for row in rows)
-            if event.kind not in SILENT_KINDS and config.accepts(event.kind)
+            if event.kind not in SILENT_KINDS and config.accepts(event)
         ]
 
     def _send(self, config: ServiceConfig, event: Event) -> None:
@@ -1229,6 +1303,10 @@ def _config(row: Any) -> ServiceConfig:
         enabled_types=tuple(
             part for part in (row["enabled_types"] or "").split(",") if part
         ),
+        credential_filter=tuple(
+            part for part in (row["credential_filter"] or "").split(",") if part
+        ),
+        allow_hook_origin=bool(row["allow_hook_origin"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -1258,4 +1336,6 @@ def _view(config: ServiceConfig, stats: ServiceStats) -> ServiceView:
         enabled_types=config.enabled_types,
         updated_at=config.updated_at,
         stats=stats,
+        credential_filter=config.credential_filter,
+        allow_hook_origin=config.allow_hook_origin,
     )

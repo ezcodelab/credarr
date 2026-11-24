@@ -24,24 +24,24 @@ provenance and is not read at runtime.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import math
-import os
 import sqlite3
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from credarr.emitter import emit_manifest
 from credarr.facade import read_manifest
-from credarr.journal import init_lock_for
 from credarr.model import MANIFEST_VERSION, Consumer, Credential, Manifest, Target, VaultRef
 from credarr.redact import Secret
 from credarr.secrets import BACKENDS
 from credarr.targets import TargetRegistry
 from credarr.transaction import transaction
+
+from .database import connect, initialise
+from .vault import UNKNOWN, VaultStore, VaultTree
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS credentials (
@@ -187,57 +187,6 @@ class AutoRotation:
     paused: bool
 
 
-def _database_files(path: Path) -> tuple[Path, ...]:
-    """The database and the sidecars SQLite keeps beside it.
-
-    SQLite gives a sidecar the database's mode when it creates it, so a
-    sidecar left over from before this rule keeps its old mode and keeps
-    receiving plaintext pages - it has to be tightened too.
-    """
-    return (
-        path,
-        *(path.with_name(path.name + suffix) for suffix in ("-wal", "-shm", "-journal")),
-    )
-
-
-def initialise(path: Path, schema: str) -> None:
-    """Create the database file and its tables: WAL on, mode 0600.
-
-    Under the same lock the journal uses, so two stores built in one process
-    do not race the schema. That lock is in-process; two *processes* starting
-    on one fresh file can still race the WAL pragma, which the app does not do
-    today (one process) and the packaging slice owns making a rule.
-
-    The file and its sidecars are chmodded 0600 on every start because they
-    hold every working copy in plaintext. The chmod is best-effort: a file the
-    process does not own (a root-made bind mount) is still writable, and
-    refusing to boot over a hardening step is worse than the mode the
-    deployment chose.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Create the file private before SQLite opens it. A default 0644 window is
-    # enough for another local user to read every working copy. O_EXCL keeps a
-    # concurrent creator from making this open follow a path swapped underneath.
-    with contextlib.suppress(FileExistsError):
-        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
-        os.close(descriptor)
-    with init_lock_for(path):
-        for database_file in _database_files(path):
-            with contextlib.suppress(OSError):
-                database_file.chmod(0o600)
-        connection = sqlite3.connect(path, timeout=15)
-        try:
-            connection.execute("PRAGMA journal_mode = WAL")
-            connection.executescript(schema)
-            _drop_retired_columns(connection)
-            # WAL and shared-memory files are created by the pragma/schema.
-            for database_file in _database_files(path):
-                with contextlib.suppress(OSError):
-                    database_file.chmod(0o600)
-        finally:
-            connection.close()
-
-
 def _drop_retired_columns(connection: sqlite3.Connection) -> None:
     """Drop columns strict API-only removed, on an existing database.
 
@@ -256,27 +205,31 @@ def _drop_retired_columns(connection: sqlite3.Connection) -> None:
             connection.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
 
 
-@contextlib.contextmanager
-def connect(path: Path) -> Iterator[sqlite3.Connection]:
-    """One connection for one call, closed on the way out."""
-    connection = sqlite3.connect(path, timeout=15, isolation_level=None)
-    connection.row_factory = sqlite3.Row
-    try:
-        # Per connection, not per database: SQLite defaults foreign keys off.
-        connection.execute("PRAGMA foreign_keys = ON")
-        yield connection
-    finally:
-        connection.close()
-
-
 class TopologyStore:
     """The manifest's working copy, behind an import/load/export API."""
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        kek_path: Path | None = None,
+        vault_tree: VaultTree | None = None,
+        retention_days: int = 30,
+        recovery_days: int = 7,
+    ) -> None:
         # Coerced rather than trusted, like the journal: a caller passing a
         # string is ordinary, not a mistake.
         self.path = Path(path)
         initialise(self.path, SCHEMA)
+        with connect(self.path) as connection:
+            _drop_retired_columns(connection)
+        self.vault = VaultStore(
+            self.path,
+            kek_path=kek_path,
+            tree=vault_tree,
+            retention_days=retention_days,
+            recovery_days=recovery_days,
+        )
         # A crash between RECORD and the pending delete leaves a value that is
         # already canonical. It is safe, but it is still a second copy of a
         # credential, so it is pruned before anyone can ask for it.
@@ -367,6 +320,7 @@ class TopologyStore:
                 "DELETE FROM auto_rotation WHERE credential NOT IN "
                 "(SELECT name FROM credentials)"
             )
+            self.vault.prune_connection(connection)
         return _summary("replace", manifest, added=len(manifest.credentials), removed=previous)
 
     def _merge(self, manifest: Manifest, *, prune: bool) -> ImportSummary:
@@ -403,6 +357,7 @@ class TopologyStore:
                         )
                         removed += 1
                 _prune_orphans(connection)
+                self.vault.prune_connection(connection)
         return _summary(
             "merge",
             manifest,
@@ -597,42 +552,52 @@ class TopologyStore:
             )
             if cursor.rowcount:
                 _prune_orphans(connection)
+                self.vault.drop_connection(connection, name)
         return cursor.rowcount > 0
 
-    def clear_value(self, name: str) -> bool:
-        """Drop the app's working copy, never the service's live value."""
+    def clear_value(self, name: str, *, actor: str = "admin") -> bool:
+        """Forget the app's stored value history, never the service's value."""
         with connect(self.path) as connection:
-            cursor = connection.execute(
-                "DELETE FROM working_copies WHERE credential = ?", (name,)
-            )
-        return cursor.rowcount > 0
-
-    def set_value(self, name: str, value: Secret) -> None:
-        """Store the app's working copy of `name`'s value.
-
-        Takes a `Secret`, like every other write path in the engine: a bare
-        string in a signature is a bare string in a log. One statement, so a
-        concurrent topology change cannot slip between the check and the
-        write.
-        """
-        with connect(self.path) as connection:
-            cursor = connection.execute(
-                "INSERT INTO working_copies (credential, value, updated_at) "
-                "SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM credentials WHERE name = ?) "
-                "ON CONFLICT(credential) DO UPDATE SET value = excluded.value, "
-                "updated_at = excluded.updated_at",
-                (name, value.reveal(), time.time(), name),
-            )
-            if cursor.rowcount == 0:
+            if not connection.execute(
+                "SELECT 1 FROM credentials WHERE name = ?", (name,)
+            ).fetchone():
                 raise UnknownCredential(name)
+        return self.vault.clear_values(name, actor=actor, origin="user") > 0
+
+    def set_value(
+        self,
+        name: str,
+        value: Secret,
+        *,
+        actor: str = "user",
+        origin: str = "user",
+        verification: str = UNKNOWN,
+        attempt_id: str | None = None,
+        event_kind: str | None = None,
+        extra_event: str | None = None,
+    ) -> None:
+        """Commit `name`'s new CURRENT value under the encrypted store barrier."""
+        with connect(self.path) as connection:
+            if not connection.execute(
+                "SELECT 1 FROM credentials WHERE name = ?", (name,)
+            ).fetchone():
+                raise UnknownCredential(name)
+        from .vault import SECRET_CURRENT_CHANGED
+
+        self.vault.set_current(
+            name,
+            value,
+            actor=actor,
+            origin=origin,
+            verification=verification,
+            attempt_id=attempt_id,
+            event_kind=event_kind or SECRET_CURRENT_CHANGED,
+            extra_event=extra_event,
+        )
 
     def get_value(self, name: str) -> Secret | None:
-        """The stored working copy, or None when the app holds none."""
-        with connect(self.path) as connection:
-            row = connection.execute(
-                "SELECT value FROM working_copies WHERE credential = ?", (name,)
-            ).fetchone()
-        return Secret(row["value"]) if row else None
+        """The stored CURRENT value, or None when the app holds none."""
+        return self.vault.get_current(name)
 
     def set_pending(self, name: str, value: Secret) -> None:
         """Park the value an API-only mint chose before it mutates a service.
@@ -641,47 +606,21 @@ class TopologyStore:
         name no topology declares is a secret kept for no reason.
         """
         with connect(self.path) as connection:
-            cursor = connection.execute(
-                "INSERT INTO pending_secrets (credential, value, created_at) "
-                "SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM credentials WHERE name = ?) "
-                "ON CONFLICT(credential) DO UPDATE SET value = excluded.value, "
-                "created_at = excluded.created_at",
-                (name, value.reveal(), time.time(), name),
-            )
-            if cursor.rowcount == 0:
+            if not connection.execute(
+                "SELECT 1 FROM credentials WHERE name = ?", (name,)
+            ).fetchone():
                 raise UnknownCredential(name)
+        self.vault.set_pending(name, value)
 
     def get_pending(self, name: str) -> Secret | None:
-        with connect(self.path) as connection:
-            row = connection.execute(
-                "SELECT value FROM pending_secrets WHERE credential = ?", (name,)
-            ).fetchone()
-        return Secret(row["value"]) if row else None
+        return self.vault.get_pending(name)
 
     def clear_pending(self, name: str) -> None:
-        with connect(self.path) as connection:
-            connection.execute(
-                "DELETE FROM pending_secrets WHERE credential = ?", (name,)
-            )
+        self.vault.clear_pending(name)
 
     def prune_pending(self) -> None:
-        """Drop pending values that are orphaned or already recorded.
-
-        A crash can land after RECORD's working-copy write but before the
-        explicit clear. The value is then canonical and the extra copy is no
-        longer needed. Only an exact match is pruned: a pending value that
-        differs is the recovery state an unfinished mint depends on.
-        """
-        with connect(self.path) as connection:
-            connection.execute(
-                "DELETE FROM pending_secrets WHERE credential NOT IN "
-                "(SELECT name FROM credentials)"
-            )
-            connection.execute(
-                "DELETE FROM pending_secrets WHERE credential IN "
-                "(SELECT credential FROM working_copies w "
-                " WHERE w.value = pending_secrets.value)"
-            )
+        """Drop pending values that are orphaned or already recorded."""
+        self.vault.prune_pending()
 
     def working_copy_times(self) -> dict[str, float]:
         """When each stored value was last written, keyed by credential.
@@ -693,11 +632,7 @@ class TopologyStore:
         a run that finished before a value was pasted measured a different
         canonical, so the read path uses it to date the statuses it shows.
         """
-        with connect(self.path) as connection:
-            rows = connection.execute(
-                "SELECT credential, updated_at FROM working_copies"
-            ).fetchall()
-        return {row["credential"]: row["updated_at"] for row in rows}
+        return self.vault.working_copy_times()
 
     def audit_interval(self) -> float | None:
         """The operator's persisted audit cadence, or None before the first save."""

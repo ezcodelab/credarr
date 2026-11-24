@@ -44,6 +44,11 @@ def _drift(app, log: AuditLog) -> Event:
     log.record(_audit(app), started_at=1.0)  # baseline: match
     app.store.set_value("sonarr_api_key", Secret("0" * 32))
     log.record(_audit(app), started_at=2.0)  # match -> drift
+    # These tests are about the audit edge, not the value lifecycle; the
+    # lifecycle event has its own coverage and would otherwise be the first
+    # queued delivery.
+    with connect(app.store.path) as connection:
+        connection.execute("DELETE FROM events WHERE kind LIKE 'secret.%'")
     return log.recent_events()[0]
 
 
@@ -158,6 +163,8 @@ def test_a_transition_reaches_both_sinks_without_a_value(app, sink) -> None:
         "previous_status",
         "status",
         "detail",
+        "origin",
+        "data",
     }
     assert document["id"] == event.id
     assert document["kind"] == "drift"
@@ -556,8 +563,8 @@ def test_a_new_sink_does_not_replay_history_but_hears_what_happens_next(app, sin
     log.record(_audit(app), started_at=3.0)
     notifier.tick()
 
-    assert len(sink.requests) == 1
-    assert json.loads(sink.requests[0]["body"])["kind"] == "recovered"
+    kinds = [json.loads(request["body"])["kind"] for request in sink.requests]
+    assert sorted(kinds) == ["recovered", "secret.current_changed"]
 
 
 def test_a_tick_is_one_critical_section(app, sink, monkeypatch) -> None:
@@ -991,6 +998,50 @@ def test_a_service_name_must_survive_a_url_and_a_log_line(app) -> None:
         notifier.save_service("ok", "carrier-pigeon", url="https://example.invalid/h")
 
 
+def test_a_credential_filter_and_hook_origin_are_applied_before_delivery(
+    app, sink
+) -> None:
+    log = AuditLog(app.store.path)
+    notifier = Notifier(app.store.path)
+    notifier.save_service(
+        "filtered",
+        "webhook",
+        url=f"{sink.url}/filtered",
+        credential_filter=("sonarr_api_key",),
+    )
+    log.record_rotation_event(
+        "rotation_failed", "seerr_api_key", "a different credential", origin="user"
+    )
+    log.record_rotation_event(
+        "rotation_failed", "sonarr_api_key", "a hook wrote this", origin="hook"
+    )
+    notifier.tick()
+    assert sink.requests == [], "a filtered or hook-origin event reached the sink"
+
+    notifier.save_service(
+        "filtered",
+        "webhook",
+        url=f"{sink.url}/filtered",
+        credential_filter=("sonarr_api_key",),
+        allow_hook_origin=True,
+    )
+    notifier.tick()
+    documents = [json.loads(request["body"]) for request in sink.requests]
+    # The service's update floor is now, so the events recorded before the
+    # edit are history; prove the filter itself on the next event instead.
+    assert documents == []
+    log.record_rotation_event(
+        "rotation_failed", "seerr_api_key", "still filtered", origin="user"
+    )
+    log.record_rotation_event(
+        "rotation_failed", "sonarr_api_key", "a hook event", origin="hook"
+    )
+    notifier.tick()
+    delivered = [json.loads(request["body"]) for request in sink.requests]
+    assert [event["credential"] for event in delivered] == ["sonarr_api_key"]
+    assert delivered[0]["origin"] == "hook"
+
+
 def test_the_one_sink_per_type_rows_migrate_into_named_services(app, sink) -> None:
     """The old table becomes services named after their kind, the old table is
     dropped, and a delivery row written against `ntfy` stays attached to the
@@ -1003,8 +1054,8 @@ def test_the_one_sink_per_type_rows_migrate_into_named_services(app, sink) -> No
             "topic TEXT, token TEXT, secret TEXT, updated_at REAL NOT NULL)"
         )
         connection.execute(
-            "INSERT INTO notification_sinks VALUES (?, ?, 'credarr', 'ntfy-token', NULL, 0.0)",
-            ("ntfy", sink.url),
+            "INSERT INTO notification_sinks VALUES (?, ?, 'credarr', 'ntfy-token', NULL, ?)",
+            ("ntfy", sink.url, time.time()),
         )
     log.record_test_event("ntfy")
 

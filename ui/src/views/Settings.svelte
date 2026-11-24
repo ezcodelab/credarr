@@ -14,6 +14,7 @@
   import { deviceLabel } from "../lib/device.js";
   import { clearDraft } from "../lib/setup.js";
   import { toast } from "../lib/toast.js";
+  import AgentsSync from "../lib/AgentsSync.svelte";
   import NotificationServices from "../lib/NotificationServices.svelte";
   import Topology from "./Topology.svelte";
 
@@ -64,6 +65,7 @@
   let keysError = $state("");
   let newKey = $state(null);
   let keyCopied = $state(false);
+  let keyOrigin = $state("user");
   let revokingKey = $state(0);
   let revokeKeyId = $state(0);
 
@@ -215,7 +217,11 @@
     keysError = "";
     keyCopied = false;
     try {
-      const answer = await api("/keys", { method: "POST", timeout: 10_000 });
+      const answer = await api("/keys", {
+        method: "POST",
+        body: { origin: keyOrigin },
+        timeout: 10_000,
+      });
       if (!answer?.key || !answer?.id) {
         throw new Error("the server returned no key");
       }
@@ -576,9 +582,18 @@
     <div>
       <h3>API keys</h3>
     </div>
-    <button type="button" onclick={createKey} disabled={keysBusy}>
-      {keysBusy && !keys ? "Loading…" : "Create API key"}
-    </button>
+    <div class="toolbar">
+      <label class="field">
+        Origin
+        <select bind:value={keyOrigin}>
+          <option value="user">User action</option>
+          <option value="hook">Hook</option>
+        </select>
+      </label>
+      <button type="button" onclick={createKey} disabled={keysBusy}>
+        {keysBusy && !keys ? "Loading…" : "Create API key"}
+      </button>
+    </div>
   </div>
   {#if keysError}<Banner tone="danger">{keysError}</Banner>{/if}
   {#if newKey}
@@ -614,6 +629,7 @@
             </div>
             <div class="session-meta muted">
               <span>Created {timestamp(item.created_at)}</span>
+              <span>origin {item.origin ?? "user"}</span>
               {#if item.last_used_at}
                 <span>Last used {timestamp(item.last_used_at)}</span>
               {:else}
@@ -652,6 +668,8 @@
     oncancel={() => (resetOpen = false)}
   />
 {/if}
+
+<AgentsSync onsignout={onsignout} />
 
 <NotificationServices onsignout={onsignout} />
 

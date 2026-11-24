@@ -57,6 +57,8 @@ src/credarr/writers.py      holders: who can write a value into what
 src/credarr/targets.py      the static target registry (no local read path)
 src/credarr/provenance.py   the version each capability was measured against;
                             managed vs monitor-only; display claims only
+src/credarr/strategy.py     the create/set/test/finish view of a plan, with
+                            provenance and no rotatable claim it cannot prove
 src/credarr/transport.py    run_python(code); local subprocess for API calls
 src/credarr/journal.py      SQLite: attempts, steps, locks, holders
 src/credarr/transaction.py  one BEGIN IMMEDIATE block, committed or rolled
@@ -82,8 +84,8 @@ src/credarr_server/store.py the topology store: the manifest as rows, imported
 src/credarr_server/app.py   the BFF process: the audit loop thread, the CLI
                             bootstrap, and the health signal when it dies
 src/credarr_server/api/{auth,context,credential_edit,credentials,http,models,
-                        notifications,payloads,rotation,service_edit,services,
-                        status,topology,values}.py
+                        notifications,payloads,rotation,secrets,service_edit,
+                        services,status,sync,topology,values}.py
                             the /api/v1 surface split by domain behind one
                             ApiContext, which carries the process state and
                             the shared write guards
@@ -104,6 +106,19 @@ src/credarr_server/auto_rotation.py
                             whether a due credential may run unattended
 src/credarr_server/audit_jobs.py
                             one long audit as a server-side job
+src/credarr_server/{database,event_schema,reveal}.py
+                            one SQLite connection contract, the shared event
+                            ledger shape, and the audit-only reveal throttle
+src/credarr_server/vault.py
+                            the versioned AES-256-GCM store, KEK keyring,
+                            lifecycle, generations and sync outbox
+src/credarr_server/kek_cli.py
+                            `credarr-kek` status, init and rewrap
+src/credarr_server/{sync_store,agent_control}.py
+                            durable delivery jobs and the mTLS agent listener
+src/credarr_agent/{cli,client}.py
+                            the outbound agent: enrollment, pull, allowlisted
+                            compose deploys; Docker lives here, never in the BFF
 src/credarr_server/mounts.py
                             a filesystem that can hold the app's paths
 ui/                         the SPA (Svelte + Vite); `make web` builds it into

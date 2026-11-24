@@ -20,7 +20,7 @@ from credarr_server.api.http import (
     _unauthorized,
     new_routers,
 )
-from credarr_server.api.models import LoginBody, PasswordBody, SetupBody
+from credarr_server.api.models import ApiKeyBody, LoginBody, PasswordBody, SetupBody
 from credarr_server.auth import (
     InvalidCredentials,
     LoginLocked,
@@ -156,10 +156,10 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
         return {"ok": True}
 
     @authed.post("/keys")
-    def create_key() -> dict[str, Any]:
+    def create_key(body: ApiKeyBody | None = None) -> dict[str, Any]:
         """Issue an API key; the response is the only time it exists in clear."""
-        key_id, key = auth.create_key()
-        return {"id": key_id, "key": key}
+        key_id, key = auth.create_key(body.origin if body else "user")
+        return {"id": key_id, "key": key, "origin": body.origin if body else "user"}
 
     @authed.get("/keys")
     def list_keys() -> list[dict[str, Any]]:
@@ -167,6 +167,7 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
             {
                 "id": key.id,
                 "prefix": key.prefix,
+                "origin": key.origin,
                 "created_at": key.created_at,
                 "last_used_at": key.last_used_at,
             }
