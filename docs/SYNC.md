@@ -105,6 +105,32 @@ the job's credential is never touched. The lifecycle API remains available
 outside the console; the visible app action is Delete, which removes the
 Credarr record only.
 
+### Homepage-style label consumers
+
+Homepage discovers services from Docker labels. Each app compose carries
+`homepage.widget.key=${HOMEPAGE_VAR_<SERVICE>...}`, and that variable is read
+from **that app's own** `.env` at container creation. Homepage is not the
+writer and does not need its own copies of the keys.
+
+The env target is therefore one per app, not one for Homepage:
+
+| Stack | Env key | Credential |
+| --- | --- | --- |
+| `sonarr` | `HOMEPAGE_VAR_SONARR_API_KEY` | `sonarr_api_key` |
+| `radarr` | `HOMEPAGE_VAR_RADARR_API_KEY` | `radarr_api_key` |
+| `prowlarr` | `HOMEPAGE_VAR_PROWLARR_API_KEY` | `prowlarr_api_key` |
+| `seerr` | `HOMEPAGE_VAR_SEERR_API_KEY` | `seerr_api_key` |
+| `jellyfin` | `HOMEPAGE_VAR_JELLYFIN_API_TOKEN` | `jellyfin_api_key` |
+| `gluetun` (qBittorrent service) | `HOMEPAGE_VAR_QBITTORRENT_API_KEY` | `qbittorrent_api_key` |
+
+The agent updates the app's `.env`, then recreates the declared app service.
+Docker labels are fixed at container creation, so the app container must be
+recreated for Homepage to see the new key. Homepage itself does not need a
+restart: its dashboard cache is cleared by `POST /api/revalidate` (the refresh
+icon), after which it reads the new labels. A live check returned
+`{"revalidated":true}`. Without that cache invalidation, Homepage can keep
+serving its previous dashboard data even though the label is current.
+
 ## Starting a custom workflow from an event
 
 The existing signed notification webhook is the event trigger. Configure a

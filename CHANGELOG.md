@@ -1,6 +1,14 @@
 # Changelog
 
-######## 1.3.6 — 2026-11-24
+## 1.3.7 — 2026-11-24
+
+- Put **Enroll agent** in the Agents pane header, matching **New target** in
+  the Targets pane; the section header keeps only Refresh.
+- Document per-app Homepage delivery: each app's own env file carries its
+  `HOMEPAGE_VAR_*` label value, the app container is recreated, and Homepage
+  revalidates its cached dashboard data without a Homepage restart.
+
+## 1.3.6 — 2026-11-24
 
 - Redesign Agents & sync: compact listener status, agents and targets side by
   side, one New target action, a two-choice target editor (Restart services /
@@ -9,13 +17,13 @@
 - API keys become a proper table with one Create key action; origin moves into
   the create step instead of competing with the section title.
 
-# 1.3.5 — 2026-11-24
+## 1.3.5 — 2026-11-24
 
 - An `env` target creates jobs only for credentials named in its key mapping.
   A value for an unrelated credential no longer queues a job that would fail
   with "no key for this credential".
 
-# 1.3.4 — 2026-11-24
+## 1.3.4 — 2026-11-24
 
 - Ship the Docker CLI and compose plugin in the image so the separate agent
   stack can run its fixed `compose`/`env` workflows. The BFF still has no
@@ -23,7 +31,7 @@
 - The agent runs as the infra user with only the Docker group added; no root
   process in the container.
 
-# 1.3.3 — 2026-11-24
+## 1.3.3 — 2026-11-24
 
 - The agent gains a generic `env` workflow: allowlisted stack root, relative
   env file, declared `ENV_KEY -> credential` mapping, atomic `0600` rewrite,
@@ -35,7 +43,7 @@
   GitOps/Lambda trigger: credential, version and generation, never a value.
 - Console target authoring accepts the `env` workflow and mapping.
 
-# 1.3.2 — 2026-11-24
+## 1.3.2 — 2026-11-24
 
 - Reveal is one press and an inline value beside the button; no dialog, stage
   picker or audit checkbox. The audit and the 30-second auto-clear remain.
@@ -43,7 +51,7 @@
   removes the Credarr record and stored copy only; the live service secret is
   untouched. The lifecycle API remains available for callers that need it.
 
-# 1.3.1 — 2026-11-24
+## 1.3.1 — 2026-11-24
 
 Fix the first-boot migration and tighten the two new console surfaces.
 
@@ -57,7 +65,7 @@ Fix the first-boot migration and tighten the two new console surfaces.
 - The lifecycle section is now "Delete or recover" with the same card, muted
   copy, field and toolbar pattern as the rest of the app detail.
 
-# 1.3.0 — 2026-11-23
+## 1.3.0 — 2026-11-23
 
 The next-generation value lifecycle: an encrypted version store, audited Reveal,
 soft delete, adoption, durable sync jobs and an mTLS deploy agent.
