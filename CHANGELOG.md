@@ -1,6 +1,15 @@
 # Changelog
 
-####### 1.3.5 — 2026-11-24
+######## 1.3.6 — 2026-11-24
+
+- Redesign Agents & sync: compact listener status, agents and targets side by
+  side, one New target action, a two-choice target editor (Restart services /
+  Write env file) that reveals only the fields the choice needs, and recent
+  deliveries folded away by default.
+- API keys become a proper table with one Create key action; origin moves into
+  the create step instead of competing with the section title.
+
+# 1.3.5 — 2026-11-24
 
 - An `env` target creates jobs only for credentials named in its key mapping.
   A value for an unrelated credential no longer queues a job that would fail

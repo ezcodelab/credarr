@@ -1643,7 +1643,8 @@ async function main() {
     await page.locator("aside .nav-sub button").filter({ hasText: /^API keys$/ }).click();
     await page.locator("#settings-keys").waitFor();
     check("the API keys section is reachable from the Settings menu", true);
-    await page.locator("#settings-keys").getByRole("button", { name: "Create API key" }).click();
+    await page.locator("#settings-keys").getByRole("button", { name: "Create key" }).click();
+    await page.locator("#settings-keys").getByRole("button", { name: "Create", exact: true }).click();
     const keyField = page.getByRole("textbox", { name: "New API key" });
     await keyField.waitFor();
     const apiKey = await keyField.inputValue();
@@ -1658,17 +1659,30 @@ async function main() {
     const listedKeys = await listed.json();
     const created = listedKeys.find((item) => item.prefix && apiKey.startsWith(item.prefix));
     check("the list names the key by prefix only, never the value", Boolean(created));
+    check(
+      "API keys are a table, not an improvised list",
+      await page.locator("#settings-keys thead").getByText("Origin", { exact: true }).isVisible(),
+    );
+
     await page
-      .locator("#settings-keys li")
+      .locator("#settings-keys tr")
       .filter({ hasText: `${created.prefix}…` })
       .getByRole("button", { name: "Revoke" })
       .click();
-    await page.getByRole("button", { name: "Confirm revoke" }).click();
+    await page.getByRole("button", { name: "Confirm", exact: true }).click();
     await page.waitForFunction(
       (prefix) => !document.querySelector("#settings-keys")?.innerText.includes(prefix),
       created.prefix,
     );
     check("an API key can be revoked from Settings", true);
+    await page.locator("#settings-agents").scrollIntoViewIfNeeded();
+    await page.locator("#settings-agents").getByRole("button", { name: "New target" }).click();
+    check(
+      "a target editor starts with the two supported types",
+      (await page.getByRole("button", { name: "Restart services", exact: true }).isVisible()) &&
+        (await page.getByRole("button", { name: "Write env file", exact: true }).isVisible()),
+    );
+    await page.locator("#settings-agents").getByRole("button", { name: "Cancel", exact: true }).click();
 
     // The Profilarr pattern: a list with Add service, then a form page with a
     // type dropdown and the fields that type needs.
