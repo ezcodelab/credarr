@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS app_api_keys (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     key_hash     TEXT    NOT NULL UNIQUE,
     prefix       TEXT    NOT NULL,
+    origin       TEXT    NOT NULL DEFAULT 'user',
     created_at   REAL    NOT NULL,
     last_used_at REAL
 );
@@ -132,6 +133,7 @@ class ApiKey:
     prefix: str
     created_at: float
     last_used_at: float | None
+    origin: str = "user"
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +173,14 @@ class AdminAuth:
         self.path = Path(path)
         initialise(self.path, SCHEMA)
         self._hasher = PasswordHasher()
+        with connect(self.path) as connection:
+            columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(app_api_keys)")
+            }
+            if "origin" not in columns:
+                connection.execute(
+                    "ALTER TABLE app_api_keys ADD COLUMN origin TEXT NOT NULL DEFAULT 'user'"
+                )
         # One process owns /config, so this is the exact lockout bound; the
         # database keeps the durable state across restarts.
         self._login_lock = threading.Lock()
@@ -519,20 +529,29 @@ class AdminAuth:
             ).fetchall()
         return tuple(_session_from_row(row) for row in rows)
 
-    def create_key(self) -> tuple[int, str]:
+    def create_key(self, origin: str = "user") -> tuple[int, str]:
         """Issue a key and return `(id, key)`; this is the only clear copy."""
+        if origin not in ("user", "hook"):
+            raise ValueError("an API key origin is 'user' or 'hook'")
         key = KEY_PREFIX + secrets.token_urlsafe(32)
         with connect(self.path) as connection:
             cursor = connection.execute(
-                "INSERT INTO app_api_keys (key_hash, prefix, created_at) VALUES (?, ?, ?)",
-                (_key_hash(key), key[: len(KEY_PREFIX) + _DISPLAY_CHARS], time.time()),
+                "INSERT INTO app_api_keys (key_hash, prefix, origin, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    _key_hash(key),
+                    key[: len(KEY_PREFIX) + _DISPLAY_CHARS],
+                    origin,
+                    time.time(),
+                ),
             )
         return cursor.lastrowid, key
 
     def list_keys(self) -> tuple[ApiKey, ...]:
         with connect(self.path) as connection:
             rows = connection.execute(
-                "SELECT id, prefix, created_at, last_used_at FROM app_api_keys ORDER BY id"
+                "SELECT id, prefix, origin, created_at, last_used_at "
+                "FROM app_api_keys ORDER BY id"
             ).fetchall()
         return tuple(
             ApiKey(
@@ -540,9 +559,18 @@ class AdminAuth:
                 prefix=row["prefix"],
                 created_at=row["created_at"],
                 last_used_at=row["last_used_at"],
+                origin=row["origin"] or "user",
             )
             for row in rows
         )
+
+    def key_origin(self, key_id: int) -> str:
+        """The origin a stored key was issued with, for event attribution."""
+        with connect(self.path) as connection:
+            row = connection.execute(
+                "SELECT origin FROM app_api_keys WHERE id = ?", (key_id,)
+            ).fetchone()
+        return (row["origin"] if row else "user") or "user"
 
     def revoke_key(self, key_id: int) -> bool:
         """Delete a key; True when one was there to delete."""

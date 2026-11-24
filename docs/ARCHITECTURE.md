@@ -57,6 +57,8 @@ src/credarr/writers.py      holders: who can write a value into what
 src/credarr/targets.py      the static target registry (no local read path)
 src/credarr/provenance.py   the version each capability was measured against;
                             managed vs monitor-only; display claims only
+src/credarr/strategy.py     the create/set/test/finish view of a plan, with
+                            provenance and no rotatable claim it cannot prove
 src/credarr/transport.py    run_python(code); local subprocess for API calls
 src/credarr/journal.py      SQLite: attempts, steps, locks, holders
 src/credarr/transaction.py  one BEGIN IMMEDIATE block, committed or rolled
@@ -104,9 +106,9 @@ src/credarr_server/auto_rotation.py
                             whether a due credential may run unattended
 src/credarr_server/audit_jobs.py
                             one long audit as a server-side job
-src/credarr_server/{database,event_schema}.py
-                            one SQLite connection contract and the shared
-                            event ledger shape
+src/credarr_server/{database,event_schema,reveal}.py
+                            one SQLite connection contract, the shared event
+                            ledger shape, and the audited reveal throttle
 src/credarr_server/vault.py
                             the encrypted version store, KEK keyring,
                             lifecycle, generations and sync outbox

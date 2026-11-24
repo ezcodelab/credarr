@@ -30,6 +30,14 @@ from credarr_server.source import (
     stored_service_keys,
 )
 from credarr_server.store import UnknownCredential
+from credarr_server.vault import KekUnavailable
+
+
+def _canonical(store: Any, name: str) -> Secret | None:
+    try:
+        return store.get_value(name)
+    except KekUnavailable as exc:
+        raise HTTPException(status_code=503, detail=exc.render()) from None
 
 
 def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
@@ -59,6 +67,11 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
         (a missing URL or stored key) carries the failing error's own code,
         which is the code `rotate --dry-run` returns.
         """
+        if store.vault.lifecycle(name) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{name} is soft-deleted; restore it before rotating",
+            )
         try:
             manifest = rotation_manifest(store, name)
         except UnknownCredential:
@@ -78,7 +91,7 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
                 credential=credential,
                 host=host,
                 journal=facade.journal_for(config),
-                canonical=store.get_value(name),
+                canonical=_canonical(store, name),
                 take_over=take_over,
                 service_keys=service_keys,
                 pending=StorePending(store),
@@ -144,13 +157,21 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
         paths; nothing here changes a credential or a service. A key must be
         stored first because every check authenticates with it.
         """
+        if store.vault.lifecycle(name) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{name} is soft-deleted; restore it before rotating",
+            )
         try:
             manifest = rotation_manifest(store, name)
         except UnknownCredential:
             raise HTTPException(
                 status_code=404, detail=f"no credential named {name}"
             ) from None
-        canonical = store.get_value(name)
+        try:
+            canonical = store.get_value(name)
+        except KekUnavailable as exc:
+            raise HTTPException(status_code=503, detail=exc.render()) from None
         if canonical is None:
             raise HTTPException(
                 status_code=409,
@@ -264,7 +285,7 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
                     plan=plan,
                     credential=credential,
                     host=host,
-                    secrets=StoreSource(store),
+                    secrets=StoreSource(store, actor=actor, origin="user"),
                     journal=facade.journal_for(config),
                     canonical=None,
                     canonical_getter=lambda: store.get_value(name),
@@ -275,6 +296,8 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
                     mint_values=mint_values,
                     provided=Secret(provided) if provided else None,
                 )
+            except KekUnavailable as exc:
+                raise HTTPException(status_code=503, detail=exc.render()) from None
             except JournalLocked as exc:
                 # Another run holds the credential lease. The stack lease is
                 # already held above, so this names the real conflict.

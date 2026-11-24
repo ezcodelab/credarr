@@ -9,8 +9,8 @@ from __future__ import annotations
 import contextlib
 import time
 from collections.abc import Iterator
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 
@@ -23,11 +23,13 @@ from credarr_server.audit_jobs import AuditJobs
 from credarr_server.audit_log import AuditLog
 from credarr_server.auth import AdminAuth
 from credarr_server.notifier import DeliveryLoop, Notifier
+from credarr_server.reveal import RevealLimiter
 from credarr_server.scheduler import Scheduler
 from credarr_server.store import TopologyStore
 
 if TYPE_CHECKING:
     from credarr_server.app import AuditLoop, ServerSettings
+    from credarr_server.sync_store import SyncStore
 
 
 @dataclass(slots=True)
@@ -46,6 +48,20 @@ class ApiContext:
     config: Config
     scheduler: Scheduler
     registry: TargetRegistry
+    reveal: RevealLimiter = field(default_factory=RevealLimiter)
+    sync: SyncStore | None = None
+    sync_loop: Any = None
+    agent_plane: Any = None
+    maintenance: Any = None
+
+    def origin_for(self, actor: str) -> str:
+        """Who caused a write: a browser admin or an automation key's origin."""
+        if actor.startswith("key:"):
+            try:
+                return self.auth.key_origin(int(actor.split(":", 1)[1]))
+            except (ValueError, TypeError):
+                return "user"
+        return "user"
 
     def unfinished_rotation(self, name: str, journal: Journal) -> str | None:
         """Why this credential cannot be edited yet, or None when it is clear."""
