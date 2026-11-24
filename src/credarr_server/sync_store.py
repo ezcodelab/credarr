@@ -263,6 +263,17 @@ def _target(row: Any) -> SyncTarget:
     )
 
 
+def _target_covers(target_row: Any, credential: str) -> bool:
+    """Whether this target declares an env key for the credential."""
+    if target_row["workflow"] != "env":
+        return True
+    try:
+        values = json.loads(target_row["values_json"] or "{}")
+    except (TypeError, ValueError):
+        return False
+    return credential in values.values() if isinstance(values, dict) else False
+
+
 def _agent(row: Any) -> Agent:
     try:
         capabilities = tuple(json.loads(row["capabilities"]))
@@ -512,6 +523,11 @@ class SyncStore:
             from credarr.transaction import transaction
 
             with transaction(connection):
+                target_row = connection.execute(
+                    "SELECT * FROM sync_targets WHERE id = ?", (target_id,)
+                ).fetchone()
+                if target_row is None:
+                    return 0
                 rows = connection.execute(
                     "SELECT sv.credential, sv.id AS version_id, g.id AS generation_id "
                     "FROM secret_versions sv "
@@ -522,6 +538,8 @@ class SyncStore:
                     "                WHERE l.credential = sv.credential)"
                 ).fetchall()
                 for row in rows:
+                    if not _target_covers(target_row, row["credential"]):
+                        continue
                     active = connection.execute(
                         "SELECT 1 FROM sync_jobs WHERE credential = ? AND target_id = ? "
                         "AND state IN ('queued','leased','running','retry_wait')",
@@ -788,6 +806,8 @@ class SyncStore:
                 ).fetchall()
                 blocked = False
                 for target_row in targets:
+                    if not _target_covers(target_row, credential):
+                        continue
                     active = connection.execute(
                         "SELECT state, value_version FROM sync_jobs "
                         "WHERE credential = ? AND target_id = ? "
