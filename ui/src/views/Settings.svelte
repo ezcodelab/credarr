@@ -66,6 +66,7 @@
   let newKey = $state(null);
   let keyCopied = $state(false);
   let keyOrigin = $state("user");
+  let keyFormOpen = $state(false);
   let revokingKey = $state(0);
   let revokeKeyId = $state(0);
 
@@ -226,6 +227,7 @@
         throw new Error("the server returned no key");
       }
       newKey = { id: answer.id, key: answer.key };
+      keyFormOpen = false;
       await loadKeys();
     } catch (failure) {
       if (failure instanceof ApiError && failure.status === 401) {
@@ -579,82 +581,69 @@
 
 <section class="card section" id="settings-keys">
   <div class="section-head">
-    <div>
-      <h3>API keys</h3>
-    </div>
-    <div class="toolbar">
-      <label class="field">
-        Origin
-        <select bind:value={keyOrigin}>
-          <option value="user">User action</option>
-          <option value="hook">Hook</option>
-        </select>
-      </label>
-      <button type="button" onclick={createKey} disabled={keysBusy}>
-        {keysBusy && !keys ? "Loading…" : "Create API key"}
-      </button>
-    </div>
+    <div><h3>API keys</h3></div>
+    <button class="primary" type="button" onclick={() => (keyFormOpen = !keyFormOpen)}>
+      {keyFormOpen ? "Cancel" : "Create key"}
+    </button>
   </div>
   {#if keysError}<Banner tone="danger">{keysError}</Banner>{/if}
+  {#if keyFormOpen}
+    <div class="key-create">
+      <select bind:value={keyOrigin} aria-label="Key origin">
+        <option value="user">User</option>
+        <option value="hook">Hook</option>
+      </select>
+      <button class="primary" type="button" onclick={createKey} disabled={keysBusy}>
+        {keysBusy ? "Creating…" : "Create"}
+      </button>
+    </div>
+  {/if}
   {#if newKey}
     <div class="setup-key" aria-labelledby="settings-new-key">
       <div class="setup-key-head">
-        <h4 id="settings-new-key">Your new API key</h4>
-        <span class="pill">one-time display</span>
+        <h4 id="settings-new-key">New key</h4>
+        <span class="pill">shown once</span>
       </div>
-      <p class="muted">
-        The server will not show it again. Copy it now; it stays valid until
-        revoked.
-      </p>
       <div class="setup-key-row">
         <input readonly value={newKey.key} aria-label="New API key" autocomplete="off" spellcheck="false" />
-        <button type="button" onclick={copyNewKey}>
-          {keyCopied ? "Copied" : "Copy"}
-        </button>
-        <button type="button" onclick={() => (newKey = null)}>
-          Done
-        </button>
+        <button type="button" onclick={copyNewKey}>{keyCopied ? "Copied" : "Copy"}</button>
+        <button type="button" onclick={() => (newKey = null)}>Done</button>
       </div>
     </div>
   {/if}
   {#if keys === null && keysBusy}
     <p class="muted">Loading keys…</p>
   {:else if keys?.length}
-    <ul class="session-list">
-      {#each keys as item (item.id)}
-        <li class="session-row">
-          <div class="session-main">
-            <div class="session-title">
-              <strong><code>{item.prefix}…</code></strong>
-            </div>
-            <div class="session-meta muted">
-              <span>Created {timestamp(item.created_at)}</span>
-              <span>origin {item.origin ?? "user"}</span>
-              {#if item.last_used_at}
-                <span>Last used {timestamp(item.last_used_at)}</span>
-              {:else}
-                <span>Never used</span>
-              {/if}
-            </div>
-          </div>
-          <button
-            class="danger"
-            type="button"
-            onclick={() =>
-              revokeKeyId === item.id ? revokeKey(item) : (revokeKeyId = item.id)}
-            disabled={revokingKey !== 0}
-          >
-            {revokingKey === item.id
-              ? "Revoking…"
-              : revokeKeyId === item.id
-                ? "Confirm revoke"
-                : "Revoke"}
-          </button>
-        </li>
-      {/each}
-    </ul>
+    <table class="keys-table">
+      <thead><tr><th>Key</th><th>Origin</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+      <tbody>
+        {#each keys as item (item.id)}
+          <tr>
+            <td><code>{item.prefix}…</code></td>
+            <td>{item.origin ?? "user"}</td>
+            <td>{timestamp(item.created_at)}</td>
+            <td>{item.last_used_at ? timestamp(item.last_used_at) : "Never"}</td>
+            <td class="row-action">
+              <button
+                class="danger"
+                type="button"
+                onclick={() =>
+                  revokeKeyId === item.id ? revokeKey(item) : (revokeKeyId = item.id)}
+                disabled={revokingKey !== 0}
+              >
+                {revokingKey === item.id
+                  ? "Revoking…"
+                  : revokeKeyId === item.id
+                    ? "Confirm"
+                    : "Revoke"}
+              </button>
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
   {:else}
-    <p class="muted">No API keys. Create one to use the API from a script.</p>
+    <p class="muted">No keys.</p>
   {/if}
 </section>
 
@@ -668,6 +657,21 @@
     oncancel={() => (resetOpen = false)}
   />
 {/if}
+
+<style>
+  .key-create {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 0.2rem 0 0.9rem;
+  }
+  .key-create select { max-width: 10rem; }
+  .keys-table .row-action {
+    width: 1%;
+    text-align: right;
+    white-space: nowrap;
+  }
+</style>
 
 <AgentsSync onsignout={onsignout} />
 
