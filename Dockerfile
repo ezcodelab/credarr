@@ -14,6 +14,11 @@ RUN npm ci
 COPY ui/ ./
 RUN npm run build
 
+# The agent runs fixed `docker compose` workflows. The CLI lives in the agent
+# image, never the socket: the BFF image has no Docker endpoint and no compose
+# privilege without one.
+FROM docker:27-cli AS dockercli
+
 FROM python:3.12-slim-bookworm AS wheel
 WORKDIR /src
 COPY pyproject.toml README.md LICENSE ./
@@ -43,6 +48,12 @@ RUN apt-get update \
 
 COPY --from=wheel /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+# The agent's fixed workflow needs the Docker CLI and the compose plugin. The
+# socket is mounted only into the agent stack, never the BFF.
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+RUN mkdir -p /usr/local/libexec/docker/cli-plugins
+COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-compose \
+    /usr/local/libexec/docker/cli-plugins/docker-compose
 COPY docker/entrypoint.sh /usr/local/bin/credarr-entrypoint
 RUN chmod 0755 /usr/local/bin/credarr-entrypoint
 
