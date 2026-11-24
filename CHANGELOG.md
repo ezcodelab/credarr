@@ -1,6 +1,14 @@
 # Changelog
 
-##### 1.3.3 — 2026-11-24
+###### 1.3.4 — 2026-11-24
+
+- Ship the Docker CLI and compose plugin in the image so the separate agent
+  stack can run its fixed `compose`/`env` workflows. The BFF still has no
+  Docker socket and no compose privilege without one.
+- The agent runs as the infra user with only the Docker group added; no root
+  process in the container.
+
+# 1.3.3 — 2026-11-24
 
 - The agent gains a generic `env` workflow: allowlisted stack root, relative
   env file, declared `ENV_KEY -> credential` mapping, atomic `0600` rewrite,
