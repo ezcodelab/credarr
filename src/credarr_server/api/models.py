@@ -303,6 +303,8 @@ class SyncTargetBody(BaseModel):
     project_name: str = Field(min_length=1, max_length=64)
     services: list[str] = Field(min_length=1, max_length=64)
     workflow: str = Field(default="compose", max_length=32)
+    env_file: str | None = Field(default=None, max_length=1024)
+    values: dict[str, str] = Field(default_factory=dict)
     enabled: bool = True
 
 
@@ -315,6 +317,8 @@ class SyncTargetPatch(BaseModel):
     project_name: str | None = Field(default=None, min_length=1, max_length=64)
     services: list[str] | None = Field(default=None, min_length=1, max_length=64)
     workflow: str | None = Field(default=None, max_length=32)
+    env_file: str | None = Field(default=None, max_length=1024)
+    values: dict[str, str] | None = None
     enabled: bool | None = None
 
 

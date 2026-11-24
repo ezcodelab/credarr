@@ -47,6 +47,8 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
                     project_name=body.project_name,
                     services=tuple(body.services),
                     workflow=body.workflow,
+                    env_file=body.env_file,
+                    values=body.values,
                     enabled=body.enabled,
                 )
             except SyncError as exc:
@@ -70,6 +72,12 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
                     project_name=body.project_name or existing.project_name,
                     services=tuple(body.services or existing.services),
                     workflow=body.workflow or existing.workflow,
+                    env_file=(
+                        existing.env_file if body.env_file is None else body.env_file
+                    ),
+                    values=(
+                        existing.values if body.values is None else body.values
+                    ),
                     enabled=existing.enabled if body.enabled is None else body.enabled,
                     identifier=existing.id,
                 )

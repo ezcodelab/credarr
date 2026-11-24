@@ -25,6 +25,9 @@
   let targetPath = $state("");
   let targetProject = $state("");
   let targetServices = $state("");
+  let targetWorkflow = $state("compose");
+  let targetEnvFile = $state("");
+  let targetValues = $state("");
   let targetBusy = $state(false);
 
   async function load() {
@@ -79,6 +82,15 @@
     }
   }
 
+  function valueMap() {
+    const values = {};
+    for (const line of targetValues.split("\n")) {
+      const [key, credential] = line.split("=", 2).map((item) => item.trim());
+      if (key && credential) values[key] = credential;
+    }
+    return values;
+  }
+
   async function addTarget(event) {
     event.preventDefault();
     if (targetBusy) return;
@@ -96,7 +108,9 @@
             .split(",")
             .map((item) => item.trim())
             .filter(Boolean),
-          workflow: "compose",
+          workflow: targetWorkflow,
+          env_file: targetWorkflow === "env" ? targetEnvFile.trim() : null,
+          values: targetWorkflow === "env" ? valueMap() : {},
           enabled: true,
         },
       });
@@ -104,6 +118,8 @@
       targetPath = "";
       targetProject = "";
       targetServices = "";
+      targetEnvFile = "";
+      targetValues = "";
       message = "Target saved.";
       await load();
     } catch (failure) {
@@ -220,12 +236,13 @@
       <p class="muted">No target is declared.</p>
     {:else}
       <table class="table">
-        <thead><tr><th>Name</th><th>Agent</th><th>Stack</th><th>Services</th><th>On</th></tr></thead>
+        <thead><tr><th>Name</th><th>Agent</th><th>Workflow</th><th>Stack</th><th>Services</th><th>On</th></tr></thead>
         <tbody>
           {#each targets as target (target.id)}
             <tr>
               <td>{target.name}</td>
               <td>{agents.find((item) => item.id === target.agent_id)?.name ?? target.agent_id}</td>
+              <td>{target.workflow}{target.env_file ? ` · ${target.env_file}` : ""}</td>
               <td>{target.project_name} · {target.stack_path}</td>
               <td>{target.services.join(", ")}</td>
               <td>{target.enabled ? "yes" : "no"}</td>
@@ -260,10 +277,32 @@
         Services
         <input bind:value={targetServices} placeholder="sonarr, seerr" autocomplete="off" />
       </label>
+      <label class="field">
+        Workflow
+        <select bind:value={targetWorkflow}>
+          <option value="compose">compose</option>
+          <option value="env">env file</option>
+        </select>
+      </label>
+      {#if targetWorkflow === "env"}
+        <label class="field">
+          Env file
+          <input bind:value={targetEnvFile} placeholder=".env" autocomplete="off" />
+        </label>
+        <label class="field">
+          Env keys
+          <textarea
+            bind:value={targetValues}
+            rows="3"
+            placeholder="HOMEPAGE_VAR_SONARR_API_KEY=sonarr_api_key"
+            spellcheck="false"
+          ></textarea>
+        </label>
+      {/if}
       <div class="toolbar">
         <button
           type="submit"
-          disabled={targetBusy || !sync?.tree_configured || !targetAgent || !targetName.trim() || !targetPath.trim() || !targetProject.trim()}
+          disabled={targetBusy || !sync?.tree_configured || !targetAgent || !targetName.trim() || !targetPath.trim() || !targetProject.trim() || (targetWorkflow === "env" && (!targetEnvFile.trim() || !targetValues.trim()))}
         >
           {targetBusy ? "Saving…" : "Add target"}
         </button>

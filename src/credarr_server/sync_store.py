@@ -26,7 +26,7 @@ import hashlib
 import json
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +39,7 @@ SYNC_STATES = ("queued", "leased", "running", "retry_wait", "delivered", "failed
 ACTIVE_STATES = ("queued", "leased", "running", "retry_wait")
 TERMINAL_STATES = ("delivered", "failed", "cancelled")
 AGENT_STATES = ("enrolled", "active", "offline", "revoked", "disabled")
-WORKFLOWS = ("compose",)
+WORKFLOWS = ("compose", "env")
 
 MAX_ATTEMPTS = 5
 LEASE_SECONDS = 60.0
@@ -84,7 +84,9 @@ CREATE TABLE IF NOT EXISTS sync_targets (
     project_name TEXT NOT NULL,
     services     TEXT NOT NULL,
     workflow     TEXT NOT NULL DEFAULT 'compose'
-                 CHECK (workflow IN ('compose')),
+                 CHECK (workflow IN ('compose','env')),
+    env_file     TEXT,
+    values_json  TEXT NOT NULL DEFAULT '{}',
     enabled      INTEGER NOT NULL DEFAULT 1,
     created_at   REAL NOT NULL,
     updated_at   REAL NOT NULL
@@ -142,6 +144,8 @@ class SyncTarget:
     enabled: bool
     created_at: float
     updated_at: float
+    env_file: str | None = None
+    values: dict[str, str] = field(default_factory=dict)
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -152,6 +156,8 @@ class SyncTarget:
             "project_name": self.project_name,
             "services": list(self.services),
             "workflow": self.workflow,
+            "env_file": self.env_file,
+            "values": dict(self.values),
             "enabled": self.enabled,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -237,6 +243,10 @@ def _target(row: Any) -> SyncTarget:
         services = tuple(json.loads(row["services"]))
     except (TypeError, ValueError):
         services = ()
+    try:
+        values = json.loads(row["values_json"] or "{}")
+    except (TypeError, ValueError):
+        values = {}
     return SyncTarget(
         id=row["id"],
         name=row["name"],
@@ -248,6 +258,8 @@ def _target(row: Any) -> SyncTarget:
         enabled=bool(row["enabled"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        env_file=row["env_file"],
+        values=values if isinstance(values, dict) else {},
     )
 
 
@@ -333,6 +345,38 @@ class SyncStore:
         self.tree_configured = tree_configured
         self.max_attempts = max(1, max_attempts)
         initialise(self.path, SCHEMA)
+        self._migrate_targets()
+
+    def _migrate_targets(self) -> None:
+        """Rebuild the target table for the env workflow on an older store.
+
+        SQLite cannot alter a CHECK constraint in place, and an existing
+        database was created with `workflow IN ('compose')`. The rows are
+        copied; the two new columns get their declared defaults.
+        """
+        with connect(self.path) as connection:
+            columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(sync_targets)")
+            }
+            if "env_file" in columns:
+                return
+            from credarr.transaction import transaction
+
+            start = SCHEMA.index("CREATE TABLE IF NOT EXISTS sync_targets")
+            end = SCHEMA.index("CREATE TABLE IF NOT EXISTS sync_jobs")
+            targets_schema = SCHEMA[start:end]
+            with transaction(connection):
+                connection.execute("ALTER TABLE sync_targets RENAME TO sync_targets_old")
+                connection.execute(targets_schema)
+                connection.execute(
+                    "INSERT INTO sync_targets "
+                    "(id, name, agent_id, stack_path, project_name, services, workflow, "
+                    " env_file, values_json, enabled, created_at, updated_at) "
+                    "SELECT id, name, agent_id, stack_path, project_name, services, "
+                    "       'compose', NULL, '{}', enabled, created_at, updated_at "
+                    "FROM sync_targets_old"
+                )
+                connection.execute("DROP TABLE sync_targets_old")
 
     # -- targets -----------------------------------------------------------
 
@@ -359,6 +403,8 @@ class SyncStore:
         services: tuple[str, ...],
         workflow: str = "compose",
         enabled: bool = True,
+        env_file: str | None = None,
+        values: dict[str, str] | None = None,
         identifier: str | None = None,
     ) -> SyncTarget:
         """Create or replace one target, validating the agent and identity."""
@@ -369,6 +415,26 @@ class SyncStore:
             )
         if workflow not in WORKFLOWS:
             raise SyncError(f"unknown workflow {workflow!r}")
+        values = dict(values or {})
+        if workflow == "env":
+            if not env_file or env_file.startswith("/") or ".." in env_file.split("/"):
+                raise SyncError(
+                    "an env target needs a relative env file path without '..'"
+                )
+            if not values:
+                raise SyncError("an env target needs at least one env-key mapping")
+            for key, credential in values.items():
+                if not key or not key[0].isalpha() or not all(
+                    character.isalnum() or character == "_" for character in key
+                ):
+                    raise SyncError(f"invalid environment key {key!r}")
+                if not credential or any(
+                    character not in "abcdefghijklmnopqrstuvwxyz0123456789_-"
+                    for character in credential
+                ):
+                    raise SyncError(f"invalid credential name {credential!r}")
+        elif env_file or values:
+            raise SyncError("env_file and values are only for the env workflow")
         if not services:
             raise SyncError("a target needs at least one service")
         if not stack_path.startswith("/") or "/../" in stack_path or stack_path.endswith("/.."):
@@ -402,12 +468,13 @@ class SyncStore:
             connection.execute(
                 "INSERT INTO sync_targets "
                 "(id, name, agent_id, stack_path, project_name, services, workflow, "
-                " enabled, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                " env_file, values_json, enabled, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET name = excluded.name, "
                 "agent_id = excluded.agent_id, stack_path = excluded.stack_path, "
                 "project_name = excluded.project_name, services = excluded.services, "
-                "workflow = excluded.workflow, enabled = excluded.enabled, "
+                "workflow = excluded.workflow, env_file = excluded.env_file, "
+                "values_json = excluded.values_json, enabled = excluded.enabled, "
                 "updated_at = excluded.updated_at",
                 (
                     identifier,
@@ -417,6 +484,8 @@ class SyncStore:
                     project_name,
                     json.dumps(sorted(set(services))),
                     workflow,
+                    env_file,
+                    json.dumps(values, sort_keys=True),
                     1 if enabled else 0,
                     now,
                     now,
