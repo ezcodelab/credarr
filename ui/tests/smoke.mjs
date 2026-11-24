@@ -63,6 +63,17 @@ async function until(predicate, what, timeout = 30000) {
   throw new Error(`FAILED: timed out waiting for ${what}`);
 }
 
+// Soft-delete then purge is the product's two-step removal. The confirmation
+// name is typed, and the purge checkbox is an explicit second assertion.
+async function purgeApp(page, name) {
+  await page.getByLabel("Type the credential name to soft-delete").fill(name);
+  await page.getByRole("button", { name: "Soft-delete this key" }).click();
+  await page.getByRole("button", { name: "Purge permanently" }).waitFor();
+  await page.getByLabel("Type the credential name to purge").fill(name);
+  await page.getByLabel("I understand this purge is permanent").check();
+  await page.getByRole("button", { name: "Purge permanently" }).click();
+}
+
 // Automated WCAG A/AA checks. Axe catches contrast, names, roles and other
 // static issues; it cannot judge whether the screen makes sense, so this is a
 // floor alongside the design review, not a replacement for it.
@@ -760,6 +771,26 @@ async function main() {
       "a stored key reads back as redacted bullets, like the service's own field",
       (await page.getByLabel("API key").getAttribute("placeholder")) === "••••••••••••••••",
     );
+
+    // Reveal is the one audited path that returns a value. It must be explicit,
+    // visible only in the dialog, and cleared after its TTL.
+    await page.getByRole("button", { name: "Reveal", exact: true }).click();
+    check(
+      "reveal is explicit and requires the audit acknowledgment",
+      await page.getByLabel("I understand this reveal will be audited").isVisible(),
+    );
+    await page.getByLabel("I understand this reveal will be audited").check();
+    await page.getByRole("button", { name: "Reveal value", exact: true }).click();
+    await page.getByLabel("Revealed credential value").waitFor();
+    check(
+      "the reveal shows the stored value once",
+      (await page.getByLabel("Revealed credential value").inputValue()) === SONARR_KEY,
+    );
+    await page.getByLabel("Revealed credential value").waitFor({ state: "detached", timeout: 40_000 });
+    check(
+      "the revealed value is cleared from the DOM after the TTL",
+      !(await page.content()).includes(SONARR_KEY),
+    );
     await page.getByLabel("API key").pressSequentially("unsaved-key");
 
     await openMenu("Apps");
@@ -1075,9 +1106,10 @@ async function main() {
     await page.getByRole("button", { name: "Rotate", exact: true }).waitFor();
     const headerActions = await page.locator(".page-actions button").allTextContents();
     check(
-      "Preview rotation and Check app sit before Rotate, with secondary styling",
-      headerActions.join("|") === "Preview rotation|Check app|Rotate" &&
-        !(await page.locator(".page-actions button").nth(1).getAttribute("class") ?? "").includes("primary"),
+      "Preview rotation, Check app and Reveal sit before Rotate, with secondary styling",
+      headerActions.join("|") === "Preview rotation|Check app|Reveal|Rotate" &&
+        !(await page.locator(".page-actions button").nth(1).getAttribute("class") ?? "").includes("primary") &&
+        !(await page.locator(".page-actions button").nth(2).getAttribute("class") ?? "").includes("primary"),
     );
     check(
       "the header owns the rotation action",
@@ -1255,8 +1287,7 @@ async function main() {
     await openMenu("Apps");
     await page.locator("aside .nav-sub button").filter({ hasText: /UI Password/ }).click();
     await page.getByRole("heading", { name: "Sonarr UI Password" }).waitFor();
-    await page.getByRole("button", { name: "Delete this app key" }).click();
-    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await purgeApp(page, "sonarr_ui_password");
     await page.getByRole("heading", { name: "Sonarr API Key", exact: true }).waitFor();
     check("the stored password is removed again", true);
     await page.getByText("Backup & restore isn't available.").waitFor();
@@ -2014,11 +2045,10 @@ async function main() {
     await page.locator(".app-card h3", { hasText: "UI Created Key" }).click();
     await page.getByRole("heading", { name: "UI Created Key", exact: true }).waitFor();
 
-    await page.getByRole("button", { name: "Delete this app key" }).click();
-    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await purgeApp(page, "ui_created_key");
     await page.getByRole("heading", { name: "Sonarr API Key", exact: true }).waitFor();
     check(
-      "an app key can be deleted after confirmation",
+      "an app key can be soft-deleted and purged after confirmation",
       (await page.getByText("UI Created Key").count()) === 0,
     );
 

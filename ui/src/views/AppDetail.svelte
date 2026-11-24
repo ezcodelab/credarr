@@ -13,8 +13,10 @@
   import EmptyState from "../lib/EmptyState.svelte";
   import HoldersTable from "../lib/HoldersTable.svelte";
   import KeyTile from "../lib/KeyTile.svelte";
+  import LifecyclePanel from "../lib/LifecyclePanel.svelte";
   import PageHeader from "../lib/PageHeader.svelte";
   import RecoveryBanner from "../lib/RecoveryBanner.svelte";
+  import RevealButton from "../lib/RevealButton.svelte";
   import RotationPanel from "../lib/RotationPanel.svelte";
   import StatusPill from "../lib/StatusPill.svelte";
   import { checkStatus, credentialReason, statusInfo, statusOf } from "../lib/status.js";
@@ -456,7 +458,6 @@
   let definitionMissing = $state(false);
 
   let clearArmed = $state(false);
-  let deleteOpen = $state(false);
   let dangerBusy = $state(false);
   let dangerError = $state("");
 
@@ -754,26 +755,6 @@
     }
   }
 
-  async function deleteCredential() {
-    if (!row || dangerBusy) return;
-    dangerBusy = true;
-    dangerError = "";
-    try {
-      await api(
-        `/credentials/${encodeURIComponent(row.name)}?confirm=${encodeURIComponent(row.name)}`,
-        { method: "DELETE" },
-      );
-      deleteOpen = false;
-      toast();
-      await onrefresh();
-    } catch (failure) {
-      if (failure instanceof ApiError && failure.status === 401) onsignout();
-      else dangerError = errorText(failure);
-    } finally {
-      dangerBusy = false;
-    }
-  }
-
 </script>
 
 {#if rows.length === 0}
@@ -793,6 +774,7 @@
       <button type="button" onclick={checkApp} disabled={checkBusy}>
         {checkBusy ? "Checking…" : "Check app"}
       </button>
+      <RevealButton name={row.name} disabled={runBusy || planBusy} />
       <button
         class="primary"
         type="button"
@@ -1014,6 +996,7 @@
         </div>
       {/if}
     {/if}
+    {#if dangerError}<Banner tone="danger">{dangerError}</Banner>{/if}
     <div class="toolbar">
       <button type="button" onclick={testUrl} disabled={urlTest?.busy || !url.trim()}>
         {urlTest?.busy ? "Testing…" : "Test"}
@@ -1231,31 +1214,5 @@
     />
   {/if}
 
-  <section class="card section" id="danger">
-    <div class="section-head">
-      <div><h3>Delete</h3></div>
-    </div>
-    {#if dangerError}<Banner tone="danger">{dangerError}</Banner>{/if}
-    <div class="toolbar">
-      <button
-        class="danger"
-        type="button"
-        onclick={() => (deleteOpen = true)}
-        disabled={dangerBusy}
-      >
-        Delete this app key
-      </button>
-    </div>
-  </section>
-{/if}
-
-{#if deleteOpen && row}
-  <ConfirmDialog
-    title={`Delete ${title}?`}
-    message="Removes the declaration, copies, policy and stored key. No live service changes."
-    confirmText={dangerBusy ? "Deleting…" : "Delete"}
-    busy={dangerBusy}
-    onconfirm={deleteCredential}
-    oncancel={() => (deleteOpen = false)}
-  />
+  <LifecyclePanel name={row.name} {onrefresh} {onsignout} />
 {/if}
