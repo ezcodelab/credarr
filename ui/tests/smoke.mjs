@@ -678,14 +678,14 @@ async function main() {
         (await page.locator(".app-card").getByText("no copies", { exact: true }).count()) === 1,
     );
 
-    // --- Activity: a baseline is not a change --------------------------------
+    // --- Activity: value lifecycle changes are audited too --------------------
     await page.getByRole("button", { name: "Activity", exact: true }).click();
-    await page.getByText("No changes yet").waitFor();
+    await page.locator(".events-table").getByText("value cleared").first().waitFor();
     await scanA11y(page, "activity");
-    check("the first status an audit records is a baseline, so Activity starts empty", true);
+    check("value lifecycle changes are recorded in Activity", true);
     check(
-      "and the empty state says there is nowhere to send anything yet",
-      await page.getByText(/No notification service is configured/).isVisible(),
+      "and a row with no sink says there is nowhere to send it",
+      await page.locator(".events-table").getByText("no service configured").first().isVisible(),
     );
     check(
       "and the last audit is dated",
@@ -694,12 +694,12 @@ async function main() {
     // --- the ledger shows the audit it ran -----------------------------------
     // Audits run from Apps; Activity always loads the latest ledger when it
     // opens, so there is no stale view to refresh into.
-    await page.getByRole("button", { name: "Back to Apps" }).click();
+    await page.getByRole("button", { name: "Apps", exact: true }).click();
     await runAudit();
     await page.getByRole("button", { name: "Activity", exact: true }).click();
     await page.getByText(/Last audit finished/).waitFor();
     check("returning to Activity shows the audit it ran", true);
-    await page.getByRole("button", { name: "Back to Apps" }).click();
+    await page.getByRole("button", { name: "Apps", exact: true }).click();
     await page.getByRole("button", { name: "Run audit", exact: true }).waitFor();
     check("its way back is Apps", true);
 

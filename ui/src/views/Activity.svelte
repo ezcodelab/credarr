@@ -169,7 +169,10 @@
 
 {#if data && data.events.length === 0}
   <EmptyState title="No changes yet" icon="events">
-    <p>The first audit sets a baseline; only changes appear here.</p>
+    <p>
+      The first audit sets a baseline; status and audited value changes appear
+      here after that.
+    </p>
     <p class="muted">
       {#if data.sinks.length === 0}
         No notification service is configured, so nothing is delivered.
