@@ -88,6 +88,35 @@ def test_targets_and_enrollment_are_wired_to_the_outbox(app, tmp_path) -> None:
     assert pasted not in str(jobs) and pasted not in str(targets)
 
 
+def test_an_env_target_is_created_with_its_declared_mapping(app, tmp_path) -> None:
+    server = _server(app, tmp_path)
+    with TestClient(server) as client:
+        setup_admin(client)
+        agent = _active_agent(server)
+        created = client.post(
+            "/api/v1/sync/targets",
+            json={
+                "name": "homepage",
+                "agent_id": agent.id,
+                "stack_path": "/stacks/homepage",
+                "project_name": "homepage",
+                "services": ["homepage"],
+                "workflow": "env",
+                "env_file": ".env",
+                "values": {
+                    "HOMEPAGE_VAR_SONARR_API_KEY": "sonarr_api_key",
+                },
+            },
+        )
+        assert created.status_code == 200, created.text
+        target = created.json()["target"]
+        listed = client.get("/api/v1/sync/targets").json()["targets"]
+    assert target["workflow"] == "env"
+    assert target["env_file"] == ".env"
+    assert target["values"] == {"HOMEPAGE_VAR_SONARR_API_KEY": "sonarr_api_key"}
+    assert listed[0]["values"] == target["values"]
+
+
 def test_an_enrollment_token_is_returned_once_and_never_listed(app, tmp_path) -> None:
     server = _server(app, tmp_path)
     with TestClient(server) as client:

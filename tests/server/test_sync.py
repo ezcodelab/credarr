@@ -266,3 +266,61 @@ def test_a_target_requires_the_shared_tree_and_an_enrolled_agent(
             project_name="media",
             services=("sonarr",),
         )
+
+
+def test_an_env_target_requires_a_relative_file_and_key_mapping(tmp_path: Path) -> None:
+    _store, sync = _stack(tmp_path)
+    agent = _agent(sync, capabilities=("compose", "env"))
+    base = {
+        "name": "homepage",
+        "agent_id": agent.id,
+        "stack_path": "/srv/homepage",
+        "project_name": "homepage",
+        "services": ("homepage",),
+        "workflow": "env",
+    }
+    with pytest.raises(SyncError, match="relative env file"):
+        sync.save_target(**base, env_file="../outside", values={})
+    with pytest.raises(SyncError, match="key mapping"):
+        sync.save_target(**base, env_file=".env", values={})
+    with pytest.raises(SyncError, match="invalid environment key"):
+        sync.save_target(
+            **base,
+            env_file=".env",
+            values={"not-a-key": "sonarr_api_key"},
+        )
+    target = sync.save_target(
+        **base,
+        env_file=".env",
+        values={"HOMEPAGE_VAR_SONARR_API_KEY": "sonarr_api_key"},
+    )
+    assert target.env_file == ".env"
+    assert target.values == {"HOMEPAGE_VAR_SONARR_API_KEY": "sonarr_api_key"}
+
+
+def test_an_old_target_table_is_rebuilt_for_the_env_workflow(tmp_path: Path) -> None:
+    database = tmp_path / "app.db"
+    manifest = tmp_path / "credentials.yaml"
+    manifest.write_text(MANIFEST, encoding="utf-8")
+    store = TopologyStore(database)
+    store.import_manifest(manifest, REGISTRY)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE sync_targets ("
+            "id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, agent_id TEXT NOT NULL, "
+            "stack_path TEXT NOT NULL, project_name TEXT NOT NULL, services TEXT NOT NULL, "
+            "workflow TEXT NOT NULL DEFAULT 'compose' CHECK (workflow IN ('compose')), "
+            "enabled INTEGER NOT NULL DEFAULT 1, created_at REAL NOT NULL, "
+            "updated_at REAL NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO sync_targets VALUES "
+            "('old', 'media', 'agent', '/srv/media', 'media', '[\"sonarr\"]', "
+            "'compose', 1, 1.0, 1.0)"
+        )
+    sync = SyncStore(database, tree_configured=True)
+    target = sync.target("old")
+    assert target is not None
+    assert target.workflow == "compose"
+    assert target.env_file is None
+    assert target.values == {}

@@ -118,7 +118,8 @@ src/credarr_server/{sync_store,agent_control}.py
                             durable delivery jobs and the mTLS agent listener
 src/credarr_agent/{cli,client}.py
                             the outbound agent: enrollment, pull, allowlisted
-                            compose deploys; Docker lives here, never in the BFF
+                            compose and env-file deploys; Docker lives here,
+                            never in the BFF
 src/credarr_server/mounts.py
                             a filesystem that can hold the app's paths
 ui/                         the SPA (Svelte + Vite); `make web` builds it into

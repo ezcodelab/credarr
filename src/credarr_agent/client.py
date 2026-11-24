@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import ssl
 import subprocess
@@ -19,6 +20,8 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+
+from credarr.paths import fsync_directory
 
 MAX_BODY = 64 * 1024
 REQUEST_TIMEOUT = 30.0
@@ -226,6 +229,69 @@ class Workflow:
                 "--rootful --ack-rootful after reading the threat model"
             )
 
+    def _env_path(self, stack: Path, raw: object) -> Path:
+        candidate = str(raw or "")
+        if (
+            not candidate
+            or Path(candidate).is_absolute()
+            or ".." in Path(candidate).parts
+        ):
+            raise AgentError("the target env file must be a relative path without '..'")
+        path = (stack / candidate).resolve()
+        if path != stack and stack not in path.parents:
+            raise AgentError("the target env file escapes the allowed stack")
+        return path
+
+    def _update_env(self, target: dict[str, object], credential: str, value: str) -> None:
+        stack = self._rooted(str(target["stack_path"]))
+        path = self._env_path(stack, target.get("env_file"))
+        mapping = target.get("values")
+        if not isinstance(mapping, dict) or not mapping:
+            raise AgentError("the env target has no key mapping")
+        keys = sorted(
+            str(key) for key, owner in mapping.items() if str(owner) == credential
+        )
+        if not keys:
+            raise AgentError("the env target has no key for this credential")
+        if (
+            not value
+            or value != value.strip()
+            or value.startswith("#")
+            or any(character in value for character in "\r\n\x00")
+        ):
+            raise AgentError("the value cannot be represented safely in an env file")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            text = ""
+        except OSError as exc:
+            raise AgentError(f"the env file is unreadable: {exc.strerror}") from None
+        selected = set(keys)
+        seen: set[str] = set()
+        output: list[str] = []
+        for line in text.splitlines():
+            match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=", line)
+            if match and match.group(1) in selected:
+                key = match.group(1)
+                if key in seen:
+                    continue
+                output.append(f"{key}={value}")
+                seen.add(key)
+            else:
+                output.append(line)
+        for key in keys:
+            if key not in seen:
+                output.append(f"{key}={value}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_private(path, ("\n".join(output) + "\n").encode("utf-8"))
+        fsync_directory(path.parent)
+
+    def write_env(
+        self, target: dict[str, object], credential: str, value: str
+    ) -> dict[str, bool]:
+        self._update_env(target, credential, value)
+        return self.compose(target)
+
     def compose(self, target: dict[str, object]) -> dict[str, bool]:
         stack = self._rooted(str(target["stack_path"]))
         compose_file = self._compose_file(stack)
@@ -286,7 +352,7 @@ def run(config: AgentConfig, *, once: bool = False) -> int:
             if not isinstance(target, dict):
                 raise AgentError("the lease carried no target")
             try:
-                tree.verify(str(job["credential"]), str(job["value_version"]))
+                value = tree.verify(str(job["credential"]), str(job["value_version"]))
             except VaultError as exc:
                 client.post(
                     f"/v1/jobs/{job['id']}/result",
@@ -301,7 +367,12 @@ def run(config: AgentConfig, *, once: bool = False) -> int:
                 continue
             client.post(f"/v1/jobs/{job['id']}/begin", {"timestamp": time.time()})
             try:
-                results = workflow.compose(target)
+                if str(target.get("workflow") or "compose") == "env":
+                    results = workflow.write_env(
+                        target, str(job["credential"]), value
+                    )
+                else:
+                    results = workflow.compose(target)
             except AgentError as exc:
                 results = {str(name): False for name in target["services"]}
                 detail = str(exc)

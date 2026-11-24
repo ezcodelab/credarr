@@ -67,6 +67,73 @@ bounded to characters a compose file can name. A target cannot be created
 without `CREDARR_VAULT_TREE`, because there would be no value source the agent
 could use.
 
+## The env workflow
+
+`workflow: env` is the generic consumer-delivery adapter for Docker `.env`
+files. It is not Homepage-specific; any compose stack with an env file can use
+it.
+
+```json
+{
+  "name": "homepage",
+  "agent_id": "<agent>",
+  "stack_path": "/stacks/homepage",
+  "project_name": "homepage",
+  "services": ["homepage"],
+  "workflow": "env",
+  "env_file": ".env",
+  "values": {
+    "HOMEPAGE_VAR_SONARR_API_KEY": "sonarr_api_key",
+    "HOMEPAGE_VAR_RADARR_API_KEY": "radarr_api_key"
+  }
+}
+```
+
+The agent:
+
+- resolves the stack under an `--allowed-root`;
+- requires a relative env path without `..`, and resolves it under the stack;
+- verifies the job's tree generation and reads only that credential's value;
+- replaces only the env keys mapped to that credential, preserving comments
+  and unrelated lines, removing duplicate declarations of a mapped key;
+- writes a `0600` file atomically, fsyncs it, then runs the declared compose
+  service set with `--force-recreate`;
+- refuses a value that cannot be safely represented in an env line.
+
+No shell, arbitrary command, or user script is involved. A key not mapped to
+the job's credential is never touched. The lifecycle API remains available
+outside the console; the visible app action is Delete, which removes the
+Credarr record only.
+
+## Starting a custom workflow from an event
+
+The existing signed notification webhook is the event trigger. Configure a
+webhook sink with `secret.current_changed` in its kind selection (and optionally
+a credential filter). Its payload is the same secret-free document as every
+event:
+
+```json
+{
+  "id": 42,
+  "at": 1795480000.0,
+  "kind": "secret.current_changed",
+  "credential": "sonarr_api_key",
+  "origin": "user",
+  "data": {
+    "version": "…",
+    "previous_version": "…",
+    "generation": 7,
+    "verification": "verified"
+  }
+}
+```
+
+The receiver can start a Gitea/GitLab/GitHub workflow or a Lambda with the
+credential name and version. The value is not in the event; the receiver uses
+its own secret-store access or the shared tree key it already holds. A
+webhook receiver is outside the verification boundary and cannot change the
+credential verdict. See `OPERATING.md` for the sink configuration rules.
+
 ## Shared vault tree
 
 The BFF writes one sealed value file per credential under

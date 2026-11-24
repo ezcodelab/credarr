@@ -1,6 +1,18 @@
 # Changelog
 
-#### 1.3.2 — 2026-11-24
+##### 1.3.3 — 2026-11-24
+
+- The agent gains a generic `env` workflow: allowlisted stack root, relative
+  env file, declared `ENV_KEY -> credential` mapping, atomic `0600` rewrite,
+  preserved comments/unrelated lines, and a compose recreate of the target
+  services. No shell or user code.
+- `sync_targets` carries `env_file` and `values`; an older target table is
+  rebuilt for the new CHECK constraint.
+- The signed `secret.current_changed` event is documented as the custom
+  GitOps/Lambda trigger: credential, version and generation, never a value.
+- Console target authoring accepts the `env` workflow and mapping.
+
+# 1.3.2 — 2026-11-24
 
 - Reveal is one press and an inline value beside the button; no dialog, stage
   picker or audit checkbox. The audit and the 30-second auto-clear remain.
