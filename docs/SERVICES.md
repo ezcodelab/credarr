@@ -40,3 +40,12 @@ means measured for the named version, anything else is monitor-only. New
 issuer checklist: where is the key exposed, what actually writes it (a
 chosen-value write the service ignores is a measured dead end, not a mint),
 what proves the running process uses it.
+
+## Value lifecycle evidence (2026-11-23)
+
+The next-generation store, Reveal, soft delete, adoption, sync jobs and the
+mTLS agent control plane are implemented and measured against the test suite;
+the per-capability evidence table is in `docs/ROTATION.md` under
+"Next-generation lifecycle status". This does not promote any service: the
+`managed` column above still means a measured mint for that named version.
+The shared delivery tree is a new deployment input, not a new service claim.

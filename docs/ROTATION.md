@@ -118,6 +118,24 @@ wizard's exclusion set is explicit and tested.
    measured.
 
 
+## Next-generation lifecycle status (2026-11-23)
+
+| Capability | State | Evidence |
+| --- | --- | --- |
+| Envelope-encrypted, versioned values | `[V]` | `tests/server/test_vault.py`; no plaintext in `app.db` |
+| KEK fail-closed and rotation | `[V]` | missing-KEK, rewrap and backup/KEK-loss tests |
+| AAD binding across credential/version/stage | `[V]` | moved-ciphertext test fails authentication |
+| Commit barrier and outbox | `[V]` | one transaction, one `secret.current_changed`; no job before commit |
+| Audited Reveal | `[V]` | API test, rate limit, no-store headers, value absent from events |
+| Soft delete / restore / purge | `[V]` | lifecycle API tests; sync cancellation on tombstone |
+| Adoption with engine proof | `[V]` | `process_readback` accepts only an audit `match`; `none` is unverified |
+| Sync job state machine | `[V]` | `tests/server/test_sync.py`, `test_sync_api.py` |
+| mTLS agent control plane | `[V]` | `tests/server/test_agent.py`; TLS 1.3 and client cert required |
+| Real compose workflow | `[V]` on disposable Docker | `tests/live/agent_flow.py` delivered one service |
+| Rootless Docker default / rootful acknowledgment | `[A]` for a production host | logic is tested; the host's daemon posture is deployment evidence |
+| Hybrid PQ TLS on the real images | `[T]` | listener tries `X25519MLKEM768` and records the group; no marketing claim |
+| Constrained HTTP strategy (Phase 4) | not built | optional in the roadmap; existing strategies unchanged |
+
 ## Out of scope here
 
 The production credential manifest in `../homelab-applications` still uses the

@@ -15,7 +15,11 @@ Credarr keeps a holder map, audits every readable copy against the canonical val
 - **A console, not a CLI skin.** Apps, per-app check history, rotation plans, auto-rotation, notifications and import/export in one SPA over the same engine the CLI uses.
 - **Opt-in auto-rotation** per credential, gated on a fresh clean audit. A copy that needs a human is named in an `auto_manual` notification instead of freezing the whole stack.
 - **Notifications**: ntfy, webhook, Discord, Telegram and SMTP email. Events are status changes, never values.
-- **Encrypted backups** of `app.db` (every working copy) in one AES-256-GCM file.
+- **Encrypted, versioned values.** AES-256-GCM under a per-version DEK wrapped by a file KEK; a stage change re-encrypts; a missing KEK fails closed.
+- **Audited Reveal** for CURRENT and PREVIOUS, with a short UI TTL and a rate limit. No value in an event, log or job row.
+- **Soft delete, recovery, adoption.** Tombstone a credential, restore it, or purge explicitly; adopt an external rotation only with engine proof or an honest `unverified`.
+- **Durable sync and an mTLS agent.** Per-target jobs, partial deploys as `retry_wait`, and Docker only on the agent, never in the BFF.
+- **Encrypted backups** of `app.db` and the KEK in one AES-256-GCM file.
 
 ## Requirements
 
@@ -89,7 +93,9 @@ credarr rotate prowlarr_api_key --apply  # typed confirmation, then run
 | [`docs/README.md`](docs/README.md) | Documentation index |
 | [`docs/CONCEPTS.md`](docs/CONCEPTS.md) | Holder map, audit statuses and reason codes, classes, exit codes |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Engine / server / console layout and invariants |
-| [`docs/OPERATING.md`](docs/OPERATING.md) | Audit, rotation, Servarr routes, auto-rotation, notifications, backups, discovery |
+| [`docs/OPERATING.md`](docs/OPERATING.md) | Audit, rotation, Servarr routes, auto-rotation, notifications, values, sync, backups, discovery |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, crypto inventory, KEK drills, reveal, TLS/PQ posture |
+| [`docs/SYNC.md`](docs/SYNC.md) | Sync state machine, targets, shared tree, enrollment runbook, agent privilege |
 | [`docs/SERVICES.md`](docs/SERVICES.md) | Per-service coverage and the measured versions |
 | [`docs/API.md`](docs/API.md) | `/api/v1` reference (full contract: the live `/openapi.json`) |
 | [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) | Known limits and troubleshooting |

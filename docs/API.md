@@ -13,11 +13,23 @@ the caller's own in the same transaction, so the browser that made the change
 stays signed in.
 
 Groups: `/status`, `/services` (+ `/test`), `/credentials` (declare, holders,
-value write-only, plan, rotation-options, auto-rotation, rotate, abandon), `/audit`
-(+ background jobs, scoped checks), `/topology/export|import` (raw-YAML
-replace requires `?confirm=replace`), `/notifications/services` (CRUD +
-per-service test, plus a no-write draft `POST .../services/test`),
-`/events`, `/settings/audit`, `/auth/sessions`, `/auth/me`, `/discovery`.
+value write-only, reveal, adopt, lifecycle, versions, strategy, plan,
+rotation-options, auto-rotation, rotate, abandon), `/audit` (+ background jobs,
+scoped checks), `/topology/export|import` (raw-YAML replace requires
+`?confirm=replace`), `/notifications/services` (CRUD + per-service test, plus
+a no-write draft `POST .../services/test`), `/sync/targets`, `/sync/jobs`,
+`/agents` (enrollment and revocation), `/vault/status`, `/events`,
+`/settings/audit`, `/auth/sessions`, `/auth/me`, `/discovery`.
+
+`POST /credentials/{name}/reveal` is the only read that returns a value. It
+requires a confirmation in the UI, is audited before the value is returned,
+carries `Cache-Control: no-store`, and is limited per actor and per credential.
+`POST .../lifecycle` is soft-delete/restore/force-delete; `POST .../adopt` has
+`verify=none` (unverified) or `verify=process_readback` (engine proof or 409).
+`GET .../strategy` reports the create/set/test/finish view and its provenance.
+
+An API key can be issued with `origin=hook`; mutations it makes are recorded
+with `origin=hook`, which notification services exclude unless they opt in.
 
 Audit and credential rows carry `status`, `detail` (operator sentence), and
 `reason` (stable code, see `CONCEPTS.md`). Rotation attempts record
