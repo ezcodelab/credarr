@@ -115,6 +115,11 @@ src/credarr_server/vault.py
 src/credarr_server/sync_store.py
                             durable delivery jobs, agents and the outbox
                             dispatcher
+src/credarr_server/agent_control.py
+                            the mTLS enrollment and job control plane
+src/credarr_agent/{cli,client}.py
+                            the outbound agent: enrollment, pull, allowlisted
+                            compose deploys; Docker lives here, never in the BFF
 src/credarr_server/kek_cli.py
                             `credarr-kek` status, init and rewrap
 src/credarr_server/mounts.py

@@ -168,6 +168,14 @@ def test_agents_md_is_in_sync_when_present() -> None:
     )
 
 
+def test_the_default_compose_has_no_docker_socket() -> None:
+    """Docker is the agent's surface; the BFF compose must never gain it."""
+    text = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert "docker.sock" not in text
+    assert "CREDARR_AGENT_PORT" in text
+    assert "docker.sock" not in (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+
 def test_the_ui_audit_is_a_real_check_gate() -> None:
     """A gate that is not tracked cannot run on a fresh clone."""
     assert "ui-audit" in make_targets(), "make ui-audit is not defined"
