@@ -40,6 +40,9 @@ the function names are the stable reference.
 | 10 | Admin lockout and sessions | explicit table + implicit expiry | `auth.py` | SM-6 |
 | 11 | Topology import and working copies | implicit merge lifecycle | `store.py`, `api/topology.py` | SM-3, SM-7, SM-8 |
 | 12 | Loop health | implicit thread state | `app.py`, `api/status.py`, `scheduler.py` | SM-5 |
+| 13 | Secret version and lifecycle | explicit columns | `vault.py` | SM-11 |
+| 14 | Sync job | explicit column | `sync_store.py` | SM-12 |
+| 15 | Agent enrollment and certificate | explicit column + implicit expiry | `agent_control.py`, `sync_store.py` | SM-13 |
 
 ---
 
@@ -826,6 +829,101 @@ delivery loop, and auto-rotation.
 | SM-10 | Medium | An unresumable unfinished run had no operator exit; the value guard wedged it | no abandon path in the journal, API or CLI | Fixed | 3 tests |
 | SM-9 | Accepted | The lease fence is not atomic with the service write | `test_CHARACTERISATION_the_check_does_not_fence_the_write_it_guards` | Accepted limitation | characterization test |
 | SM-2c | Accepted | qBittorrent response-before-park loses the only copy on a kill | code comment in `_mint_qbittorrent` | Accepted: no file fallback | — |
+
+## 13. Secret version and lifecycle
+
+One row per encrypted value in `secret_versions`; one lifecycle row per
+soft-deleted credential in `secret_lifecycle`.
+
+### States
+
+| State | Representation |
+| --- | --- |
+| PENDING | `stage = 'PENDING'`, at most one per credential |
+| CURRENT | `stage = 'CURRENT'`, exactly one per credential while it has a value |
+| PREVIOUS | the outgoing CURRENT, re-encrypted under the PREVIOUS AAD |
+| ABANDONED | a superseded version with a `purge_after` retention deadline |
+| tombstoned | a `secret_lifecycle` row; every value operation refuses |
+
+### Invariants
+
+1. A move between stages is a new ciphertext under a fresh DEK and the new AAD.
+   Relabelling is not a transition.
+2. `finish` writes the CURRENT flip, the PREVIOUS transition, the generation,
+   the outbox row and one `secret.current_changed` event in one transaction.
+3. A missing KEK refuses every value operation; metadata (`versions`,
+   `working_copy_times`, `key_status`) still reads.
+4. A tombstoned credential refuses reveal, rotate, adopt, paste and sync; a
+   restore clears the lifecycle row; a purge removes ciphertext and then the
+   topology.
+5. A reveal writes `secret.revealed` before the value leaves the process.
+
+### Reachable invalid states
+
+- **SM-11 (accepted): a purge cannot recall a remote copy.** The tombstone and
+  purge are Credarr-local; a holder that already received the value keeps it.
+  Decision 9 records this as an accepted risk. The audit still reports the
+  holder's observed state.
+- The second `set_current` between two reads is serialised by the stack lease
+  on every API write; a direct store caller has no such lease, and
+  `expected_version` is the optimistic guard. A conflict raises
+  `VersionConflict` and stores nothing.
+
+## 14. Sync job
+
+One row in `sync_jobs` per `(credential, target)` attempt.
+
+### States
+
+`queued`, `leased`, `running`, `retry_wait`, `delivered`, `failed`,
+`cancelled`. The unique partial index allows exactly one of the first four per
+pair.
+
+### Invariants
+
+1. A job exists only after the transaction that wrote its outbox row commits.
+2. A partial service result is `retry_wait`, never `delivered`; after the
+   attempt budget it is `failed` and emits `sync_failed`.
+3. A replayed result, a result for a lease held by another agent, a result that
+   names a different service set, and a non-boolean outcome are refused.
+4. A lease older than 60 seconds is returned to `retry_wait` by the tick and
+   spends one attempt; after the budget it fails.
+5. A newer committed value for a target with an active job remains in the
+   outbox until that job is terminal; the next dispatch creates the new job.
+
+### Reachable invalid states
+
+- **SM-12 (accepted): a crash after a compose action but before the result
+  report** leaves the job leased until expiry, then `retry_wait`. The whole
+  service set is re-run; Compose is idempotent for an unchanged definition.
+  A partial action is never reported as success.
+
+## 15. Agent enrollment and certificate
+
+One row in `agents`; one one-time row in `agent_enrollments`.
+
+### States
+
+`enrolled` (token issued, no certificate), `active`, `offline` (no heartbeat
+for five minutes), `revoked`, `disabled` (policy violation).
+
+### Invariants
+
+1. A token is single-use, hashed at rest, and expires. A used or unknown token
+   is refused.
+2. A certificate is valid only while its fingerprint matches the agent row and
+   the row is `active` or `offline`; renewal replaces the fingerprint.
+3. Revocation and policy disable cancel active jobs immediately.
+4. A clock skew greater than five minutes refuses the request.
+5. Rootful mode requires the stored acknowledgment; a heartbeat that reports
+   rootful without it disables the agent and emits `agent_policy_violation`.
+
+### Reachable invalid states
+
+- **SM-13 (accepted): a certificate is valid until its expiry even if the agent
+  process is gone.** The server cannot see the host process; the five-minute
+  heartbeat is the liveness signal, and the one-day certificate bounds the
+  window. Revocation is immediate and is the operator's control.
 
 ### Grouping of fixes
 

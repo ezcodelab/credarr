@@ -34,6 +34,32 @@ Off by default, per credential. Enabling requires the typed name plus `accept_ma
 
 Named services (`ntfy`, `webhook`, Discord, Telegram, SMTP `email`). Each has its own enabled switch, event-kind selection, and delivery stats. Events are status changes (plus `test`, `auto_*`, `rotation_*`). They carry names, statuses, and the scrubbed audit sentence, never values. `ntfy` posts `match -> drift` with priority 4 on drift. `webhook` sends one JSON document per event, optionally HMAC-signed. Discord mentions stay off unless opted in. Telegram puts the bot token in the request path only. `email` follows the SMTP host, port, username, write-only password, From, recipients, TLS and auth model (STARTTLS, implicit TLS, `login` and `crammd5` remain unmeasured, so do not treat the field model as provider compatibility). Recorded-but-never-notified kinds are marked `silent`, not queued. Every form offers Test before Save without writing a ledger row. Reusing a stored secret requires an unchanged destination (URL, or SMTP host and port). Delivery is one ledger row per event and service, retried with capped backoff. One dead sink can delay others at one-admin load.
 
+## Stored values and reveal
+
+Values are encrypted with AES-256-GCM under a per-version data key wrapped by
+`/config/kek.json`. The KEK is created on a fresh store and never recreated
+after a value exists; a missing or unreadable KEK makes every value operation
+answer 503 while metadata stays readable. `credarr-kek status` shows the key
+path and how many versions are not under the active key; `credarr-kek rotate`
+rewraps every DEK and keeps the old key in the keyring. Losing the KEK is
+unrecoverable; the encrypted backup includes it.
+
+`POST /credentials/{name}/reveal` is the only path that returns a value. It is
+audited before the value is returned, limited to five per minute per actor and
+per credential with a two-second cooldown, and the console clears the value
+after 30 seconds. Soft-deleted credentials are not revealable.
+
+## Sync and agents
+
+A target is a stack path, project name and service set on one agent. The BFF
+never runs Docker; the agent pulls over a TLS 1.3 mTLS listener on
+`--agent-port` (default 8443) and runs only the allowlisted `compose` workflow
+under its `--allowed-root`. The shared vault tree is mandatory: set
+`CREDARR_VAULT_TREE` and `CREDARR_VAULT_TREE_KEY` before creating a target.
+Delivery is advisory: a failed or pending job does not change a rotation exit
+code. `retry_wait` is not success; a partial deploy re-runs the whole service
+set. See `docs/SYNC.md` for the enrollment runbook and the state machine.
+
 ## Backup and restore
 
 ```sh
@@ -43,7 +69,7 @@ credarr-backup -c /config/credarr.yaml --config-dir /config \
   --passphrase-file /config/backup.passphrase        # stop the server first
 ```
 
-One AES-256-GCM file holding `app.db` plus config (never the rotation journal). A restore verifies before writing (decrypt, manifest shape, `PRAGMA integrity_check`), keeps `app.db.pre-restore`, and refuses hot sidecars, short passphrases, and group- or world-readable passphrase files. The passphrase is the only thing between the file and every stored value. Losing it makes the archive unrecoverable.
+One AES-256-GCM file holding `app.db`, the config, the KEK, the shared-tree key and the agent CA/server keys (never the rotation journal). A restore verifies before writing (decrypt, manifest shape, `PRAGMA integrity_check`), keeps `app.db.pre-restore`, and refuses hot sidecars, short passphrases, and group- or world-readable passphrase files. The passphrase is the only thing between the file and every stored value. Losing it, or losing the KEK carried inside, makes the archive unrecoverable; a restore without a KEK in the archive refuses an encrypted database rather than writing a half-recovered one.
 
 ## Discovery (optional)
 
@@ -51,4 +77,4 @@ Off unless `CREDARR_DOCKER_URL` names a Docker API (normally a read-only socket 
 
 ## Console map
 
-**Apps** (landing): a stack-health strip and a ledger with one row per app (key tile, title, state + why/fix, copies, open). **App detail**: a summary strip, a sticky section nav, connection, check history, copy editor, rotation plan, auto-rotation interval. **Activity**: a three-part summary and the event ledger. **Settings**: security, audit schedule, API keys, notifications, import/export, setup. Values are write-only in the browser. No credential value is kept in local storage.
+**Apps** (landing): a stack-health strip and a ledger with one row per app (key tile, title, state + why/fix, copies, open). **App detail**: a summary strip, a sticky section nav, connection, check history, copy editor, rotation plan, auto-rotation interval. **Activity**: a three-part summary and the event ledger. **Settings**: security, audit schedule, API keys, agents & sync, notifications, import/export, setup. Values are write-only except the audited Reveal dialog. No credential value is kept in local storage.

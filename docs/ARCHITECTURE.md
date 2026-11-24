@@ -108,20 +108,17 @@ src/credarr_server/audit_jobs.py
                             one long audit as a server-side job
 src/credarr_server/{database,event_schema,reveal}.py
                             one SQLite connection contract, the shared event
-                            ledger shape, and the audited reveal throttle
+                            ledger shape, and the audit-only reveal throttle
 src/credarr_server/vault.py
-                            the encrypted version store, KEK keyring,
+                            the versioned AES-256-GCM store, KEK keyring,
                             lifecycle, generations and sync outbox
-src/credarr_server/sync_store.py
-                            durable delivery jobs, agents and the outbox
-                            dispatcher
-src/credarr_server/agent_control.py
-                            the mTLS enrollment and job control plane
+src/credarr_server/kek_cli.py
+                            `credarr-kek` status, init and rewrap
+src/credarr_server/{sync_store,agent_control}.py
+                            durable delivery jobs and the mTLS agent listener
 src/credarr_agent/{cli,client}.py
                             the outbound agent: enrollment, pull, allowlisted
                             compose deploys; Docker lives here, never in the BFF
-src/credarr_server/kek_cli.py
-                            `credarr-kek` status, init and rewrap
 src/credarr_server/mounts.py
                             a filesystem that can hold the app's paths
 ui/                         the SPA (Svelte + Vite); `make web` builds it into
