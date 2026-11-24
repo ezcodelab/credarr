@@ -153,7 +153,7 @@
     position: absolute;
     top: calc(100% + 0.4rem);
     right: 0;
-    z-index: 20;
+    z-index: 60;
     width: min(24rem, calc(100vw - 2rem));
     padding: 0.75rem;
     border: 1px solid var(--line);
