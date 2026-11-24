@@ -24,6 +24,7 @@ from credarr.redact import Secret
 from credarr.rotate import service_for, ui_password_names
 
 from .store import TopologyStore, UnknownCredential
+from .vault import VERIFIED
 
 APP_BACKEND = "credarr"
 
@@ -77,10 +78,12 @@ def runtime_manifest(store: TopologyStore) -> Manifest:
     # unverifiable; the next run corrects either. Revisit if the UI offers
     # "run now" while an import is in flight.
     stored = set(store.working_copy_times())
+    tombstoned = store.vault.tombstoned_names()
     credentials = {}
     for name, credential in manifest.credentials.items():
+        usable = name in stored and name not in tombstoned
         credentials[name] = replace(
-            credential, vault=app_ref(store.path, name) if name in stored else None
+            credential, vault=app_ref(store.path, name) if usable else None
         )
     return Manifest(version=manifest.version, credentials=credentials)
 
@@ -178,12 +181,16 @@ class StorePending:
 
 
 class StoreSource:
-    """A `SecretSource` that reads and records the app's working copies."""
+    """A `SecretSource` that reads and records the app's encrypted values."""
 
     name = "the app store"
 
-    def __init__(self, store: TopologyStore) -> None:
+    def __init__(
+        self, store: TopologyStore, *, actor: str = "user", origin: str = "user"
+    ) -> None:
         self.store = store
+        self.actor = actor
+        self.origin = origin
 
     def _name(self, ref: VaultRef) -> str:
         if ref.backend != APP_BACKEND or len(ref.path) != 1:
@@ -207,4 +214,10 @@ class StoreSource:
         rotated. The same reference check as `get`: a declared vault is never a
         runtime write target.
         """
-        self.store.set_value(self._name(ref), value)
+        self.store.set_value(
+            self._name(ref),
+            value,
+            actor=self.actor,
+            origin=self.origin,
+            verification=VERIFIED,
+        )

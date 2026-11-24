@@ -30,6 +30,7 @@ from credarr_server.audit_log import AuditLog
 from credarr_server.backup import (
     CONFIG_PREFIX,
     DATABASE_NAME,
+    KEYS_PREFIX,
     MANIFEST_NAME,
     BackupError,
     _snapshot,
@@ -127,11 +128,13 @@ def test_a_path_shaped_member_is_never_extracted(app, tmp_path) -> None:
     are read, and the restored config keeps its declared bare name."""
     database = _snapshot(app.store.path)
     config = b"version: 1\n"
+    kek = (app.store.path.with_name("kek.json")).read_bytes()
     entries = {
         DATABASE_NAME: database,
         CONFIG_PREFIX + "credarr.yaml": config,
+        KEYS_PREFIX + "kek.json": kek,
         MANIFEST_NAME: json.dumps(
-            {"format": 1, "config_name": "credarr.yaml"}
+            {"format": 2, "config_name": "credarr.yaml", "keys": ["kek.json"]}
         ).encode(),
         "../../etc/credarr.yaml": b"not extracted",
         CONFIG_PREFIX + "../credarr.yaml": b"not extracted either",
@@ -151,13 +154,54 @@ def test_a_path_shaped_member_is_never_extracted(app, tmp_path) -> None:
     assert set(written) == {
         destination / DATABASE_NAME,
         destination / "credarr.yaml",
+        destination / "kek.json",
     }
     assert (destination / "credarr.yaml").read_bytes() == config
+    assert (destination / "kek.json").read_bytes() == kek
     assert not (tmp_path / "etc").exists()
     assert sorted(path.name for path in destination.iterdir()) == [
         "app.db",
         "credarr.yaml",
+        "kek.json",
     ]
+
+def test_the_archive_carries_the_tree_and_agent_keys(app, tmp_path) -> None:
+    tree_key = tmp_path / "vault-tree.key"
+    tree_key.write_bytes(b"tree-key-0123456789")
+    ca_key = tmp_path / "agent-ca.key"
+    ca_key.write_bytes(b"ca-key-0123456789")
+    _, out = _backed_up(app, tmp_path)
+    restored_dir, written = _restore(out, tmp_path)
+    assert tree_key.name in {path.name for path in written}
+    assert (restored_dir / "vault-tree.key").read_bytes() == tree_key.read_bytes()
+    assert (restored_dir / "agent-ca.key").read_bytes() == ca_key.read_bytes()
+
+
+def test_an_archive_without_the_kek_cannot_restore_encrypted_values(
+    app, tmp_path
+) -> None:
+    """KEK loss is unrecoverable by design; the restore names it before writing."""
+    database = _snapshot(app.store.path)
+    destination = tmp_path / "no-kek"
+    destination.mkdir()
+    entries = {
+        DATABASE_NAME: database,
+        CONFIG_PREFIX + "credarr.yaml": b"version: 1\n",
+        MANIFEST_NAME: json.dumps(
+            {"format": 2, "config_name": "credarr.yaml", "keys": []}
+        ).encode(),
+    }
+    archive = tmp_path / "no-kek.credarr"
+    archive.write_bytes(_sealed_archive(entries))
+    with pytest.raises(BackupError, match="carries no KEK"):
+        restore_backup(
+            path=archive,
+            config_dir=destination,
+            config_path=None,
+            passphrase=PASSPHRASE,
+        )
+    assert list(destination.iterdir()) == []
+
 
 def _backed_up(app, tmp_path) -> tuple[object, object]:
     """Write a backup of the fixture app exactly as the server has it."""
@@ -215,13 +259,20 @@ def test_a_restored_app_audits_the_same_stack_and_keeps_its_secrets(app, tmp_pat
 
     _, out = _backed_up(app, tmp_path)
     restored_dir, written = _restore(out, tmp_path)
-    assert written == [restored_dir / "app.db", restored_dir / "credarr.yaml"]
+    assert written == [
+        restored_dir / "app.db",
+        restored_dir / "credarr.yaml",
+        restored_dir / "kek.json",
+    ]
 
     # The sink's secret and the admin's digest came out of the encrypted file.
     assert Notifier(restored_dir / "app.db").views()["ntfy"].token_configured is True
-    assert [event.kind for event in AuditLog(restored_dir / "app.db").recent_events()] == [
-        "drift"
+    kinds = [
+        event.kind
+        for event in AuditLog(restored_dir / "app.db").recent_events()
+        if not event.kind.startswith("secret.")
     ]
+    assert kinds == ["drift"]
 
     restored = create_app(
         ServerSettings(

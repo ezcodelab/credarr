@@ -40,6 +40,14 @@ def harness(app, log: AuditLog, prepare):
     return worker, journal
 
 
+def _visible(log):
+    """Action events only; value lifecycle events share the ledger."""
+    return tuple(
+        event for event in log.recent_events()
+        if not event.kind.startswith(("secret.", "vault.", "sync_", "agent_"))
+    )
+
+
 def prepare_for(app):
     manifest = app.store.load_manifest()
     credential = manifest.credentials["sonarr_api_key"]
@@ -70,7 +78,7 @@ def test_a_due_credential_runs_only_after_a_completed_audit(app) -> None:
     assert called == []
     assert app.store.auto_rotation("sonarr_api_key").paused is False
     assert worker.journal.open_attempts() == {}
-    assert [event.kind for event in log.recent_events()] == ["auto_blocked"]
+    assert [event.kind for event in _visible(log)] == ["auto_blocked"]
 
 
 def test_a_clean_audit_triggers_a_due_success_and_the_journal_defers_it(
@@ -95,7 +103,7 @@ def test_a_clean_audit_triggers_a_due_success_and_the_journal_defers_it(
     assert state is not None and state.last_outcome == "succeeded" and not state.paused
     last_success = journal.last_success("sonarr_api_key")
     assert last_success is not None
-    events = log.recent_events()
+    events = _visible(log)
     assert [event.kind for event in events[:2]] == ["auto_succeeded", "auto_started"]
     assert all(event.detail.startswith("auto:schedule: ") for event in events)
     # The outcome is stamped at completion, not at the start of the pass.
@@ -147,7 +155,7 @@ def test_a_console_stack_lock_skips_without_writing_policy(app, monkeypatch) -> 
     assert called == []
     assert app.store.auto_rotation("sonarr_api_key") == before
     assert journal.open_attempts() == {}
-    assert log.recent_events() == ()
+    assert _visible(log) == ()
 
 
 def test_a_run_that_started_and_failed_pauses(app, monkeypatch) -> None:
@@ -261,7 +269,7 @@ def test_an_auto_run_with_a_manual_copy_notifies_and_stays_enabled(
     assert "Homepage needs manual rotation" in state.last_detail
     assert journal.last_success("sonarr_api_key") is None
     assert journal.last_rotation("sonarr_api_key") is not None
-    events = log.recent_events()
+    events = _visible(log)
     assert events[0].kind == "auto_manual"
     assert "Homepage needs manual rotation" in events[0].detail
     assert worker.run_due(now=time.time()) == []

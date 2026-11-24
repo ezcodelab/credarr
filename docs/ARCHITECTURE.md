@@ -110,6 +110,8 @@ src/credarr_server/{database,event_schema}.py
 src/credarr_server/vault.py
                             the encrypted version store, KEK keyring,
                             lifecycle, generations and sync outbox
+src/credarr_server/kek_cli.py
+                            `credarr-kek` status, init and rewrap
 src/credarr_server/mounts.py
                             a filesystem that can hold the app's paths
 ui/                         the SPA (Svelte + Vite); `make web` builds it into

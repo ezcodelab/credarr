@@ -707,7 +707,11 @@ def test_a_scoped_check_is_history_not_a_stack_audit(server) -> None:
         limited = client.get(
             "/api/v1/audit?only=sonarr_api_key&limit=1"
         ).json()["checks"]
-        events = client.get("/api/v1/events").json()["events"]
+        events = [
+            event
+            for event in client.get("/api/v1/events").json()["events"]
+            if not event["kind"].startswith(("secret.", "vault.", "sync_", "agent_"))
+        ]
     assert body["check"]["name"] == "sonarr_api_key"
     assert body["check"]["status"] == "match"
     assert body["check"]["reason"] == "match"
@@ -734,7 +738,11 @@ def test_a_scoped_drift_does_not_emit_a_stack_event(server) -> None:
         response = client.post("/api/v1/audit?only=sonarr_api_key")
         assert response.status_code == 200, response.text
         after = client.get("/api/v1/status").json()
-        events = client.get("/api/v1/events").json()["events"]
+        events = [
+            event
+            for event in client.get("/api/v1/events").json()["events"]
+            if not event["kind"].startswith(("secret.", "vault.", "sync_", "agent_"))
+        ]
     assert response.json()["check"]["status"] == "drift"
     assert after["last_run"]["id"] == first
     assert events == []

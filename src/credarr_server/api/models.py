@@ -26,6 +26,18 @@ MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_VALUE_LENGTH = 8192
 
 
+class ApiKeyBody(BaseModel):
+    """The optional origin an automation key is issued with.
+
+    A hook key marks the mutations it makes as `origin=hook`, which sinks
+    exclude by default so a hook cannot loop on its own events.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    origin: Literal["user", "hook"] = "user"
+
+
 class SetupBody(BaseModel):
     password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=1024)
 
@@ -93,6 +105,47 @@ class PlanBody(BaseModel):
     """What the plan endpoint may be told. Read-only, so only one thing."""
 
     take_over: bool = False
+
+
+class RevealBody(BaseModel):
+    """An explicit reveal of one version stage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stage: Literal["CURRENT", "PREVIOUS"] = "CURRENT"
+
+
+class LifecycleBody(BaseModel):
+    """Soft-delete, restore, or the explicit force-delete after recovery."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["soft_delete", "restore", "force_delete"]
+    confirm: str = Field(default="", max_length=256)
+    reason: str = Field(default="", max_length=256)
+    force: bool = False
+
+
+class AdoptBody(BaseModel):
+    """Adopt an externally rotated value, with an explicit proof choice.
+
+    `process_readback` runs the engine audit against the candidate and stores
+    nothing unless it proves a match. `none` stores the value as unverified;
+    it can never be reported as a match by that fact alone.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: str = Field(min_length=1, max_length=MAX_VALUE_LENGTH, repr=False)
+    confirm: str = Field(max_length=256)
+    verify: Literal["none", "process_readback"] = "none"
+
+    @field_validator("value")
+    @classmethod
+    def _no_surrounding_whitespace(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("the value has leading or trailing whitespace")
+        return value
 
 
 class AuditIntervalBody(BaseModel):
@@ -239,6 +292,48 @@ class ImportBody(BaseModel):
     confirm: str = Field(default="", max_length=64)
 
 
+class SyncTargetBody(BaseModel):
+    """One compose target on one agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=64)
+    agent_id: str = Field(min_length=1, max_length=64)
+    stack_path: str = Field(min_length=1, max_length=1024)
+    project_name: str = Field(min_length=1, max_length=64)
+    services: list[str] = Field(min_length=1, max_length=64)
+    workflow: str = Field(default="compose", max_length=32)
+    enabled: bool = True
+
+
+class SyncTargetPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    agent_id: str | None = Field(default=None, min_length=1, max_length=64)
+    stack_path: str | None = Field(default=None, min_length=1, max_length=1024)
+    project_name: str | None = Field(default=None, min_length=1, max_length=64)
+    services: list[str] | None = Field(default=None, min_length=1, max_length=64)
+    workflow: str | None = Field(default=None, max_length=32)
+    enabled: bool | None = None
+
+
+class EnrollmentBody(BaseModel):
+    """A one-time agent enrollment token; the token is returned once."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=64)
+    capabilities: list[str] = Field(default_factory=list, max_length=64)
+    ttl_seconds: int = Field(default=600, ge=60, le=3600)
+
+
+class AgentActionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(default="disabled by the operator", max_length=256)
+
+
 class NotificationServiceBody(BaseModel):
     """A new notification service, whole.
 
@@ -269,6 +364,8 @@ class NotificationServiceBody(BaseModel):
     smtp_tls: str = Field(default="starttls", max_length=16)
     smtp_auth: str = Field(default="auto", max_length=16)
     enabled_types: list[str] = Field(default_factory=list)
+    credential_filter: list[str] = Field(default_factory=list)
+    allow_hook_origin: bool = False
 
 
 class NotificationServicePatch(BaseModel):
@@ -298,4 +395,6 @@ class NotificationServicePatch(BaseModel):
     smtp_tls: str | None = Field(default=None, max_length=16)
     smtp_auth: str | None = Field(default=None, max_length=16)
     enabled_types: list[str] | None = None
+    credential_filter: list[str] | None = None
+    allow_hook_origin: bool | None = None
 

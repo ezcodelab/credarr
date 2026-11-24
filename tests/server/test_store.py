@@ -344,13 +344,21 @@ def test_a_pasted_manifests_errors_name_the_path_it_would_have_had(tmp_path: Pat
 def test_replacing_a_working_copy_keeps_only_the_newest(tmp_path: Path) -> None:
     store = TopologyStore(tmp_path / "app.db")
     store.import_manifest(manifest_file(tmp_path, MINIMAL), REGISTRY)
-    store.set_value("signing_key", Secret("old"))
-    store.set_value("signing_key", Secret("new"))
+    store.set_value("signing_key", Secret("value-old-123"))
+    store.set_value("signing_key", Secret("value-new-456"))
     stored = store.get_value("signing_key")
-    assert stored is not None and stored.reveal() == "new"
+    assert stored is not None and stored.reveal() == "value-new-456"
     with sqlite3.connect(tmp_path / "app.db") as connection:
-        rows = connection.execute("SELECT COUNT(*) FROM working_copies").fetchone()[0]
+        rows = connection.execute(
+            "SELECT COUNT(*) FROM secret_versions WHERE stage = 'CURRENT'"
+        ).fetchone()[0]
+        plaintext_rows = connection.execute(
+            "SELECT COUNT(*) FROM working_copies"
+        ).fetchone()[0]
     assert rows == 1
+    assert plaintext_rows == 0
+    assert b"value-new-456" not in (tmp_path / "app.db").read_bytes()
+    assert b"value-old-123" not in (tmp_path / "app.db").read_bytes()
 
 
 def test_saving_the_same_value_twice_is_not_an_error(tmp_path: Path) -> None:

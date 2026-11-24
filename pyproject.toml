@@ -63,6 +63,7 @@ dev = [
 credarr = "credarr.cli:main"
 credarr-server = "credarr_server.app:main"
 credarr-backup = "credarr_server.backup:main"
+credarr-kek = "credarr_server.kek_cli:main"
 
 
 [tool.setuptools.packages.find]
