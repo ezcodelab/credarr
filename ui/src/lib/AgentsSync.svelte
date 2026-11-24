@@ -182,10 +182,7 @@
       <h3>Agents &amp; sync</h3>
       <p class="muted">Deliver committed values to Docker.</p>
     </div>
-    <div class="toolbar">
-      <button type="button" onclick={load} disabled={loading}>Refresh</button>
-      <button class="primary" type="button" onclick={openEnroll}>Enroll agent</button>
-    </div>
+    <button type="button" onclick={load} disabled={loading}>Refresh</button>
   </div>
   {#if error}<Banner tone="danger">{error}</Banner>{/if}
   {#if message}<Banner tone="ok">{message}</Banner>{/if}
@@ -330,6 +327,7 @@
     <div class="agents">
       <div class="section-head">
         <h4>Agents</h4>
+        <button class="primary" type="button" onclick={openEnroll}>Enroll agent</button>
       </div>
       {#if agents.length === 0}
         <p class="muted">No agents.</p>
