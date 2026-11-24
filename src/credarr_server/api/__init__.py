@@ -20,6 +20,7 @@ from credarr_server.api.secrets import routes as secret_routes
 from credarr_server.api.service_edit import routes as service_edit_routes
 from credarr_server.api.services import routes as service_routes
 from credarr_server.api.status import routes as status_routes
+from credarr_server.api.sync import routes as sync_routes
 from credarr_server.api.topology import routes as topology_routes
 from credarr_server.api.values import routes as value_routes
 
@@ -40,6 +41,7 @@ def mount_api(app: FastAPI, ctx: ApiContext) -> None:
         service_edit_routes,
         topology_routes,
         notification_routes,
+        sync_routes,
     )
     for build in builders:
         public, authed = build(ctx)
