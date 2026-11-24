@@ -18,6 +18,7 @@ from credarr_server.api.http import _actor, new_routers
 from credarr_server.api.models import AutoRotationBody, ValueBody
 from credarr_server.api.payloads import _auto_json
 from credarr_server.store import UnknownCredential
+from credarr_server.vault import KekUnavailable, VaultError
 
 
 def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
@@ -41,6 +42,10 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
                 store.clear_value(name)
         except JournalLocked as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
+        except KekUnavailable as exc:
+            raise HTTPException(status_code=503, detail=exc.render()) from None
+        except VaultError as exc:
+            raise HTTPException(status_code=409, detail=exc.render()) from None
         return {"ok": True}
 
     @authed.get("/credentials/{name}/auto-rotation")
@@ -144,11 +149,20 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
             journal = facade.journal_for(config)
             with stack_write(actor), journal.lock(name, actor):
                 value_change_guard(name, journal)
-                store.set_value(name, Secret(body.value))
+                store.set_value(
+                    name,
+                    Secret(body.value),
+                    actor=actor,
+                    origin=ctx.origin_for(actor),
+                )
         except JournalLocked as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
         except UnknownCredential:
             raise HTTPException(status_code=404, detail=f"no credential named {name}") from None
+        except KekUnavailable as exc:
+            raise HTTPException(status_code=503, detail=exc.render()) from None
+        except VaultError as exc:
+            raise HTTPException(status_code=409, detail=exc.render()) from None
         return {"ok": True}
 
     return public, authed
