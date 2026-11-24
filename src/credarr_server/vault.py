@@ -687,18 +687,12 @@ class VaultStore:
                 is not None
             )
 
-    def _raw_data_count(self) -> int:
+    def _encrypted_value_count(self) -> int:
+        """Rows that prove a KEK existed; plaintext legacy rows do not."""
         with connect(self.path) as connection:
-            versions = connection.execute(
-                "SELECT COUNT(*) FROM secret_versions"
-            ).fetchone()[0]
-            working = connection.execute(
-                "SELECT COUNT(*) FROM working_copies"
-            ).fetchone()[0] if self._table(connection, "working_copies") else 0
-            pending = connection.execute(
-                "SELECT COUNT(*) FROM pending_secrets"
-            ).fetchone()[0] if self._table(connection, "pending_secrets") else 0
-        return int(versions) + int(working) + int(pending)
+            return int(
+                connection.execute("SELECT COUNT(*) FROM secret_versions").fetchone()[0]
+            )
 
     @staticmethod
     def _table(connection: Any, name: str) -> bool:
@@ -717,7 +711,11 @@ class VaultStore:
             except KekUnavailable as exc:
                 self.kek_error = str(exc)
             return
-        if self._has_marker() or self._raw_data_count() > 0:
+        # A legacy database may hold plaintext `working_copies` with no KEK:
+        # that is a first migration, not a lost key. Only a store that has
+        # already written an encrypted version (or recorded that a vault was
+        # initialized) proves a KEK existed and is now missing.
+        if self._has_marker() or self._encrypted_value_count() > 0:
             self.kek_error = (
                 f"the KEK file {self.kek_path} is missing; stored values cannot "
                 "be decrypted"
