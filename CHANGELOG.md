@@ -1,6 +1,12 @@
 # Changelog
 
-###### 1.3.4 — 2026-11-24
+####### 1.3.5 — 2026-11-24
+
+- An `env` target creates jobs only for credentials named in its key mapping.
+  A value for an unrelated credential no longer queues a job that would fail
+  with "no key for this credential".
+
+# 1.3.4 — 2026-11-24
 
 - Ship the Docker CLI and compose plugin in the image so the separate agent
   stack can run its fixed `compose`/`env` workflows. The BFF still has no

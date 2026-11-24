@@ -298,6 +298,26 @@ def test_an_env_target_requires_a_relative_file_and_key_mapping(tmp_path: Path) 
     assert target.values == {"HOMEPAGE_VAR_SONARR_API_KEY": "sonarr_api_key"}
 
 
+def test_an_env_target_only_receives_jobs_for_mapped_credentials(
+    tmp_path: Path,
+) -> None:
+    store, sync = _stack(tmp_path)
+    agent = _agent(sync, capabilities=("env",))
+    sync.save_target(
+        name="homepage",
+        agent_id=agent.id,
+        stack_path="/srv/homepage",
+        project_name="homepage",
+        services=("homepage",),
+        workflow="env",
+        env_file=".env",
+        values={"HOMEPAGE_VAR_OTHER_API_KEY": "other_api_key"},
+    )
+    store.set_value("sonarr_api_key", Secret("value"))
+    assert sync.dispatch() == 0
+    assert sync.jobs() == ()
+
+
 def test_an_old_target_table_is_rebuilt_for_the_env_workflow(tmp_path: Path) -> None:
     database = tmp_path / "app.db"
     manifest = tmp_path / "credentials.yaml"
