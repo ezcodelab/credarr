@@ -43,6 +43,7 @@
     { id: "security", label: "Security" },
     { id: "audit", label: "Audit schedule" },
     { id: "keys", label: "API keys" },
+    { id: "agents", label: "Agents & sync" },
     { id: "notifications", label: "Notifications" },
     { id: "topology", label: "Import / Export" },
   ];
