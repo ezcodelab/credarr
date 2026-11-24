@@ -146,6 +146,11 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
             raise HTTPException(
                 status_code=400, detail="discord_here is a switch; it cannot be cleared"
             )
+        if "allow_hook_origin" in fields and body.allow_hook_origin is None:
+            raise HTTPException(
+                status_code=400,
+                detail="allow_hook_origin is a switch; it cannot be cleared",
+            )
         if "enabled_types" in fields:
             # `null` clears like `[]` does: the list reads same as the strings,
             # omitted keeps, an explicit clear means "every kind".
@@ -154,6 +159,12 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
             enabled_types = stored.enabled_types
         else:
             enabled_types = ()
+        if "credential_filter" in fields:
+            credential_filter = tuple(body.credential_filter or ())
+        elif stored is not None:
+            credential_filter = stored.credential_filter
+        else:
+            credential_filter = ()
         try:
             return notifier.save_service(
                 name,
@@ -187,6 +198,12 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
                     else (stored.enabled if stored else True)
                 ),
                 enabled_types=enabled_types,
+                credential_filter=credential_filter,
+                allow_hook_origin=(
+                    body.allow_hook_origin
+                    if body.allow_hook_origin is not None
+                    else (stored.allow_hook_origin if stored else False)
+                ),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None

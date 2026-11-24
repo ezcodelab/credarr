@@ -25,6 +25,16 @@ from credarr_server.audit_log import AuditLog
 from credarr_server.source import StoreSource, runtime_manifest
 from credarr_server.store import connect
 
+
+def _audit_events(log, limit=50):
+    """Audit transitions only; value lifecycle events share the same ledger."""
+    return tuple(
+        event
+        for event in log.recent_events(limit)
+        if not event.kind.startswith(("secret.", "vault.", "sync_", "agent_"))
+    )
+
+
 REGISTRY = build_registry()
 
 # What "the app after a restart" would do: open the database and prove the
@@ -147,7 +157,7 @@ def test_an_unverifiable_event_carries_the_holder_sentence(app) -> None:
     )
     log.record(_unverifiable_holder_result(), started_at=2_000.0)
 
-    (event,) = log.recent_events()
+    (event,) = _audit_events(log)
     assert event.kind == "unverifiable"
     assert event.detail.startswith("sonarr.indexers: the holder's own test")
 
@@ -181,7 +191,7 @@ def test_an_old_event_recovers_the_holder_sentence(app) -> None:
             "'unverifiable', '')",
         )
 
-    (event,) = log.recent_events()
+    (event,) = _audit_events(log)
     assert event.detail == "sonarr.indexers: row 1 timed out"
 
 
@@ -252,7 +262,7 @@ def test_a_status_change_records_one_event_carrying_both_statuses(app) -> None:
     app.store.set_value("sonarr_api_key", Secret("0" * 32))
     log.record(_audit(app), started_at=2_000.0)  # match -> drift
 
-    events = log.recent_events()
+    events = _audit_events(log)
     assert len(events) == 1
     event = events[0]
     assert event.kind == "drift"
@@ -272,7 +282,7 @@ def test_the_first_recorded_status_is_a_baseline(app) -> None:
     log = AuditLog(app.store.path)
     log.record(_audit(app), started_at=1_000.0)
 
-    assert log.recent_events() == ()
+    assert _audit_events(log) == ()
 
 
 def test_a_repeated_status_is_not_news(app) -> None:
@@ -281,7 +291,7 @@ def test_a_repeated_status_is_not_news(app) -> None:
     log.record(_audit(app), started_at=2_000.0)
     log.record(_audit(app), started_at=3_000.0)
 
-    assert log.recent_events() == ()
+    assert _audit_events(log) == ()
 
 
 def test_a_recovery_is_recorded_and_the_event_order_is_newest_first(app) -> None:
@@ -294,7 +304,7 @@ def test_a_recovery_is_recorded_and_the_event_order_is_newest_first(app) -> None
     app.store.set_value("sonarr_api_key", original)
     log.record(_audit(app), started_at=3_000.0)
 
-    assert [event.kind for event in log.recent_events()] == ["recovered", "drift"]
+    assert [event.kind for event in _audit_events(log)] == ["recovered", "drift"]
 
 
 def test_losing_and_regaining_a_canonical_is_told_apart_from_drift(app) -> None:
@@ -306,7 +316,7 @@ def test_losing_and_regaining_a_canonical_is_told_apart_from_drift(app) -> None:
     log.record(_without_a_canonical(app), started_at=2_000.0)
     log.record(_audit(app), started_at=3_000.0)
 
-    assert [event.kind for event in log.recent_events()] == ["recovered", "unverifiable"]
+    assert [event.kind for event in _audit_events(log)] == ["recovered", "unverifiable"]
 
 
 def test_liveness_is_not_recorded_as_a_recovery(app) -> None:
@@ -324,7 +334,7 @@ def test_liveness_is_not_recorded_as_a_recovery(app) -> None:
     )
     log.record(live, started_at=3_000.0)
 
-    assert [event.kind for event in log.recent_events()] == ["unverifiable"]
+    assert [event.kind for event in _audit_events(log)] == ["unverifiable"]
 
 
 def test_live_after_drift_does_not_claim_the_drift_is_over(app) -> None:
@@ -340,7 +350,7 @@ def test_live_after_drift_does_not_claim_the_drift_is_over(app) -> None:
     )
     log.record(live, started_at=3_000.0)
 
-    assert [event.kind for event in log.recent_events()] == ["drift"]
+    assert [event.kind for event in _audit_events(log)] == ["drift"]
 
 
 def test_a_manual_rotation_attempt_is_an_action_not_a_transition(app) -> None:
@@ -354,7 +364,7 @@ def test_a_manual_rotation_attempt_is_an_action_not_a_transition(app) -> None:
         "rotation_refused", "sonarr_api_key", "no rotation strategy"
     )
     assert event.previous_status is None and event.status is None
-    assert log.recent_events()[0].kind == "rotation_refused"
+    assert _audit_events(log)[0].kind == "rotation_refused"
 
     with pytest.raises(ValueError, match="manual rotation"):
         log.record_rotation_event("auto_blocked", "sonarr_api_key", "x")
@@ -370,7 +380,7 @@ def test_a_failed_run_records_no_transition(app) -> None:
     app.store.set_value("sonarr_api_key", Secret("0" * 32))
     log.record_failure("ManifestError: boom", started_at=2_000.0, exit_code=3)
 
-    assert log.recent_events() == ()
+    assert _audit_events(log) == ()
 
 
 def test_a_failed_run_keeps_the_last_audited_state(app) -> None:
@@ -520,7 +530,7 @@ def test_an_event_ledger_written_before_the_sink_column_migrates(app) -> None:
         connection.execute("ALTER TABLE events DROP COLUMN sink")
 
     reopened = AuditLog(app.store.path)
-    event, = reopened.recent_events()
+    event, = _audit_events(reopened)
     assert event.kind == "test"
     assert event.sink is None
 

@@ -380,11 +380,38 @@ const EVENT_KIND = {
   rotation_failed: "error",
   rotation_manual: "enabled",
   rotation_succeeded: "enabled",
+  "secret.current_changed": "enabled",
+  "secret.adopted": "enabled",
+  "secret.revealed": "none",
+  "secret.deleted": "unverifiable",
+  "secret.restored": "match",
+  "secret.purged": "error",
+  "secret.cleared": "unverifiable",
+  vault_migrated: "none",
+  "vault.migrated": "none",
+  sync_partial: "unverifiable",
+  sync_failed: "error",
+  sync_delivered: "match",
+  agent_offline: "unverifiable",
+  agent_policy_violation: "error",
 };
 
 const EVENT_LABEL = {
   auto_manual: "manual rotation",
   rotation_manual: "rotation succeeded",
+  "secret.current_changed": "value changed",
+  "secret.adopted": "value adopted",
+  "secret.revealed": "value revealed",
+  "secret.deleted": "soft-deleted",
+  "secret.restored": "restored",
+  "secret.purged": "purged",
+  "secret.cleared": "value cleared",
+  "vault.migrated": "vault migrated",
+  sync_partial: "partial delivery",
+  sync_failed: "delivery failed",
+  sync_delivered: "delivered",
+  agent_offline: "agent offline",
+  agent_policy_violation: "agent disabled",
 };
 
 export function eventInfo(kind) {

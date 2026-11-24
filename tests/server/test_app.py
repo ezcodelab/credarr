@@ -1674,8 +1674,12 @@ def test_a_drift_becomes_an_event_and_the_test_button_delivers_it_now(server, si
     with the sentence the audit wrote, not a value."""
     with TestClient(server) as client:
         setup_admin(client)
-        wait_for_audit(client)  # baseline: match, and no event
-        assert client.get("/api/v1/events").json()["events"] == []
+        wait_for_audit(client)  # baseline: match, and no audit event
+        assert [
+            event
+            for event in client.get("/api/v1/events").json()["events"]
+            if not event["kind"].startswith(("secret.", "vault.", "sync_", "agent_"))
+        ] == []
 
         configured = client.post(
             "/api/v1/notifications/services",
@@ -1693,6 +1697,11 @@ def test_a_drift_becomes_an_event_and_the_test_button_delivers_it_now(server, si
         assert client.post("/api/v1/audit").status_code == 200
 
         events = client.get("/api/v1/events").json()
+        events["events"] = [
+            event
+            for event in events["events"]
+            if not event["kind"].startswith(("secret.", "vault.", "sync_", "agent_"))
+        ]
         assert [event["kind"] for event in events["events"]] == ["drift", "test"]
         drift, test_event = events["events"]
         assert drift["credential"] == "sonarr_api_key"
