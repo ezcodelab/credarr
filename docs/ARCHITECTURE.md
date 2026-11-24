@@ -104,6 +104,12 @@ src/credarr_server/auto_rotation.py
                             whether a due credential may run unattended
 src/credarr_server/audit_jobs.py
                             one long audit as a server-side job
+src/credarr_server/{database,event_schema}.py
+                            one SQLite connection contract and the shared
+                            event ledger shape
+src/credarr_server/vault.py
+                            the encrypted version store, KEK keyring,
+                            lifecycle, generations and sync outbox
 src/credarr_server/mounts.py
                             a filesystem that can hold the app's paths
 ui/                         the SPA (Svelte + Vite); `make web` builds it into
