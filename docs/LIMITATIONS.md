@@ -58,3 +58,5 @@ v1 limit, not a roadmap promise.
 - **Accepted residuals for 1.0.0:** the production read-only dry run was not
   repeated (operator accepted); auto-rotation keeps its audit-to-write
   window; one-admin load assumptions above.
+
+One sentence from the CI probe: only this file changed.
