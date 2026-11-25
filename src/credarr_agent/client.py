@@ -292,6 +292,39 @@ class Workflow:
         self._update_env(target, credential, value)
         return self.compose(target)
 
+    def probe(self, target: dict[str, object]) -> dict[str, bool]:
+        """Validate a target without writing a value or recreating a service."""
+        stack = self._rooted(str(target["stack_path"]))
+        compose_file = self._compose_file(stack)
+        services = [str(name) for name in target.get("services") or []]
+        if not services:
+            raise AgentError("the target declares no services")
+        if str(target.get("workflow") or "compose") == "env":
+            path = self._env_path(stack, target.get("env_file"))
+            mapping = target.get("values")
+            if not isinstance(mapping, dict) or not mapping:
+                raise AgentError("the env target has no key mapping")
+            if not path.is_file() or not os.access(path, os.W_OK):
+                raise AgentError("the env file is missing or not writable")
+        try:
+            completed = subprocess.run(  # noqa: S603
+                [  # noqa: S607
+                    "docker", "compose",
+                    "-f", str(stack / compose_file),
+                    "-p", str(target["project_name"]),
+                    "--project-directory", str(stack),
+                    "config", "--quiet",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=COMPOSE_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            return dict.fromkeys(services, False)
+        ok = completed.returncode == 0
+        return dict.fromkeys(services, ok)
+
     def compose(self, target: dict[str, object]) -> dict[str, bool]:
         stack = self._rooted(str(target["stack_path"]))
         compose_file = self._compose_file(stack)
@@ -351,23 +384,33 @@ def run(config: AgentConfig, *, once: bool = False) -> int:
             target = lease.get("target")
             if not isinstance(target, dict):
                 raise AgentError("the lease carried no target")
-            try:
-                value = tree.verify(str(job["credential"]), str(job["value_version"]))
-            except VaultError as exc:
-                client.post(
-                    f"/v1/jobs/{job['id']}/result",
-                    {
-                        "timestamp": time.time(),
-                        "services": {str(name): False for name in target["services"]},
-                        "detail": f"shared vault preflight failed: {exc}",
-                    },
-                )
-                if once:
-                    return 1
-                continue
+            probe = str(job.get("kind") or "delivery") == "probe"
+            if probe:
+                value = ""
+            else:
+                try:
+                    value = tree.verify(
+                        str(job["credential"]), str(job["value_version"])
+                    )
+                except VaultError as exc:
+                    client.post(
+                        f"/v1/jobs/{job['id']}/result",
+                        {
+                            "timestamp": time.time(),
+                            "services": {
+                                str(name): False for name in target["services"]
+                            },
+                            "detail": f"shared vault preflight failed: {exc}",
+                        },
+                    )
+                    if once:
+                        return 1
+                    continue
             client.post(f"/v1/jobs/{job['id']}/begin", {"timestamp": time.time()})
             try:
-                if str(target.get("workflow") or "compose") == "env":
+                if probe:
+                    results = workflow.probe(target)
+                elif str(target.get("workflow") or "compose") == "env":
                     results = workflow.write_env(
                         target, str(job["credential"]), value
                     )

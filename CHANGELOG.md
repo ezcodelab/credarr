@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.8 — 2026-11-24
+
+- Target and agent lifecycle controls: edit target, real agent-side target
+  probe, enable/disable target, delete target; edit agent name/capabilities,
+  test all agent targets, enable/disable agent, revoke agent.
+- Probes are durable one-off jobs; the agent runs `docker compose config
+  --quiet` and checks the env file/mapping without writing a value or
+  recreating a service.
+
 ## 1.3.7 — 2026-11-24
 
 - Put **Enroll agent** in the Agents pane header, matching **New target** in

@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS sync_targets (
 
 CREATE TABLE IF NOT EXISTS sync_jobs (
     id              TEXT PRIMARY KEY,
+    kind            TEXT NOT NULL DEFAULT 'delivery'
+                    CHECK (kind IN ('delivery','probe')),
     credential      TEXT NOT NULL,
     target_id       TEXT NOT NULL,
     value_version   TEXT NOT NULL,
@@ -199,6 +201,7 @@ class Agent:
 @dataclass(frozen=True, slots=True)
 class SyncJob:
     id: str
+    kind: str
     credential: str
     target_id: str
     value_version: str
@@ -219,6 +222,7 @@ class SyncJob:
     def as_json(self) -> dict[str, Any]:
         return {
             "id": self.id,
+            "kind": self.kind,
             "credential": self.credential,
             "target_id": self.target_id,
             "value_version": self.value_version,
@@ -302,6 +306,7 @@ def _job(row: Any) -> SyncJob:
         result = {}
     return SyncJob(
         id=row["id"],
+        kind=row["kind"] if row["kind"] else "delivery",
         credential=row["credential"],
         target_id=row["target_id"],
         value_version=row["value_version"],
@@ -357,6 +362,17 @@ class SyncStore:
         self.max_attempts = max(1, max_attempts)
         initialise(self.path, SCHEMA)
         self._migrate_targets()
+        self._migrate_jobs()
+
+    def _migrate_jobs(self) -> None:
+        with connect(self.path) as connection:
+            columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(sync_jobs)")
+            }
+            if "kind" not in columns:
+                connection.execute(
+                    "ALTER TABLE sync_jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'delivery'"
+                )
 
     def _migrate_targets(self) -> None:
         """Rebuild the target table for the env workflow on an older store.
@@ -1155,6 +1171,101 @@ class SyncStore:
                     )
         self.dispatch(now=at)
         return {"expired": expired, "failed": failed, "offline": len(stale)}
+
+    def probe_target(self, target_id: str) -> SyncJob:
+        """Queue one read-only target probe for the target's agent."""
+        target = self.target(target_id)
+        if target is None:
+            raise SyncError("no such sync target")
+        agent = self.agent(target.agent_id)
+        if agent is None or agent.status not in ("active", "offline"):
+            raise SyncError("the target's agent is not available")
+        now = time.time()
+        with connect(self.path) as connection:
+            existing = connection.execute(
+                "SELECT * FROM sync_jobs WHERE kind = 'probe' AND target_id = ? "
+                "AND state IN ('queued','leased','running','retry_wait')",
+                (target.id,),
+            ).fetchone()
+            if existing is not None:
+                return _job(existing)
+            identifier = secrets.token_hex(12)
+            connection.execute(
+                "INSERT INTO sync_jobs "
+                "(id, kind, credential, target_id, value_version, generation_id, "
+                " state, attempts, max_attempts, next_attempt_at, created_at, updated_at) "
+                "VALUES (?, 'probe', '__probe__', ?, '', 0, 'queued', 0, 1, ?, ?, ?)",
+                (identifier, target.id, now, now, now),
+            )
+            row = connection.execute(
+                "SELECT * FROM sync_jobs WHERE id = ?", (identifier,)
+            ).fetchone()
+        return _job(row)
+
+    def probe_agent(self, agent_id: str) -> tuple[SyncJob, ...]:
+        agent = self.agent(agent_id)
+        if agent is None:
+            raise SyncError("no such agent")
+        targets = [target for target in self.targets() if target.agent_id == agent.id]
+        if not targets:
+            raise SyncError("that agent has no targets to test")
+        return tuple(self.probe_target(target.id) for target in targets)
+
+    def update_agent(
+        self,
+        identifier: str,
+        *,
+        name: str | None = None,
+        capabilities: tuple[str, ...] | None = None,
+    ) -> Agent:
+        with connect(self.path) as connection:
+            row = connection.execute(
+                "SELECT * FROM agents WHERE id = ? OR name = ?",
+                (identifier, identifier),
+            ).fetchone()
+            if row is None:
+                raise SyncError("no such agent")
+            if row["status"] == "revoked":
+                raise SyncError("a revoked agent needs a new enrollment")
+            if name is not None and name != row["name"]:
+                if connection.execute(
+                    "SELECT 1 FROM agents WHERE name = ?", (name,)
+                ).fetchone():
+                    raise SyncError(f"an agent named {name!r} already exists")
+                connection.execute(
+                    "UPDATE agents SET name = ?, updated_at = ? WHERE id = ?",
+                    (name, time.time(), row["id"]),
+                )
+            if capabilities is not None:
+                connection.execute(
+                    "UPDATE agents SET capabilities = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(sorted(set(capabilities))), time.time(), row["id"]),
+                )
+        agent = self.agent(row["id"])
+        assert agent is not None
+        return agent
+
+    def enable_agent(self, identifier: str) -> Agent:
+        now = time.time()
+        with connect(self.path) as connection:
+            row = connection.execute(
+                "SELECT * FROM agents WHERE id = ? OR name = ?",
+                (identifier, identifier),
+            ).fetchone()
+            if row is None:
+                raise SyncError("no such agent")
+            if row["status"] == "revoked":
+                raise SyncError("a revoked agent needs a new enrollment")
+            if row["certificate_expires_at"] is not None and row["certificate_expires_at"] < now:
+                raise SyncError("that agent certificate has expired; enroll it again")
+            connection.execute(
+                "UPDATE agents SET status = 'active', disabled_reason = '', updated_at = ? "
+                "WHERE id = ?",
+                (now, row["id"]),
+            )
+        agent = self.agent(row["id"])
+        assert agent is not None
+        return agent
 
     def retry(self, job_id: str, *, actor: str = "admin") -> SyncJob | None:
         now = time.time()

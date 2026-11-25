@@ -298,6 +298,44 @@ def test_an_env_target_requires_a_relative_file_and_key_mapping(tmp_path: Path) 
     assert target.values == {"HOMEPAGE_VAR_SONARR_API_KEY": "sonarr_api_key"}
 
 
+def test_a_target_probe_is_a_real_leased_job(tmp_path: Path) -> None:
+    _store, sync = _stack(tmp_path)
+    agent = _agent(sync)
+    target = _target(sync, agent.id)
+    job = sync.probe_target(target.id)
+    assert job.kind == "probe" and job.state == "queued"
+    leased, _ = sync.lease(agent)
+    assert leased is not None and leased.id == job.id
+    sync.begin(job.id, agent)
+    delivered = sync.report(
+        job.id,
+        agent,
+        services={"sonarr": True, "seerr": True},
+        detail="config valid",
+    )
+    assert delivered.state == "delivered" and delivered.kind == "probe"
+
+
+def test_an_agent_test_probes_every_target_and_agent_edit_enables(
+    tmp_path: Path,
+) -> None:
+    _store, sync = _stack(tmp_path)
+    agent = _agent(sync)
+    target = _target(sync, agent.id)
+    jobs = sync.probe_agent(agent.id)
+    assert [job.target_id for job in jobs] == [target.id]
+    assert jobs[0].kind == "probe"
+    assert sync.disable(agent.id, "test pause") is True
+    assert sync.agent(agent.id).status == "disabled"
+    enabled = sync.enable_agent(agent.id)
+    assert enabled.status == "active"
+    edited = sync.update_agent(
+        agent.id, name="nas-2", capabilities=("compose", "env")
+    )
+    assert edited.name == "nas-2"
+    assert edited.capabilities == ("compose", "env")
+
+
 def test_an_env_target_only_receives_jobs_for_mapped_credentials(
     tmp_path: Path,
 ) -> None:

@@ -21,8 +21,15 @@
   let token = $state("");
   let enrollBusy = $state(false);
   let revokeArmed = $state("");
+  let agentEditingId = $state("");
+  let agentEditName = $state("");
+  let agentEditCompose = $state(true);
+  let agentEditEnv = $state(false);
+  let agentEditBusy = $state(false);
 
   let targetOpen = $state(false);
+  let targetEditingId = $state("");
+  let targetDeleteArmed = $state("");
   let targetWorkflow = $state("compose");
   let targetName = $state("");
   let targetAgent = $state("");
@@ -61,15 +68,19 @@
     token = "";
   }
 
-  function openTarget() {
+  function openTarget(target = null) {
     targetOpen = true;
-    targetWorkflow = "compose";
-    targetName = "";
-    targetPath = "";
-    targetProject = "";
-    targetServices = "";
-    targetEnvFile = "";
-    targetValues = "";
+    targetEditingId = target?.id ?? "";
+    targetWorkflow = target?.workflow ?? "compose";
+    targetName = target?.name ?? "";
+    targetAgent = target?.agent_id ?? targetAgent;
+    targetPath = target?.stack_path ?? "";
+    targetProject = target?.project_name ?? "";
+    targetServices = (target?.services ?? []).join(", ");
+    targetEnvFile = target?.env_file ?? "";
+    targetValues = Object.entries(target?.values ?? {})
+      .map(([key, credential]) => `${key}=${credential}`)
+      .join("\n");
     if (!targetAgent && agents.length) targetAgent = agents[0].id;
   }
 
@@ -120,24 +131,28 @@
     targetBusy = true;
     error = "";
     try {
-      await api("/sync/targets", {
-        method: "POST",
-        body: {
-          name: targetName.trim(),
-          agent_id: targetAgent,
-          stack_path: targetPath.trim(),
-          project_name: targetProject.trim(),
-          services: targetServices
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean),
-          workflow: targetWorkflow,
-          env_file: targetWorkflow === "env" ? targetEnvFile.trim() : null,
-          values: targetWorkflow === "env" ? valueMap() : {},
-          enabled: true,
-        },
-      });
+      const body = {
+        name: targetName.trim(),
+        agent_id: targetAgent,
+        stack_path: targetPath.trim(),
+        project_name: targetProject.trim(),
+        services: targetServices
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+        workflow: targetWorkflow,
+        env_file: targetWorkflow === "env" ? targetEnvFile.trim() : null,
+        values: targetWorkflow === "env" ? valueMap() : {},
+        enabled: true,
+      };
+      await api(
+        targetEditingId
+          ? `/sync/targets/${encodeURIComponent(targetEditingId)}`
+          : "/sync/targets",
+        { method: targetEditingId ? "PATCH" : "POST", body },
+      );
       targetOpen = false;
+      targetEditingId = "";
       message = "Target saved.";
       await load();
     } catch (failure) {
@@ -145,6 +160,116 @@
       else error = errorText(failure);
     } finally {
       targetBusy = false;
+    }
+  }
+
+  async function toggleTarget(target) {
+    try {
+      await api(`/sync/targets/${encodeURIComponent(target.id)}`, {
+        method: "PATCH",
+        body: { enabled: !target.enabled },
+      });
+      await load();
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 401) onsignout?.();
+      else error = errorText(failure);
+    }
+  }
+
+  async function testTarget(target) {
+    try {
+      await api(`/sync/targets/${encodeURIComponent(target.id)}/test`, {
+        method: "POST",
+      });
+      message = "Target test queued.";
+      await load();
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 401) onsignout?.();
+      else error = errorText(failure);
+    }
+  }
+
+  async function deleteTarget(target) {
+    if (targetDeleteArmed !== target.id) {
+      targetDeleteArmed = target.id;
+      return;
+    }
+    try {
+      await api(`/sync/targets/${encodeURIComponent(target.id)}`, {
+        method: "DELETE",
+      });
+      targetDeleteArmed = "";
+      await load();
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 401) onsignout?.();
+      else error = errorText(failure);
+    }
+  }
+
+  function editAgent(agent) {
+    agentEditingId = agent.id;
+    agentEditName = agent.name;
+    agentEditCompose = agent.capabilities.includes("compose");
+    agentEditEnv = agent.capabilities.includes("env");
+  }
+
+  async function saveAgent(event) {
+    event.preventDefault();
+    if (!agentEditName.trim()) return;
+    const current = agents.find((item) => item.id === agentEditingId);
+    const capabilities = [
+      ...(agentEditCompose ? ["compose"] : []),
+      ...(agentEditEnv ? ["env"] : []),
+      ...(current?.capabilities ?? []).filter(
+        (item) => !["compose", "env"].includes(item),
+      ),
+    ];
+    agentEditBusy = true;
+    try {
+      await api(`/agents/${encodeURIComponent(agentEditingId)}`, {
+        method: "PATCH",
+        body: { name: agentEditName.trim(), capabilities },
+      });
+      agentEditingId = "";
+      message = "Agent saved.";
+      await load();
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 401) onsignout?.();
+      else error = errorText(failure);
+    } finally {
+      agentEditBusy = false;
+    }
+  }
+
+  async function toggleAgent(agent) {
+    try {
+      if (agent.status === "disabled" || agent.status === "offline") {
+        await api(`/agents/${encodeURIComponent(agent.id)}/enable`, {
+          method: "POST",
+        });
+      } else {
+        await api(`/agents/${encodeURIComponent(agent.id)}/disable`, {
+          method: "POST",
+          body: { reason: "disabled by the operator" },
+        });
+      }
+      await load();
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 401) onsignout?.();
+      else error = errorText(failure);
+    }
+  }
+
+  async function testAgent(agent) {
+    try {
+      const answer = await api(`/agents/${encodeURIComponent(agent.id)}/test`, {
+        method: "POST",
+      });
+      message = `${answer?.jobs?.length ?? 0} target test(s) queued.`;
+      await load();
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 401) onsignout?.();
+      else error = errorText(failure);
     }
   }
 
@@ -226,7 +351,7 @@
     <div class="targets">
       <div class="section-head">
         <h4>Targets</h4>
-        <button class="primary" type="button" onclick={openTarget}>New target</button>
+        <button class="primary" type="button" onclick={() => openTarget()}>New target</button>
       </div>
 
       {#if targetOpen}
@@ -308,7 +433,7 @@
         <p class="muted">No targets.</p>
       {:else}
         <table class="table targets-table">
-          <thead><tr><th>Name</th><th>Type</th><th>Stack</th><th>Agent</th><th>On</th></tr></thead>
+          <thead><tr><th>Name</th><th>Type</th><th>Stack</th><th>Agent</th><th>On</th><th></th></tr></thead>
           <tbody>
             {#each targets as target (target.id)}
               <tr>
@@ -317,6 +442,16 @@
                 <td>{target.project_name} · {target.stack_path}</td>
                 <td>{agents.find((item) => item.id === target.agent_id)?.name ?? target.agent_id}</td>
                 <td>{target.enabled ? "yes" : "no"}</td>
+                <td class="row-actions">
+                  <button class="link" type="button" onclick={() => openTarget(target)}>Edit</button>
+                  <button class="link" type="button" onclick={() => testTarget(target)}>Test</button>
+                  <button class="link" type="button" onclick={() => toggleTarget(target)}>
+                    {target.enabled ? "Disable" : "Enable"}
+                  </button>
+                  <button class="link danger" type="button" onclick={() => deleteTarget(target)}>
+                    {targetDeleteArmed === target.id ? "Confirm" : "Delete"}
+                  </button>
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -340,9 +475,14 @@
                 <td>{agent.name}</td>
                 <td>{agent.status}{agent.rootful ? " · rootful" : ""}</td>
                 <td>{agent.certificate_expires_at ? timestamp(agent.certificate_expires_at) : "—"}</td>
-                <td class="row-action">
+                <td class="row-actions">
                   {#if agent.status !== "revoked"}
-                    <button class="danger" type="button" onclick={() => revoke(agent)}>
+                    <button class="link" type="button" onclick={() => editAgent(agent)}>Edit</button>
+                    <button class="link" type="button" onclick={() => testAgent(agent)}>Test</button>
+                    <button class="link" type="button" onclick={() => toggleAgent(agent)}>
+                      {agent.status === "disabled" ? "Enable" : "Disable"}
+                    </button>
+                    <button class="link danger" type="button" onclick={() => revoke(agent)}>
                       {revokeArmed === agent.id ? "Confirm" : "Revoke"}
                     </button>
                   {/if}
@@ -351,6 +491,25 @@
             {/each}
           </tbody>
         </table>
+        {#if agentEditingId}
+          <form class="enroll" onsubmit={saveAgent}>
+            <label class="field">
+              Agent name
+              <input bind:value={agentEditName} autocomplete="off" />
+            </label>
+            <div class="capabilities" role="group" aria-label="Capabilities">
+              <label class="check"><input type="checkbox" bind:checked={agentEditCompose} /> Restart services</label>
+              <label class="check"><input type="checkbox" bind:checked={agentEditEnv} /> Write env files</label>
+            </div>
+            <div class="toolbar">
+              <button type="button" onclick={() => (agentEditingId = "")}>Cancel</button>
+              <span class="spacer"></span>
+              <button class="primary" type="submit" disabled={agentEditBusy || !agentEditName.trim()}>
+                {agentEditBusy ? "Saving…" : "Save agent"}
+              </button>
+            </div>
+          </form>
+        {/if}
       {/if}
     </div>
   </div>
@@ -365,7 +524,7 @@
         <tbody>
           {#each jobs as job (job.id)}
             <tr>
-              <td>{job.credential}</td>
+              <td>{job.kind === "probe" ? "target test" : job.credential}</td>
               <td>{job.state}</td>
               <td class="tabular">{job.attempts}/{job.max_attempts}</td>
               <td>{job.last_error || "—"}</td>
@@ -458,9 +617,17 @@
     background: color-mix(in srgb, var(--accent) 12%, var(--panel-2));
     color: var(--text);
   }
-  .row-action {
-    text-align: right;
+  .row-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.45rem;
     white-space: nowrap;
+  }
+  .row-actions .link {
+    font-size: 0.78rem;
+  }
+  .row-actions .danger {
+    color: var(--bad);
   }
   .deliveries {
     margin-top: 1rem;
