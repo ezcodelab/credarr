@@ -48,7 +48,9 @@ jobs:
         run: |
           set -euo pipefail
           python -V
-          uv venv .venv
+          # --seed keeps pip in the venv: the packaging test shells out to
+          # `python -m pip wheel` with no build isolation.
+          uv venv --seed .venv
           uv pip install --python .venv/bin/python -e ".[dev]"
 
       - uses: actions/setup-node@v7
@@ -101,7 +103,7 @@ jobs:
       - name: Install the engine
         run: |
           set -euo pipefail
-          uv venv .venv
+          uv venv --seed .venv
           uv pip install --python .venv/bin/python -e ".[dev]"
 
       - name: Which tests cover this diff
@@ -181,7 +183,7 @@ jobs:
         if: steps.changed.outputs.run != 'false'
         run: |
           set -euo pipefail
-          uv venv .venv
+          uv venv --seed .venv
           uv pip install --python .venv/bin/python -e ".[dev]"
           make image
           .venv/bin/python -m pytest -m integration -o addopts="--strict-markers" -q
@@ -252,7 +254,7 @@ jobs:
         if: steps.changed.outputs.run != 'false'
         run: |
           set -euo pipefail
-          uv venv .venv
+          uv venv --seed .venv
           uv pip install --python .venv/bin/python -e ".[dev]"
 
       - name: Install the console and the browser
