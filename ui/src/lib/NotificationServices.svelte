@@ -3,6 +3,7 @@
   import { api, ApiError, errorText } from "./api.js";
   import Banner from "./Banner.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+  import EmptyState from "./EmptyState.svelte";
   import LoadingRows from "./LoadingRows.svelte";
   import { toast } from "./toast.js";
   import StatusPill from "./StatusPill.svelte";
@@ -37,6 +38,9 @@
   let tested = $state(null); // { name, rows }
   let deleteTarget = $state(null);
   let deleting = $state(false);
+
+  // Success is one dull word; the list changing is the rest of the answer.
+  // Errors stay inline where the failure happened.
 
   function blankForm(kind) {
     return {
@@ -825,10 +829,18 @@
       <button type="button" onclick={startCreate}>Add service</button>
     </div>
 
-    {#if error}<Banner tone="danger">{error}</Banner>{/if}
+    {#if error && services !== null}<Banner tone="danger">{error}</Banner>{/if}
 
-    {#if services === null}
+    {#if services === null && !error}
       <LoadingRows label="Loading notification services…" rows={3} />
+    {:else if services === null}
+      <EmptyState title="Notification services are unavailable" icon="events">
+        <p>{error}</p>
+        <p class="muted">Refresh to try again.</p>
+        {#snippet actions()}
+          <button onclick={load}>Refresh</button>
+        {/snippet}
+      </EmptyState>
     {:else if services.length === 0}
       <p class="muted">No service is configured. Audit changes stay in Activity until you add one.</p>
     {:else}

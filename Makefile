@@ -29,7 +29,7 @@ test:  ## Run the test suite
 	@if [ ! -x $(BIN)/pytest ]; then $(MAKE) install; fi
 	cd . && PYTHONDONTWRITEBYTECODE=1 $(BIN)/pytest -q -p no:cacheprovider
 
-ui-test:  ## Run the console's unit tests (Node only; includes the component size cap)
+ui-test:  ## Run the console's unit tests (Node only)
 	@[ -d ui/node_modules ] || (cd ui && npm ci)
 	cd ui && npm test
 

@@ -597,7 +597,7 @@ async function main() {
       });
     }
     await page.getByRole("button", { name: "Settings", exact: true }).click();
-    await page.locator("#settings-keys .banner-danger").waitFor();
+    await page.locator("#settings-keys").getByText("API keys are unavailable").waitFor();
     check(
       "a failed API-key read does not claim there are no keys",
       (await page.locator("#settings-keys").innerText()).includes("API keys are unavailable"),

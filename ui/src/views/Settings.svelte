@@ -9,6 +9,7 @@
   } from "../lib/api.js";
   import Banner from "../lib/Banner.svelte";
   import ConfirmDialog from "../lib/ConfirmDialog.svelte";
+  import EmptyState from "../lib/EmptyState.svelte";
   import LoadingRows from "../lib/LoadingRows.svelte";
   import PageHeader from "../lib/PageHeader.svelte";
   import StatusPill from "../lib/StatusPill.svelte";
@@ -589,7 +590,7 @@
       {keyFormOpen ? "Cancel" : "Create key"}
     </button>
   </div>
-  {#if keysError}<Banner tone="danger">{keysError}</Banner>{/if}
+  {#if keysError && keys !== null}<Banner tone="danger">{keysError}</Banner>{/if}
   {#if keyFormOpen}
     <div class="key-create">
       <select bind:value={keyOrigin} aria-label="Key origin">
@@ -616,6 +617,16 @@
   {/if}
   {#if keys === null && keysBusy}
     <LoadingRows label="Loading keys…" rows={3} />
+  {:else if keys === null}
+    <EmptyState title="API keys are unavailable" icon="key">
+      <p>{keysError}</p>
+      <p class="muted">Refresh to try again.</p>
+      {#snippet actions()}
+        <button onclick={loadKeys} disabled={keysBusy}>
+          {keysBusy ? "Reading…" : "Refresh"}
+        </button>
+      {/snippet}
+    </EmptyState>
   {:else if keys?.length}
     <table class="keys-table">
       <caption class="sr-only">Console API keys</caption>
