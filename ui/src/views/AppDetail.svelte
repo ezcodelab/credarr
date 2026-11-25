@@ -1029,11 +1029,13 @@
   <section class="card section" id="check-history">
     <div class="section-head">
       <div><h3>Check history</h3></div>
-      <button type="button" onclick={loadChecks} disabled={checksLoading}>
-        {checksLoading ? "Reading…" : "Refresh"}
-      </button>
+      {#if !checksError || checks.length > 0}
+        <button type="button" onclick={loadChecks} disabled={checksLoading}>
+          {checksLoading ? "Reading…" : "Refresh"}
+        </button>
+      {/if}
     </div>
-    {#if checksError}<Banner tone="danger">{checksError}</Banner>{/if}
+    {#if checksError && checks.length > 0}<Banner tone="danger">{checksError}</Banner>{/if}
     {#if checks.length > 0}
       <table class="checks-table">
         <caption class="sr-only">Checks and stack audits for this app</caption>
@@ -1060,6 +1062,16 @@
       </table>
     {:else if checksLoading}
       <LoadingRows label="Reading check history…" rows={3} />
+    {:else if checksError}
+      <EmptyState title="Check history is unavailable" icon="events">
+        <p>{checksError}</p>
+        <p class="muted">Refresh to try again, or use Check app to run a new check.</p>
+        {#snippet actions()}
+          <button onclick={loadChecks} disabled={checksLoading}>
+            {checksLoading ? "Reading…" : "Refresh"}
+          </button>
+        {/snippet}
+      </EmptyState>
     {:else}
       <p class="muted">
         No checks yet. Use Check app to test this app without auditing the whole
