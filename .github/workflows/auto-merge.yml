@@ -92,14 +92,35 @@ jobs:
       contents: write
       pull-requests: write
       checks: read
+      actions: read
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
       HEAD: ${{ github.event.pull_request.head.sha }}
     steps:
-      - name: Wait for required checks
-        run: gh pr checks "$PR" --watch --required --interval 20
+      # Branch protection knows the expected contexts; the check-run listing
+      # does not. A required job behind `needs` is not created until its
+      # dependency finishes, so `gh pr checks --required` can see one green
+      # check and let the merge race the rest. Wait for the CI run itself,
+      # which exists as soon as the workflow starts, then let branch
+      # protection decide. The listing is repeated because the run is created
+      # a moment after this job starts.
+      - name: Wait for the CI run on the verified head
+        run: |
+          set -euo pipefail
+          run=""
+          for _ in $(seq 1 60); do
+            run=$(gh run list --workflow=ci.yml --commit "$HEAD" --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty')
+            if [ -n "$run" ]; then break; fi
+            sleep 10
+          done
+          if [ -z "$run" ]; then
+            echo "::error::no ci run appeared for $HEAD"
+            exit 1
+          fi
+          gh run watch "$run" --exit-status --interval 15
 
       - name: Merge the exact verified head
         run: gh pr merge "$PR" --merge --match-head-commit "$HEAD"

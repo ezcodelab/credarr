@@ -16,6 +16,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+AUTO_MERGE = ROOT / ".github" / "workflows" / "auto-merge.yml"
 REQUIRED = ("check", "container", "smoke")
 GATE = "gate"
 
@@ -63,3 +64,15 @@ def test_a_failed_gate_fails_the_required_jobs_instead_of_skipping_them() -> Non
             f"{name} would be skipped when the {GATE} fails, and a skipped "
             "required check counts as passing"
         )
+
+
+def test_the_merge_waits_for_the_run_not_a_check_listing() -> None:
+    """A required job behind `needs` has no check run until its dependency
+    finishes, so a listing of required checks can be all-green while the
+    suite, the image and the browser have not started. Waiting on the run
+    itself is what closes that window; the merge is still gated by branch
+    protection."""
+    merge = yaml.safe_load(AUTO_MERGE.read_text())["jobs"]["merge"]
+    commands = "\n".join(str(step.get("run", "")) for step in merge["steps"])
+    assert "gh run watch" in commands
+    assert "gh pr checks" not in commands
