@@ -33,8 +33,6 @@
     suggestionsFor,
   } from "../lib/setup.js";
   import {
-    credentialReason,
-    fixHint,
     stackHealth,
     statusOf,
     statusRank,
@@ -73,7 +71,6 @@
   let actionError = $state("");
 
   const rows = $derived(credentials?.credentials ?? []);
-  const observed = $derived(credentials?.observed_run ?? null);
   const topology = $derived(status?.topology ?? { imported: false });
   const health = $derived(stackHealth(status, credentials));
   const joined = $derived(buildApps({ credentials: rows, definitions }));
@@ -486,12 +483,6 @@
                 <StatusPill status="none" label="no key yet" />
               {/if}
             </div>
-            <p class="status-why">
-              {credentialReason(app.row, observed)}
-            </p>
-            {#if fixHint(app.row)}
-              <p class="status-fix">{fixHint(app.row)}</p>
-            {/if}
           </div>
 
           <div class="app-copies">
