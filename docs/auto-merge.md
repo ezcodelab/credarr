@@ -25,6 +25,12 @@ workflow comes from the trusted base branch.
 - The only token is GitHub's short-lived `GITHUB_TOKEN`. Fork PRs are
   supported; the verify job is read-only and the merge job has no checkout.
 
+The wait is on the run, not on a list of check runs: a required job behind
+`needs` has no check run until its dependency finishes, so a listing can be
+all-green while the suite, the image and the browser have not started. The run
+exists as soon as the workflow starts. Branch protection still decides the
+merge, so a red or cancelled run never reaches it.
+
 ## Consumer scripts
 
 - `bin/pr_policy.py --forge github` checks PR metadata, size, secret markers,
