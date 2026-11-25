@@ -19,8 +19,8 @@ workflow comes from the trusted base branch.
 - `verify` is read-only. It checks out the trusted base and the PR merge ref,
   runs `bin/pr_policy.py --forge github`, `bin/verify_pr.sh`, gitleaks, and
   `git diff --check`. It never executes PR code.
-- `merge` has write permission and checks out nothing. It waits for the
-  required CI checks and merges the exact verified head with
+- `merge` has write permission and checks out nothing. It waits for the CI run
+  on the head it verified, then merges the exact verified head with
   `gh pr merge --merge --match-head-commit`.
 - The only token is GitHub's short-lived `GITHUB_TOKEN`. Fork PRs are
   supported; the verify job is read-only and the merge job has no checkout.
