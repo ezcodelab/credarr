@@ -8,6 +8,9 @@
 VENV := .venv
 BIN  := $(VENV)/bin
 PORT ?= 8080
+# The console's install command. CI installs once and passes UI_INSTALL=true so
+# `ui-smoke` builds from the tree it already has.
+UI_INSTALL ?= npm ci
 
 .PHONY: help install test ui-test ui-check lint check ci worktree-setup serve ui-dev web ui-smoke ui-audit wheel image ship publish release clean
 
@@ -68,7 +71,7 @@ ui-dev:  ## Run the Vite dev server against this worktree's PORT
 	cd ui && CREDARR_API=http://127.0.0.1:$(PORT) npm run dev
 
 web:  ## Build the SPA into the package (Node 24+; first run needs the network)
-	cd ui && npm ci
+	cd ui && $(UI_INSTALL)
 	cd ui && npm run build
 	rm -rf src/credarr_server/web
 	cp -r ui/dist src/credarr_server/web

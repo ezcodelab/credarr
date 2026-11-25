@@ -1,113 +1,277 @@
-# CI for the public GitHub repository.
+# CI for the public GitHub repository. GitHub is the only CI that gates a
+# merge: the Gitea remote is a read-only mirror.
 #
-# This is the GitHub-native twin of .gitea/workflows/ci.yaml. The Gitea copy
-# cannot use actions/setup-python (its runner only reads a local tool cache), so
-# it builds a venv from the image's python. Here the standard setup actions
-# work, and the runner has Docker and a browser.
+# Shape: one cheap deterministic gate, then three required jobs in parallel.
+# `check`, `container` and `smoke` are branch-protection contexts; renaming a
+# job without updating the protection would leave a required check pending.
+# Measurements and the before/after table live in docs/TESTING.md.
 name: ci
 
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A superseded pull request run is cancelled; a push to main is allowed to
+# finish, because that run is the one that reports on the merged tree.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  check:
-    if: github.server_url == 'https://github.com'
+  gate:
+    # Lint and the console checks are seconds, and every expensive job depends
+    # on them. A failure here stops the image build and the browser run before
+    # they start. Not a required context: when it fails, each required job
+    # fails through its own guard step instead of being skipped, because a
+    # skipped required check counts as passing.
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
 
-      - uses: actions/setup-node@v4
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      - name: Install the engine
+        run: |
+          set -euo pipefail
+          python -V
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e ".[dev]"
+
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
-      - name: Install
+      - name: Install the console
+        working-directory: ui
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Lint and the UI contract
         run: |
           set -euo pipefail
-          python -m venv .venv
-          .venv/bin/python -m pip install --quiet --upgrade pip
-          .venv/bin/python -m pip install --quiet -e ".[dev]"
+          make lint
+          make ui-audit
 
-      - name: Lint
-        run: make lint
-
-      - name: Engine and server tests
-        run: .venv/bin/python -m pytest -o addopts="" -m "not integration" -q -n auto
-
-      - name: Console check and unit tests
+      - name: Console type check and unit tests
         run: |
           set -euo pipefail
-          cd ui
-          npm ci --no-audit --no-fund
-          npm run check
-          npm test
+          make ui-check ui-test
 
-  container:
-    if: github.server_url == 'https://github.com'
+  check:
+    name: check
+    needs: gate
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
-    needs: check
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - name: Require the fast gate
+        if: needs.gate.result != 'success'
+        run: |
+          echo "::error::the gate job did not pass; refusing to run the suite"
+          exit 1
 
-      - uses: actions/setup-python@v5
+      # Full history: scripts/affected-tests diffs against the merge base.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
 
-      - name: Build the image and boot it
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      - name: Install the engine
         run: |
           set -euo pipefail
-          python -m venv .venv
-          .venv/bin/python -m pip install --quiet --upgrade pip
-          .venv/bin/python -m pip install --quiet -e ".[dev]"
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e ".[dev]"
+
+      - name: Which tests cover this diff
+        id: affected
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          selection=$(./scripts/affected-tests --base "origin/$BASE_REF")
+          echo "selection=$selection" >> "$GITHUB_OUTPUT"
+          echo "selection: $selection"
+
+      - name: Engine and server tests
+        shell: bash
+        env:
+          SELECTION: ${{ steps.affected.outputs.selection }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            case "$SELECTION" in
+              none) echo "No Python test observes this diff."; exit 0 ;;
+              all) ;;
+              *) read -r -a args <<< "$SELECTION" ;;
+            esac
+          fi
+          .venv/bin/python -m pytest -o addopts="" -m "not integration" -q \
+            -p no:cacheprovider -n auto "${args[@]}"
+
+  container:
+    name: container
+    needs: gate
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Require the fast gate
+        if: needs.gate.result != 'success'
+        run: |
+          echo "::error::the gate job did not pass; refusing to build the image"
+          exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Skip only what the image and its black box suite cannot observe. Any
+      # other path runs the job; an unmatched change widens the run.
+      - name: Which inputs changed
+        id: changed
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git diff --name-only "origin/$BASE_REF...HEAD" > /tmp/changed
+          if grep -Eqv '^(docs/|\.github/|CHANGELOG\.md$)' /tmp/changed; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Only docs, CI files or the changelog changed."
+          fi
+
+      - uses: actions/setup-python@v7
+        if: steps.changed.outputs.run != 'false'
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v10
+        if: steps.changed.outputs.run != 'false'
+        with:
+          enable-cache: true
+
+      - name: Build the image and run the black box suite
+        if: steps.changed.outputs.run != 'false'
+        run: |
+          set -euo pipefail
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e ".[dev]"
           make image
           .venv/bin/python -m pytest -m integration -o addopts="--strict-markers" -q
 
   smoke:
-    if: github.server_url == 'https://github.com'
+    name: smoke
+    needs: gate
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
-    needs: check
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - name: Require the fast gate
+        if: needs.gate.result != 'success'
+        run: |
+          echo "::error::the gate job did not pass; refusing to run the browser"
+          exit 1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The browser drives the built console against a real server; tests and
+      # docs are not shipped, so they cannot change what it observes. Any
+      # other path runs the job.
+      - name: Which inputs changed
+        id: changed
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git diff --name-only "origin/$BASE_REF...HEAD" > /tmp/changed
+          if grep -Eqv '^(docs/|\.github/|tests/|ui-system/|CHANGELOG\.md$)' /tmp/changed; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Only docs, CI files, tests or the changelog changed."
+          fi
+
+      - uses: actions/setup-python@v7
+        if: steps.changed.outputs.run != 'false'
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
 
-      - uses: actions/setup-node@v4
+      - uses: astral-sh/setup-uv@v10
+        if: steps.changed.outputs.run != 'false'
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v7
+        if: steps.changed.outputs.run != 'false'
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
-      - name: Install
-        run: |
-          set -euo pipefail
-          python -m venv .venv
-          .venv/bin/python -m pip install --quiet --upgrade pip
-          .venv/bin/python -m pip install --quiet -e ".[dev]"
+      # Keyed on the lockfile, which pins the Playwright version and therefore
+      # the browser revision.
+      - name: Cache the Playwright browser
+        if: steps.changed.outputs.run != 'false'
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+          restore-keys: playwright-${{ runner.os }}-
 
-      - name: Install the browser
+      - name: Install the engine
+        if: steps.changed.outputs.run != 'false'
         run: |
           set -euo pipefail
-          cd ui
-          npm ci --no-audit --no-fund
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e ".[dev]"
+
+      - name: Install the console and the browser
+        if: steps.changed.outputs.run != 'false'
+        working-directory: ui
+        run: |
+          set -euo pipefail
+          npm ci --prefer-offline --no-audit --no-fund
           npx playwright install --with-deps chromium
 
       - name: Console end to end
-        run: make ui-smoke
+        if: steps.changed.outputs.run != 'false'
+        run: make ui-smoke UI_INSTALL=true
+
+      - name: Keep the failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-screenshots
+          path: ui/test-results
+          if-no-files-found: ignore
+          retention-days: 7
