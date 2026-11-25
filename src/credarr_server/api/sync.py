@@ -16,6 +16,7 @@ from credarr_server.api.context import ApiContext
 from credarr_server.api.http import _actor, new_routers
 from credarr_server.api.models import (
     AgentActionBody,
+    AgentEditBody,
     EnrollmentBody,
     SyncTargetBody,
     SyncTargetPatch,
@@ -92,6 +93,15 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
                 raise HTTPException(status_code=404, detail="no such sync target")
         return {"ok": True}
 
+    @authed.post("/sync/targets/{target_id}/test")
+    def test_target(target_id: str, actor: str = Depends(_actor)) -> dict[str, Any]:
+        with ctx.stack_write(actor):
+            try:
+                job = _sync(ctx).probe_target(target_id)
+            except SyncError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"ok": True, "job": job.as_json()}
+
     @authed.get("/sync/jobs")
     def jobs(credential: str | None = None, limit: int = 100) -> dict[str, Any]:
         bounded = max(1, min(limit, 500))
@@ -141,6 +151,22 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
         # The token is returned exactly once; only its hash is stored.
         return {"ok": True, "token": token, "agent": agent.as_json()}
 
+    @authed.patch("/agents/{agent_id}")
+    def edit_agent(
+        agent_id: str, body: AgentEditBody, actor: str = Depends(_actor)
+    ) -> dict[str, Any]:
+        try:
+            agent = _sync(ctx).update_agent(
+                agent_id,
+                name=body.name,
+                capabilities=(
+                    tuple(body.capabilities) if body.capabilities is not None else None
+                ),
+            )
+        except SyncError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"ok": True, "agent": agent.as_json()}
+
     @authed.delete("/agents/{agent_id}")
     def revoke_agent(agent_id: str) -> dict[str, bool]:
         if not _sync(ctx).revoke(agent_id):
@@ -154,5 +180,22 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
         if not _sync(ctx).disable(agent_id, body.reason):
             raise HTTPException(status_code=404, detail="no such agent")
         return {"ok": True}
+
+    @authed.post("/agents/{agent_id}/enable")
+    def enable_agent(agent_id: str) -> dict[str, Any]:
+        try:
+            agent = _sync(ctx).enable_agent(agent_id)
+        except SyncError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"ok": True, "agent": agent.as_json()}
+
+    @authed.post("/agents/{agent_id}/test")
+    def test_agent(agent_id: str, actor: str = Depends(_actor)) -> dict[str, Any]:
+        with ctx.stack_write(actor):
+            try:
+                jobs = _sync(ctx).probe_agent(agent_id)
+            except SyncError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"ok": True, "jobs": [job.as_json() for job in jobs]}
 
     return public, authed

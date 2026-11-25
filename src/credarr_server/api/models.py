@@ -332,6 +332,13 @@ class EnrollmentBody(BaseModel):
     ttl_seconds: int = Field(default=600, ge=60, le=3600)
 
 
+class AgentEditBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    capabilities: list[str] | None = Field(default=None, max_length=64)
+
+
 class AgentActionBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

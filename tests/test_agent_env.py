@@ -75,6 +75,38 @@ def test_env_updates_only_declared_keys_and_recreates_services(
     assert calls and calls[0][-1] == "homepage"
 
 
+def test_probe_validates_compose_and_env_without_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stack = tmp_path / "homepage"
+    stack.mkdir()
+    (stack / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    (stack / ".env").write_text("HOMEPAGE_VAR_SONARR_API_KEY=old\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return type("Done", (), {"returncode": 0})()
+
+    monkeypatch.setattr("credarr_agent.client.subprocess.run", fake_run)
+    workflow = Workflow(_config(tmp_path))
+    results = workflow.probe(
+        {
+            "stack_path": str(stack),
+            "project_name": "homepage",
+            "services": ["homepage"],
+            "workflow": "env",
+            "env_file": ".env",
+            "values": {"HOMEPAGE_VAR_SONARR_API_KEY": "sonarr_api_key"},
+        }
+    )
+    assert results == {"homepage": True}
+    assert calls and calls[0][-2:] == ["config", "--quiet"]
+    assert (stack / ".env").read_text(encoding="utf-8") == (
+        "HOMEPAGE_VAR_SONARR_API_KEY=old\n"
+    )
+
+
 def test_env_refuses_an_unmapped_credential_or_path_escape(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
