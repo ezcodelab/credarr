@@ -13,6 +13,7 @@
   import EmptyState from "../lib/EmptyState.svelte";
   import HoldersTable from "../lib/HoldersTable.svelte";
   import KeyTile from "../lib/KeyTile.svelte";
+  import LoadingRows from "../lib/LoadingRows.svelte";
   import DeleteCredential from "../lib/DeleteCredential.svelte";
   import PageHeader from "../lib/PageHeader.svelte";
   import RecoveryBanner from "../lib/RecoveryBanner.svelte";
@@ -1058,16 +1059,7 @@
         </tbody>
       </table>
     {:else if checksLoading}
-      <div class="check-skeleton" role="status">
-        <span class="sr-only">Reading check history…</span>
-        {#each [0, 1, 2] as line (line)}
-          <div class="skeleton-row" aria-hidden="true">
-            <span class="skeleton"></span>
-            <span class="skeleton short"></span>
-            <span class="skeleton"></span>
-          </div>
-        {/each}
-      </div>
+      <LoadingRows label="Reading check history…" rows={3} />
     {:else}
       <p class="muted">
         No checks yet. Use Check app to test this app without auditing the whole

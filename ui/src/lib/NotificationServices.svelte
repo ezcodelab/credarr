@@ -3,6 +3,7 @@
   import { api, ApiError, errorText } from "./api.js";
   import Banner from "./Banner.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+  import LoadingRows from "./LoadingRows.svelte";
   import { toast } from "./toast.js";
   import StatusPill from "./StatusPill.svelte";
 
@@ -36,9 +37,6 @@
   let tested = $state(null); // { name, rows }
   let deleteTarget = $state(null);
   let deleting = $state(false);
-
-  // Success is one dull word; the list changing is the rest of the answer.
-  // Errors stay inline where the failure happened.
 
   function blankForm(kind) {
     return {
@@ -830,7 +828,7 @@
     {#if error}<Banner tone="danger">{error}</Banner>{/if}
 
     {#if services === null}
-      <p class="muted">Loading notification services…</p>
+      <LoadingRows label="Loading notification services…" rows={3} />
     {:else if services.length === 0}
       <p class="muted">No service is configured. Audit changes stay in Activity until you add one.</p>
     {:else}

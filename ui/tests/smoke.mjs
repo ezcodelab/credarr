@@ -695,8 +695,8 @@ async function main() {
       "the Activity read reserves the final ledger geometry",
       (await page.locator(".loading-activity .loading-ledger-row").count()) === 4,
     );
-    await page.unroute("**/api/v1/events?limit=200");
     await page.locator(".events-table").getByText("value cleared").first().waitFor();
+    await page.unroute("**/api/v1/events?limit=200");
     await scanA11y(page, "activity");
     check("value lifecycle changes are recorded in Activity", true);
     check(
@@ -707,6 +707,23 @@ async function main() {
       "and the last audit is dated",
       await page.getByText(/Last audit finished/).isVisible(),
     );
+    await page.getByRole("button", { name: "Apps", exact: true }).click();
+    await page.route("**/api/v1/events?limit=200", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "the synthetic events read failed" }),
+      });
+    });
+    await page.getByRole("button", { name: "Activity", exact: true }).click();
+    await page.locator(".page .banner-danger").waitFor();
+    check(
+      "a failed Activity read does not leave loading copy on screen",
+      (await page.locator(".activity-stat").nth(2).innerText()).includes("Unavailable"),
+    );
+    await page.unroute("**/api/v1/events?limit=200");
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await page.locator(".events-table").waitFor();
     // --- the ledger shows the audit it ran -----------------------------------
     // Audits run from Apps; Activity always loads the latest ledger when it
     // opens, so there is no stale view to refresh into.

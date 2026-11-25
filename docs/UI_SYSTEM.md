@@ -128,6 +128,7 @@ Use the existing component before adding another.
 | `Modal` / `ConfirmDialog` | `ui/src/lib/Modal.svelte`, `ConfirmDialog.svelte` | One decision, focus-trapped |
 | `Toasts` | `ui/src/lib/Toasts.svelte` | Routine success only |
 | `ActivityBar` | `ui/src/lib/ActivityBar.svelte` | One thin line for work in flight |
+| `LoadingRows` | `ui/src/lib/LoadingRows.svelte` | Accessible skeleton rows; `kind` matches the data region and `panel` reserves its surface |
 | `TopologyImport` | `ui/src/lib/TopologyImport.svelte` | Manifest import/export |
 | `NotificationServices` | `ui/src/lib/NotificationServices.svelte` | Sink list and form |
 | `RotationPanel` | `ui/src/lib/RotationPanel.svelte` | Plan and armed rotation |
@@ -142,7 +143,7 @@ Shared CSS classes:
 - `.detail-summary`, `.detail-facts`, `.detail-fact`, `.detail-reason`,
   `.detail-nav`
 - `.activity-summary`, `.activity-stat`
-- `.empty`, `.banner`, `.toast`, `.overlay`, `.dialog`
+- `.empty`, `.banner`, `.toast`, `.overlay`, `.dialog`, `.loading-rows`
 
 ## Status and colour
 

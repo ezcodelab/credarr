@@ -1075,6 +1075,42 @@ td.num {
   gap: 0.7rem;
   padding: 0.45rem 0.1rem;
 }
+.loading-rows.panel {
+  margin: var(--space-4) 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
+.loading-rows.panel .check-skeleton { padding: var(--space-4); }
+.loading-ledger-row {
+  display: grid;
+  grid-template-columns: 8.5rem 8rem 10rem minmax(0, 1fr) 12rem;
+  gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+.loading-ledger-row:last-child { border-bottom: 0; }
+@media (min-width: 961px) {
+  .loading-ledger-row { grid-template-columns: 7.5rem 7.5rem 10rem minmax(0, 1fr) 12rem; }
+}
+@media (max-width: 720px) {
+  .loading-activity.panel {
+    border: 0;
+    background: none;
+    overflow: visible;
+  }
+  .loading-ledger-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+  }
+  .loading-ledger-row:last-child { border-bottom: 1px solid var(--line); }
+}
 .skeleton-row {
   display: grid;
   grid-template-columns: 8rem 5rem minmax(0, 1fr);
@@ -1611,51 +1647,30 @@ the button lines up with its bottom edge. */
 
   /* Tables become one card per row. The column names stay as value labels,
      because a five-column grid at 390px is not a table anymore. */
-  .events-table,
-  .holders-table,
-  .checks-table,
-  .notify-table {
+  :is(.events-table, .holders-table, .checks-table, .notify-table, .keys-table, .targets-table, .agents-table, .jobs-table) {
     border: 0;
     border-radius: 0;
     background: none;
     overflow: visible;
   }
-  .events-table thead,
-  .holders-table thead,
-  .checks-table thead,
-  .notify-table thead { display: none; }
-  .events-table tbody,
-  .holders-table tbody,
-  .checks-table tbody,
-  .notify-table tbody,
-  .events-table tr,
-  .holders-table tr,
-  .checks-table tr,
-  .notify-table tr { display: block; }
-  .events-table tr,
-  .holders-table tr,
-  .checks-table tr,
-  .notify-table tr {
+  :is(.events-table, .holders-table, .checks-table, .notify-table, .keys-table, .targets-table, .agents-table, .jobs-table) thead { display: none; }
+  :is(.events-table, .holders-table, .checks-table, .notify-table, .keys-table, .targets-table, .agents-table, .jobs-table) tbody,
+  :is(.events-table, .holders-table, .checks-table, .notify-table, .keys-table, .targets-table, .agents-table, .jobs-table) tr { display: block; }
+  :is(.events-table, .holders-table, .checks-table, .notify-table, .keys-table, .targets-table, .agents-table, .jobs-table) tr {
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius);
     padding: 0.7rem 0.8rem;
     margin-bottom: 0.55rem;
   }
-  .events-table td,
-  .holders-table td,
-  .checks-table td,
-  .notify-table td {
+  :is(.events-table, .holders-table, .checks-table, .notify-table, .keys-table, .targets-table, .agents-table, .jobs-table) td {
     display: block;
     border: 0;
     padding: 0.2rem 0;
   }
   .events-table td:nth-child(1),
   .events-table td:nth-child(2) { width: auto; }
-  .events-table td::before,
-  .holders-table td::before,
-  .checks-table td::before,
-  .notify-table td::before {
+  :is(.events-table, .holders-table, .checks-table, .notify-table, .keys-table, .targets-table, .agents-table, .jobs-table) td::before {
     content: attr(data-label);
     display: block;
     margin-bottom: 0.1rem;
