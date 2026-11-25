@@ -738,9 +738,24 @@ async function main() {
 
     // --- the app detail: the write-only paste path ---------------------------
     await page.getByRole("button", { name: "Apps", exact: true }).click();
+    await page.route("**/api/v1/audit?only=sonarr_api_key&limit=20", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "the synthetic history read failed" }),
+      });
+    });
     await page
       .locator(".app-card h3", { hasText: "Sonarr API Key" }).click();
     await page.getByRole("heading", { name: "Sonarr API Key" }).waitFor();
+    await page.locator("#check-history .banner-danger").waitFor();
+    check(
+      "a failed history read does not claim there are no checks",
+      (await page.locator("#check-history").innerText()).includes("Check history is unavailable"),
+    );
+    await page.unroute("**/api/v1/audit?only=sonarr_api_key&limit=20");
+    await page.locator("#check-history").getByRole("button", { name: "Refresh", exact: true }).click();
+    await page.locator("#check-history tbody tr").first().waitFor();
     await scanA11y(page, "app-detail");
     check("the app detail names the selected app", true);
 
