@@ -9,7 +9,6 @@
   let targets = $state([]);
   let jobs = $state([]);
   let sync = $state(null);
-  let plane = $state(null);
   let loading = $state(true);
   let error = $state("");
   let message = $state("");
@@ -51,7 +50,6 @@
       ]);
       agents = agentAnswer?.agents ?? [];
       sync = agentAnswer?.sync ?? null;
-      plane = agentAnswer?.control_plane ?? null;
       targets = targetAnswer?.targets ?? [];
       jobs = jobAnswer?.jobs ?? [];
       if (!targetAgent && agents.length) targetAgent = agents[0].id;
@@ -312,13 +310,6 @@
   {#if error}<Banner tone="danger">{error}</Banner>{/if}
   {#if message}<Banner tone="ok">{message}</Banner>{/if}
 
-  {#if plane}
-    <div class="plane">
-      <span class:off={!plane.enabled} class="dot"></span>
-      <span>{plane.enabled ? "Listening" : "Not listening"}</span>
-      <span class="muted">TLS 1.3 · {plane.group ?? "classical"} · :{plane.port}</span>
-    </div>
-  {/if}
 
   {#if enrollOpen}
     <form class="enroll" onsubmit={enroll}>
@@ -350,7 +341,10 @@
   <div class="split">
     <div class="targets">
       <div class="section-head">
-        <h4>Targets</h4>
+        <div>
+          <h4>Targets</h4>
+          <p class="muted">Where values are delivered.</p>
+        </div>
         <button class="primary" type="button" onclick={() => openTarget()}>New target</button>
       </div>
 
@@ -433,22 +427,26 @@
         <p class="muted">No targets.</p>
       {:else}
         <table class="table targets-table">
-          <thead><tr><th>Name</th><th>Type</th><th>Stack</th><th>Agent</th><th>On</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Type</th><th>Stack</th><th>On</th><th></th></tr></thead>
           <tbody>
             {#each targets as target (target.id)}
               <tr>
-                <td>{target.name}</td>
+                <td>
+                  <strong>{target.name}</strong>
+                  <span class="target-agent muted">
+                    {agents.find((item) => item.id === target.agent_id)?.name ?? target.agent_id}
+                  </span>
+                </td>
                 <td>{target.workflow}{target.env_file ? ` · ${target.env_file}` : ""}</td>
                 <td>{target.project_name} · {target.stack_path}</td>
-                <td>{agents.find((item) => item.id === target.agent_id)?.name ?? target.agent_id}</td>
-                <td>{target.enabled ? "yes" : "no"}</td>
+                <td>{target.enabled ? "On" : "Off"}</td>
                 <td class="row-actions">
-                  <button class="link" type="button" onclick={() => openTarget(target)}>Edit</button>
-                  <button class="link" type="button" onclick={() => testTarget(target)}>Test</button>
-                  <button class="link" type="button" onclick={() => toggleTarget(target)}>
+                  <button type="button" onclick={() => openTarget(target)}>Edit</button>
+                  <button type="button" onclick={() => testTarget(target)}>Test</button>
+                  <button type="button" onclick={() => toggleTarget(target)}>
                     {target.enabled ? "Disable" : "Enable"}
                   </button>
-                  <button class="link danger" type="button" onclick={() => deleteTarget(target)}>
+                  <button class="danger" type="button" onclick={() => deleteTarget(target)}>
                     {targetDeleteArmed === target.id ? "Confirm" : "Delete"}
                   </button>
                 </td>
@@ -461,7 +459,10 @@
 
     <div class="agents">
       <div class="section-head">
-        <h4>Agents</h4>
+        <div>
+          <h4>Agents</h4>
+          <p class="muted">Workers that apply them.</p>
+        </div>
         <button class="primary" type="button" onclick={openEnroll}>Enroll agent</button>
       </div>
       {#if agents.length === 0}
@@ -477,12 +478,12 @@
                 <td>{agent.certificate_expires_at ? timestamp(agent.certificate_expires_at) : "—"}</td>
                 <td class="row-actions">
                   {#if agent.status !== "revoked"}
-                    <button class="link" type="button" onclick={() => editAgent(agent)}>Edit</button>
-                    <button class="link" type="button" onclick={() => testAgent(agent)}>Test</button>
-                    <button class="link" type="button" onclick={() => toggleAgent(agent)}>
+                    <button type="button" onclick={() => editAgent(agent)}>Edit</button>
+                    <button type="button" onclick={() => testAgent(agent)}>Test</button>
+                    <button type="button" onclick={() => toggleAgent(agent)}>
                       {agent.status === "disabled" ? "Enable" : "Disable"}
                     </button>
-                    <button class="link danger" type="button" onclick={() => revoke(agent)}>
+                    <button class="danger" type="button" onclick={() => revoke(agent)}>
                       {revokeArmed === agent.id ? "Confirm" : "Revoke"}
                     </button>
                   {/if}
@@ -542,24 +543,6 @@
 </section>
 
 <style>
-  .plane {
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
-    margin: 0.3rem 0 0.9rem;
-    font-size: 0.8rem;
-  }
-  .plane .dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    border-radius: 50%;
-    background: var(--ok);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 14%, transparent);
-  }
-  .plane .dot.off {
-    background: var(--bad);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 14%, transparent);
-  }
   .enroll,
   .target-form {
     padding: 0.85rem;
@@ -587,7 +570,7 @@
   }
   .split {
     display: grid;
-    grid-template-columns: minmax(0, 1.55fr) minmax(18rem, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 1.1rem;
     align-items: start;
   }
@@ -601,7 +584,14 @@
   }
   .targets > .section-head,
   .agents > .section-head {
+    min-height: 2.5rem;
+    align-items: center;
     margin-bottom: 0.45rem;
+  }
+  .targets > .section-head .muted,
+  .agents > .section-head .muted {
+    margin: 0.1rem 0 0;
+    font-size: 0.76rem;
   }
   .field.wide { grid-column: 1 / -1; }
   .workflow-choice {
@@ -617,14 +607,19 @@
     background: color-mix(in srgb, var(--accent) 12%, var(--panel-2));
     color: var(--text);
   }
-  .row-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.45rem;
+  .target-agent {
+    display: block;
+    margin-top: 0.12rem;
+    font-size: 0.72rem;
+  }
+  td.row-actions {
+    display: table-cell;
+    width: 1%;
+    text-align: right;
     white-space: nowrap;
   }
-  .row-actions .link {
-    font-size: 0.78rem;
+  .row-actions button {
+    margin-left: 0.3rem;
   }
   .row-actions .danger {
     color: var(--bad);

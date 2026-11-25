@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.9 — 2026-11-24
+
+- Remove the listener detail line from Agents & sync.
+- Stack Targets and Agents full-width so their table lines and headers align;
+  use the standard UI buttons for row actions, with one Enroll/New target action
+  per pane and brief pane labels.
+- Remove the long status explanation under each app's State pill; the status,
+  manual/no-key markers and copies carry the state.
+
 ## 1.3.8 — 2026-11-24
 
 - Target and agent lifecycle controls: edit target, real agent-side target
