@@ -685,8 +685,18 @@ async function main() {
     );
 
     // --- Activity: value lifecycle changes are audited too --------------------
+    await page.route("**/api/v1/events?limit=200", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      await route.continue();
+    });
     await page.getByRole("button", { name: "Activity", exact: true }).click();
+    await page.locator(".activity-summary").waitFor();
+    check(
+      "the Activity read reserves the final ledger geometry",
+      (await page.locator(".loading-activity .loading-ledger-row").count()) === 4,
+    );
     await page.locator(".events-table").getByText("value cleared").first().waitFor();
+    await page.unroute("**/api/v1/events?limit=200");
     await scanA11y(page, "activity");
     check("value lifecycle changes are recorded in Activity", true);
     check(
@@ -697,6 +707,23 @@ async function main() {
       "and the last audit is dated",
       await page.getByText(/Last audit finished/).isVisible(),
     );
+    await page.getByRole("button", { name: "Apps", exact: true }).click();
+    await page.route("**/api/v1/events?limit=200", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "the synthetic events read failed" }),
+      });
+    });
+    await page.getByRole("button", { name: "Activity", exact: true }).click();
+    await page.locator(".page .banner-danger").waitFor();
+    check(
+      "a failed Activity read does not leave loading copy on screen",
+      (await page.locator(".activity-stat").nth(2).innerText()).includes("Unavailable"),
+    );
+    await page.unroute("**/api/v1/events?limit=200");
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await page.locator(".events-table").waitFor();
     // --- the ledger shows the audit it ran -----------------------------------
     // Audits run from Apps; Activity always loads the latest ledger when it
     // opens, so there is no stale view to refresh into.
@@ -2144,6 +2171,34 @@ async function main() {
       "Escape closes the drawer",
       (await page.locator("aside.open").count()) === 0,
     );
+
+    let keysSeeded = true;
+    for (let index = 0; index < 6; index += 1) {
+      const answer = await page.request.post(`${BASE}/api/v1/keys`, {
+        data: { origin: "user" },
+        headers: { "X-CSRF-Token": await csrf() },
+      });
+      keysSeeded = answer.ok() && keysSeeded;
+    }
+    check("the narrow Settings fixture has a long API-key list", keysSeeded);
+    let agentsSeeded = true;
+    for (let index = 0; index < 4; index += 1) {
+      const answer = await page.request.post(`${BASE}/api/v1/agents/enrollment`, {
+        data: { name: `narrow-agent-${index}`, capabilities: ["compose"] },
+        headers: { "X-CSRF-Token": await csrf() },
+      });
+      agentsSeeded = answer.ok() && agentsSeeded;
+    }
+    check("the narrow Settings fixture has a long agent list", agentsSeeded);
+    await page.getByRole("button", { name: "Open navigation" }).click();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.locator("#settings-agents tbody tr").first().waitFor();
+    check(
+      "populated Settings data regions reflow within the phone viewport",
+      (await page.evaluate(() => document.documentElement.scrollWidth)) <= 390,
+      String(await page.evaluate(() => document.documentElement.scrollWidth)),
+    );
+    await scanA11y(page, "settings-390");
 
     // --- Setup: reset asks once and lands on the first-run wizard ------------
     // Both live in the Settings header now; there is no Setup section left.

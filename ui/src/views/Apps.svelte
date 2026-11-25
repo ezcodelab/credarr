@@ -12,6 +12,7 @@
   import EmptyState from "../lib/EmptyState.svelte";
   import Icon from "../lib/Icon.svelte";
   import KeyTile from "../lib/KeyTile.svelte";
+  import LoadingRows from "../lib/LoadingRows.svelte";
   import PageHeader from "../lib/PageHeader.svelte";
   import StatusPill from "../lib/StatusPill.svelte";
   import TopologyImport from "../lib/TopologyImport.svelte";
@@ -420,16 +421,7 @@
   </div>
 
   {#if servicesLoading}
-    <div class="apps-loading" role="status">
-      <span class="sr-only">Reading service connections…</span>
-      {#each [0, 1, 2] as row (row)}
-        <div class="apps-loading-row" aria-hidden="true">
-          <span class="skeleton apps-loading-key"></span>
-          <span class="skeleton apps-loading-title"></span>
-          <span class="skeleton apps-loading-state"></span>
-        </div>
-      {/each}
-    </div>
+    <LoadingRows label="Reading service connections…" rows={3} panel kind="apps" />
   {:else if visibleApps.length === 0 && visibleUnassigned.length === 0 && query.trim()}
     <div class="empty compact">
       <p>No app matches that filter.</p>

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, ApiError, errorText, timestamp } from "./api.js";
   import Banner from "./Banner.svelte";
+  import LoadingRows from "./LoadingRows.svelte";
 
   let { onsignout = null } = $props();
 
@@ -338,6 +339,11 @@
     </div>
   {/if}
 
+  {#if loading && agents.length === 0 && targets.length === 0 && jobs.length === 0}
+    <LoadingRows label="Reading agents and delivery targets…" rows={4} />
+  {:else if error && agents.length === 0 && targets.length === 0 && jobs.length === 0}
+    <p class="muted">Agents, targets and recent deliveries are unavailable.</p>
+  {:else}
   <div class="split">
     <div class="targets">
       <div class="section-head">
@@ -427,20 +433,21 @@
         <p class="muted">No targets.</p>
       {:else}
         <table class="table targets-table">
-          <thead><tr><th>Name</th><th>Type</th><th>Stack</th><th>On</th><th></th></tr></thead>
+          <caption class="sr-only">Delivery targets</caption>
+          <thead><tr><th>Name</th><th>Type</th><th>Stack</th><th>On</th><th><span class="sr-only">Actions</span></th></tr></thead>
           <tbody>
             {#each targets as target (target.id)}
               <tr>
-                <td>
+                <td data-label="Name">
                   <strong>{target.name}</strong>
                   <span class="target-agent muted">
                     {agents.find((item) => item.id === target.agent_id)?.name ?? target.agent_id}
                   </span>
                 </td>
-                <td>{target.workflow}{target.env_file ? ` · ${target.env_file}` : ""}</td>
-                <td>{target.project_name} · {target.stack_path}</td>
-                <td>{target.enabled ? "On" : "Off"}</td>
-                <td class="row-actions">
+                <td data-label="Type">{target.workflow}{target.env_file ? ` · ${target.env_file}` : ""}</td>
+                <td data-label="Stack">{target.project_name} · {target.stack_path}</td>
+                <td data-label="On">{target.enabled ? "On" : "Off"}</td>
+                <td class="row-actions" data-label="Actions">
                   <button type="button" onclick={() => openTarget(target)}>Edit</button>
                   <button type="button" onclick={() => testTarget(target)}>Test</button>
                   <button type="button" onclick={() => toggleTarget(target)}>
@@ -468,15 +475,16 @@
       {#if agents.length === 0}
         <p class="muted">No agents.</p>
       {:else}
-        <table class="table">
-          <thead><tr><th>Name</th><th>State</th><th>Certificate</th><th></th></tr></thead>
+        <table class="table agents-table">
+          <caption class="sr-only">Delivery agents</caption>
+          <thead><tr><th>Name</th><th>State</th><th>Certificate</th><th><span class="sr-only">Actions</span></th></tr></thead>
           <tbody>
             {#each agents as agent (agent.id)}
               <tr>
-                <td>{agent.name}</td>
-                <td>{agent.status}{agent.rootful ? " · rootful" : ""}</td>
-                <td>{agent.certificate_expires_at ? timestamp(agent.certificate_expires_at) : "—"}</td>
-                <td class="row-actions">
+                <td data-label="Name">{agent.name}</td>
+                <td data-label="State">{agent.status}{agent.rootful ? " · rootful" : ""}</td>
+                <td data-label="Certificate">{agent.certificate_expires_at ? timestamp(agent.certificate_expires_at) : "—"}</td>
+                <td class="row-actions" data-label="Actions">
                   {#if agent.status !== "revoked"}
                     <button type="button" onclick={() => editAgent(agent)}>Edit</button>
                     <button type="button" onclick={() => testAgent(agent)}>Test</button>
@@ -520,16 +528,17 @@
     {#if jobs.length === 0}
       <p class="muted">No jobs.</p>
     {:else}
-      <table class="table">
-        <thead><tr><th>Credential</th><th>State</th><th>Attempts</th><th>Result</th><th></th></tr></thead>
+      <table class="table jobs-table">
+        <caption class="sr-only">Recent delivery jobs</caption>
+        <thead><tr><th>Credential</th><th>State</th><th>Attempts</th><th>Result</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
           {#each jobs as job (job.id)}
             <tr>
-              <td>{job.kind === "probe" ? "target test" : job.credential}</td>
-              <td>{job.state}</td>
-              <td class="tabular">{job.attempts}/{job.max_attempts}</td>
-              <td>{job.last_error || "—"}</td>
-              <td class="row-action">
+              <td data-label="Credential">{job.kind === "probe" ? "target test" : job.credential}</td>
+              <td data-label="State">{job.state}</td>
+              <td class="tabular" data-label="Attempts">{job.attempts}/{job.max_attempts}</td>
+              <td data-label="Result">{job.last_error || "—"}</td>
+              <td class="row-action" data-label="Actions">
                 {#if ["queued", "leased", "running", "retry_wait"].includes(job.state)}
                   <button type="button" onclick={() => cancel(job)}>Cancel</button>
                 {/if}
@@ -540,6 +549,7 @@
       </table>
     {/if}
   </details>
+  {/if}
 </section>
 
 <style>
@@ -612,11 +622,13 @@
     margin-top: 0.12rem;
     font-size: 0.72rem;
   }
-  td.row-actions {
-    display: table-cell;
-    width: 1%;
-    text-align: right;
-    white-space: nowrap;
+  @media (min-width: 721px) {
+    td.row-actions {
+      display: table-cell;
+      width: 1%;
+      text-align: right;
+      white-space: nowrap;
+    }
   }
   .row-actions button {
     margin-left: 0.3rem;

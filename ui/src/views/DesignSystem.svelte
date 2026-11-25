@@ -2,6 +2,7 @@
   import Banner from "../lib/Banner.svelte";
   import EmptyState from "../lib/EmptyState.svelte";
   import KeyTile from "../lib/KeyTile.svelte";
+  import LoadingRows from "../lib/LoadingRows.svelte";
   import PageHeader from "../lib/PageHeader.svelte";
   import StatusPill from "../lib/StatusPill.svelte";
 </script>
@@ -121,6 +122,17 @@
         <select><option>Backup &amp; restore</option></select>
       </label>
     </div>
+  </section>
+
+  <section class="ds-section" aria-labelledby="ds-loading">
+    <h2 id="ds-loading">Loading rows</h2>
+    <p class="ds-note">
+      Async data keeps its final geometry. A local read uses quiet rows; a
+      full-region read reserves the panel as well.
+    </p>
+    <LoadingRows label="Reading rows…" rows={2} />
+    <LoadingRows label="Reading activity…" rows={2} panel kind="activity" />
+    <LoadingRows label="Reading apps…" rows={2} panel kind="apps" />
   </section>
 
   <section class="ds-section" aria-labelledby="ds-messages">

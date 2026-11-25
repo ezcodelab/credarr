@@ -9,6 +9,7 @@
   } from "../lib/api.js";
   import Banner from "../lib/Banner.svelte";
   import ConfirmDialog from "../lib/ConfirmDialog.svelte";
+  import LoadingRows from "../lib/LoadingRows.svelte";
   import PageHeader from "../lib/PageHeader.svelte";
   import StatusPill from "../lib/StatusPill.svelte";
   import { deviceLabel } from "../lib/device.js";
@@ -495,7 +496,7 @@
   {/if}
   {#if sessionsError}<Banner tone="danger">{sessionsError}</Banner>{/if}
   {#if sessions === null && sessionsBusy}
-    <p class="muted">Loading sessions…</p>
+    <LoadingRows label="Loading sessions…" rows={2} />
   {:else if sessions?.length}
     <ul class="session-list">
       {#each sessions as session (session.id)}
@@ -522,6 +523,8 @@
         </li>
       {/each}
     </ul>
+  {:else if sessions === null}
+    <p class="muted">Active sessions are unavailable.</p>
   {:else}
     <p class="muted">No active browser sessions.</p>
   {/if}
@@ -612,18 +615,19 @@
     </div>
   {/if}
   {#if keys === null && keysBusy}
-    <p class="muted">Loading keys…</p>
+    <LoadingRows label="Loading keys…" rows={3} />
   {:else if keys?.length}
     <table class="keys-table">
-      <thead><tr><th>Key</th><th>Origin</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+      <caption class="sr-only">Console API keys</caption>
+      <thead><tr><th>Key</th><th>Origin</th><th>Created</th><th>Last used</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {#each keys as item (item.id)}
           <tr>
-            <td><code>{item.prefix}…</code></td>
-            <td>{item.origin ?? "user"}</td>
-            <td>{timestamp(item.created_at)}</td>
-            <td>{item.last_used_at ? timestamp(item.last_used_at) : "Never"}</td>
-            <td class="row-action">
+            <td data-label="Key"><code>{item.prefix}…</code></td>
+            <td data-label="Origin">{item.origin ?? "user"}</td>
+            <td data-label="Created">{timestamp(item.created_at)}</td>
+            <td data-label="Last used">{item.last_used_at ? timestamp(item.last_used_at) : "Never"}</td>
+            <td class="row-action" data-label="Actions">
               <button
                 class="danger"
                 type="button"
@@ -666,10 +670,12 @@
     margin: 0.2rem 0 0.9rem;
   }
   .key-create select { max-width: 10rem; }
-  .keys-table .row-action {
-    width: 1%;
-    text-align: right;
-    white-space: nowrap;
+  @media (min-width: 721px) {
+    .keys-table .row-action {
+      width: 1%;
+      text-align: right;
+      white-space: nowrap;
+    }
   }
 </style>
 

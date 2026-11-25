@@ -4,6 +4,7 @@
   import Banner from "../lib/Banner.svelte";
   import EmptyState from "../lib/EmptyState.svelte";
   import Icon from "../lib/Icon.svelte";
+  import LoadingRows from "../lib/LoadingRows.svelte";
   import PageHeader from "../lib/PageHeader.svelte";
   import StatusPill from "../lib/StatusPill.svelte";
   import { credentialTitle, friendlyReason } from "../lib/names.js";
@@ -159,7 +160,7 @@
   </div>
   <div class="activity-stat">
     <span>Delivery</span>
-    <strong>{data === null ? "Reading…" : data.sinks.length ? data.sinks.map((sink) => sink.name).join(", ") : "No service"}</strong>
+    <strong>{data === null ? (loading ? "Reading…" : "Unavailable") : data.sinks.length ? data.sinks.map((sink) => sink.name).join(", ") : "No service"}</strong>
   </div>
 </section>
 
@@ -259,5 +260,5 @@
     </table>
   {/if}
 {:else if loading}
-  <p class="muted">Reading changes…</p>
+  <LoadingRows label="Reading changes…" rows={4} panel kind="activity" />
 {/if}
