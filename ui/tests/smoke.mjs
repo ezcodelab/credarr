@@ -587,6 +587,28 @@ async function main() {
 
     // --- restore the committed smoke fixture through Settings -----------------
     await page.screenshot({ path: path.join(ARTIFACTS, "import.png"), fullPage: true });
+    for (const path of ["/api/v1/keys", "/api/v1/notifications/services"]) {
+      await page.route(`**${path}`, async (route) => {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "the synthetic settings read failed" }),
+        });
+      });
+    }
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.locator("#settings-keys").getByText("API keys are unavailable").waitFor();
+    check(
+      "a failed API-key read does not claim there are no keys",
+      (await page.locator("#settings-keys").innerText()).includes("API keys are unavailable"),
+    );
+    check(
+      "a failed notification read does not keep loading forever",
+      (await page.locator("#settings-notifications").innerText()).includes("Notification services are unavailable"),
+    );
+    await page.unroute("**/api/v1/keys");
+    await page.unroute("**/api/v1/notifications/services");
+    await page.reload();
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await openMenu("Settings");
     await page.locator("aside .nav-sub button").filter({ hasText: /^Import \/ Export$/ }).click();
