@@ -292,3 +292,5 @@ export function reasonsForField(reasons, fieldKey) {
     return !/web UI login/.test(text);
   });
 }
+
+// probe: a comment-only console change; the smoke must still run.
