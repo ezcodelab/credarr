@@ -748,7 +748,7 @@ async function main() {
     await page
       .locator(".app-card h3", { hasText: "Sonarr API Key" }).click();
     await page.getByRole("heading", { name: "Sonarr API Key" }).waitFor();
-    await page.locator("#check-history .banner-danger").waitFor();
+    await page.locator("#check-history").getByText("Check history is unavailable").waitFor();
     check(
       "a failed history read does not claim there are no checks",
       (await page.locator("#check-history").innerText()).includes("Check history is unavailable"),
