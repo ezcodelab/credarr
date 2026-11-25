@@ -1,16 +1,16 @@
 # Testing
 
 What the suite does today, where it is weak, and the rules for new tests.
-The numbers here are from the 2026-11-07 tree; re-measure when they move.
+The numbers here are from the 2026-11-25 tree; re-measure when they move.
 
 ## Current shape
 
 | Layer | Tool | Size | Runtime |
 | --- | --- | --- | --- |
-| Engine + server unit tests | pytest, fake transport, some real HTTP fixtures | 1004 passed, 2 skipped | ~3.5 min |
+| Engine + server unit tests | pytest, fake transport, some real HTTP fixtures | 1100 passed, 12 skipped (Python 3.12) | 30 s locally, 79 s on a CI runner, `-n auto` |
 | Property tests | hypothesis (inside the above) | 7 | ~1 s |
-| Console unit tests | `node --test` | 116 | ~3 s |
-| Console end-to-end | Playwright + Chromium + `@axe-core/playwright` against a real server | 220 checks | ~2 min |
+| Console unit tests | `node --test` | 118 | ~3 s |
+| Console end-to-end | Playwright + Chromium + `@axe-core/playwright` against a real server | 232 checks | ~70 s |
 | Container black box | pytest `-m integration`, testcontainers | 4 | ~9 s + image start |
 
 `make check` runs the first, second (same invocation) and third layers. The UI
@@ -93,43 +93,63 @@ inert for Sonarr and Radarr.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on GitHub Actions. GitHub's runners provide the toolchains and a browser, so the workflow uses the
-standard setup actions. The private Gitea remote no longer runs CI: its runner
-cannot use those actions, and the history is shared with GitHub.
+`.github/workflows/ci.yml` runs on GitHub Actions; it is the only CI that gates
+a merge (the Gitea remote is a read-only mirror). `check`, `container` and
+`smoke` are branch-protection contexts: `tests/packaging/test_ci_contract.py`
+fails if a required job is renamed, waits on another required job, or is
+skipped when the gate fails.
 
 | Job | Runs | When |
 | --- | --- | --- |
-| `check` | lint + the full engine/server suite, `-n auto` | push to `main` |
-| `pull-request` | lint + only the tests that cover the diff (`scripts/affected-tests`) | pull request |
-| `console` | `npm ci` and the console unit tests | push, PR |
-| `container` | `make image`, then `pytest -m integration`; prints SKIP without Docker | push, PR |
-| `smoke` | `make ui-smoke` in Chromium | manual (`workflow_dispatch`) only |
+| `gate` | `make lint`, `make ui-audit`, `make ui-check ui-test` | every run |
+| `check` | `scripts/affected-tests` on a PR, the full suite on `main`/nightly | after `gate` |
+| `container` | `make image`, then `pytest -m integration` | after `gate`; skipped only for docs/CI/changelog diffs |
+| `smoke` | `make ui-smoke` in Chromium | after `gate`; skipped only for docs/CI/tests/changelog diffs |
 
-The browser smoke is manual because it is the one job this runner cannot do
-comfortably: 20+ minutes, and the plan preflight outlasts a 90s wait. It is off
-the push gate so a red run means a real defect, not a slow machine.
+The gate is seconds and the other three run in parallel, so a pull request
+waits for the slowest job, not the sum. The gate is not itself a required
+context, so a gate failure fails the required jobs through an explicit guard:
+a skipped required check counts as passing.
 
-Caches (`pip`, `npm`, the Playwright browser) are declared with
-`continue-on-error`, so a runner without a cache server skips them instead of
-failing the build. The engine suite runs across cores: 27s locally against 210s
-serial, and the earlier parallel failures were wall-clock assumptions in tests
-(now deadline-based).
+Tiering: a PR runs the gate, the tests that cover its diff, and an artifact job
+only when that job's inputs changed. A push to `main` and the 05:00 schedule run
+the full suite, the image and the browser. Concurrency cancels a superseded PR
+run and lets a `main` push finish.
 
-The venv itself is cached, keyed on `pyproject.toml`, and validated with an
-import before use. Pip's HTTP cache restored 32 MB and the install still took
-8 minutes: the cost is installing, not downloading. A restored venv whose
-editable path no longer resolves falls back to a full install.
+Measured 2026-11-25 on GitHub-hosted runners, before and after the restructure:
 
-Measured on this runner for a green push to `main` (2026-10-28), same commit
-tree:
-
-| Run | `check` | `console` |
+| Measure | Before | After |
 | --- | --- | --- |
-| before (serial, cold caches) | ~28 min | ~7 min |
-| cold venv cache | 9.3 min | 7.5 min |
-| warm venv cache | **2.5 min** | **0.4 min** |
+| PR wall clock, created → green | 222–278 s, median **247 s** (10 runs) | **132 s** full path, **145 s** console-only, **36 s** docs-only |
+| queue, created → first job | ~2 s | ~2 s |
+| `check` | 110–138 s | 10–90 s (the selection decides) |
+| `container` | 55–73 s | 48–51 s |
+| `smoke` | 97–162 s | 106–123 s |
+| a failing lint | the required checks turned red after the suite finished | **23 s**, all three required checks red |
+| Python install | 15 s with pip | 1–2 s with uv from its cache |
+| console install | `npm ci` twice in the smoke job (18 s step) | once (11–26 s step, apt for the browser included) |
 
-The suite itself is ~2.5 min across cores; everything above that is installing.
+The critical path is the gate plus the slowest artifact job. The browser smoke
+is 70–75 s of checks and sets the floor for any diff that reaches the console,
+so it dominates a console pull request.
+
+The browser smoke runs on pull requests; it is no longer manual-only, and it no
+longer waits for the Python suite. It is skipped only for paths the built
+console and the server cannot observe (`docs/`, `.github/`, `tests/`,
+`ui-system/`, the changelog); any other path runs it, so an unlisted change
+widens the run instead of skipping it.
+
+Caches are keyed on the file that pins the dependency. The uv cache (29 MB) and
+the npm cache hit on every run; the Playwright browser is keyed on
+`ui/package-lock.json`, which pins the browser revision. The venv is built per
+job with `uv venv --seed`, which keeps `pip` available for the packaging test
+that shells out to `python -m pip wheel`. A dependency bump changes the key and
+installs once; a restored stale tree is never reused.
+
+The engine suite runs across cores (`-n auto`): 30 s locally against 136 s at
+`-n 2`, and the earlier parallel failures were wall-clock assumptions in tests
+(now deadline-based). That is also why the suite is not sharded across runners:
+two runners at two workers each are slower than one at four.
 
 ### Only the tests that cover a change
 
