@@ -113,8 +113,10 @@ a skipped required check counts as passing.
 
 Tiering: a PR runs the gate, the tests that cover its diff, and an artifact job
 only when that job's inputs changed. A push to `main` and the 05:00 schedule run
-the full suite, the image and the browser. Concurrency cancels a superseded PR
-run and lets a `main` push finish.
+the full suite, the image and the browser. The auto-merge token's own merge
+push does not start a run, so the nightly is what re-tests the merged tree;
+`gh workflow run ci.yml --ref main` is the on-demand form. Concurrency cancels a
+superseded PR run and lets a `main` push finish.
 
 Measured 2026-11-25 on GitHub-hosted runners, before and after the restructure:
 
@@ -165,8 +167,8 @@ scripts/affected-tests --all                # force the full suite
 pytest -n auto                              # the same suite, across cores
 ```
 
-`main` still runs everything, so a partial run is a review convenience, never the
-only gate.
+`main` runs everything on a push and on the nightly, so a partial run is a
+review convenience; the merged tree is fully tested at the next scheduled run.
 
 ## Rules for new tests
 
