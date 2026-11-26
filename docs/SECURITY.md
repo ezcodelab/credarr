@@ -46,6 +46,11 @@ therefore re-encrypts with a fresh DEK when a stage changes.
   the agent host must hold. A clone of the tree without the key cannot read a
   value; a clone with the key is a copy of the delivery material. The tree is
   a delivery mirror, not a second independent key hierarchy.
+- **The console `/config` volume holds CA and tree private keys.** Back it up
+  with the database and protect filesystem access: a reader can issue a trusted
+  agent certificate and read the delivery tree. Rotating the CA requires
+  replacing the CA secret, restarting and re-enrolling agents; there is no
+  in-place rotation command.
 - **Hooks and receivers are outside the verification boundary.** They never
   receive a value. A webhook body is HMAC-SHA256 signed with the receiver's
   configured secret; a receiver that ignores the signature is its own risk.

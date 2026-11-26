@@ -97,6 +97,9 @@ class ServerSettings:
     # the listener certificate's SAN list; without it a remote agent cannot
     # verify the self-signed listener.
     agent_hostname: str | None = None
+    # Extra names agents use to reach the listener, beyond agent_hostname and
+    # localhost. A compose service DNS name belongs here.
+    agent_sans: tuple[str, ...] = ()
     # Optional CA material. Without these, Credarr creates agent-ca.crt/key in
     # the config directory on first start and signs the listener certificate.
     # With them, Credarr uses that CA and still signs the listener certificate.
@@ -563,6 +566,11 @@ def _parser() -> argparse.ArgumentParser:
         "certificate SANs (env CREDARR_AGENT_HOSTNAME)",
     )
     parser.add_argument(
+        "--agent-san", action="append", default=None,
+        help="extra DNS name or IP for the listener certificate SANs; repeatable "
+        "(env CREDARR_AGENT_SANS, comma separated)",
+    )
+    parser.add_argument(
         "--agent-ca-cert", type=Path,
         default=(
             Path(os.environ["CREDARR_AGENT_CA_CERT"])
@@ -665,6 +673,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     disable_core_dumps()
     parser = _parser()
     args = parser.parse_args(argv)
+    agent_sans = args.agent_san
+    if agent_sans is None:
+        agent_sans = [
+            item.strip()
+            for item in os.environ.get("CREDARR_AGENT_SANS", "").split(",")
+            if item.strip()
+        ]
     if args.json and not args.once:
         parser.error("--json is only for --once")
     if not 0 <= args.agent_port <= 65535:
@@ -710,6 +725,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         agent_port=args.agent_port,
         agent_bind=args.agent_bind,
         agent_hostname=args.agent_hostname,
+        agent_sans=tuple(agent_sans),
         agent_ca_cert=args.agent_ca_cert,
         agent_ca_key=args.agent_ca_key,
         timezone=_configured_timezone(),
@@ -732,6 +748,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     host=settings.agent_bind or settings.host,
                     port=settings.agent_port,
                     hostname=settings.agent_hostname,
+                    sans=settings.agent_sans,
                     ca_cert=settings.agent_ca_cert,
                     ca_key=settings.agent_ca_key,
                 )

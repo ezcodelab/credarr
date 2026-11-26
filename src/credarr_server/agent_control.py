@@ -70,6 +70,38 @@ def _publish_ca(public_path: Path, cert: x509.Certificate) -> None:
         ) from None
 
 
+def _validate_ca(
+    key: object,
+    cert: x509.Certificate,
+    *,
+    cert_path: Path,
+    key_path: Path,
+) -> None:
+    if not isinstance(key, ec.EllipticCurvePrivateKey):  # pragma: no cover - defensive
+        raise AgentControlError("the agent CA key is not an EC key")
+    if key.public_key().public_numbers() != cert.public_key().public_numbers():
+        raise AgentControlError(
+            f"the agent CA key at {key_path} does not match the certificate at {cert_path}"
+        )
+    try:
+        constraints = cert.extensions.get_extension_for_class(
+            x509.BasicConstraints
+        ).value
+    except x509.ExtensionNotFound:
+        raise AgentControlError(
+            f"the agent certificate at {cert_path} is not a CA certificate"
+        ) from None
+    if not constraints.ca:
+        raise AgentControlError(
+            f"the agent certificate at {cert_path} is not a CA certificate"
+        )
+    now = datetime.datetime.now(datetime.UTC)
+    if cert.not_valid_after_utc <= now:
+        raise AgentControlError(f"the agent CA at {cert_path} has expired")
+    if cert.not_valid_before_utc > now:
+        raise AgentControlError(f"the agent CA at {cert_path} is not valid yet")
+
+
 def _load_or_create_ca(
     config_dir: Path,
     *,
@@ -95,12 +127,16 @@ def _load_or_create_ca(
             "the agent CA is incomplete: both the certificate and key are required"
         )
     if key_path.is_file() and cert_path.is_file():
-        key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
-        cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
-        if not isinstance(key, ec.EllipticCurvePrivateKey):  # pragma: no cover - defensive
-            raise AgentControlError("the agent CA key is not an EC key")
-        if key.public_key().public_numbers() != cert.public_key().public_numbers():
-            raise AgentControlError("the agent CA key does not match its certificate")
+        try:
+            key = serialization.load_pem_private_key(
+                key_path.read_bytes(), password=None
+            )
+            cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+        except (ValueError, OSError) as exc:
+            raise AgentControlError(
+                f"the agent CA is unreadable or empty at {cert_path} / {key_path}: {exc}"
+            ) from None
+        _validate_ca(key, cert, cert_path=cert_path, key_path=key_path)
         _publish_ca(public_path, cert)
         return key, cert
     if external:
@@ -151,10 +187,11 @@ def _server_certificate(
     ca_cert: x509.Certificate,
     *,
     hostname: str | None = None,
+    sans: tuple[str, ...] = (),
 ) -> tuple[Path, Path]:
     key_path = config_dir / SERVER_KEY
     cert_path = config_dir / SERVER_CERT
-    names = ["localhost", "127.0.0.1", "::1"]
+    names = ["localhost", "127.0.0.1", "::1", *sans]
     if hostname:
         names.append(hostname)
     if key_path.is_file() and cert_path.is_file():
@@ -477,6 +514,7 @@ class AgentControlPlane:
         host: str = "127.0.0.1",
         port: int = 8443,
         hostname: str | None = None,
+        sans: tuple[str, ...] = (),
         ca_cert: Path | None = None,
         ca_key: Path | None = None,
     ) -> None:
@@ -485,6 +523,7 @@ class AgentControlPlane:
         self.host = host
         self.port = port
         self.hostname = hostname
+        self.sans = tuple(item.strip() for item in sans if item.strip())
         self.ca_cert = Path(ca_cert) if ca_cert is not None else None
         self.ca_key = Path(ca_key) if ca_key is not None else None
         self.failure: str | None = None
@@ -498,7 +537,11 @@ class AgentControlPlane:
             self.config_dir, cert_path=self.ca_cert, key_path=self.ca_key
         )
         key_path, cert_path = _server_certificate(
-            self.config_dir, ca_key, ca_cert, hostname=self.hostname
+            self.config_dir,
+            ca_key,
+            ca_cert,
+            hostname=self.hostname,
+            sans=self.sans,
         )
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.minimum_version = ssl.TLSVersion.TLSv1_3

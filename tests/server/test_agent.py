@@ -8,6 +8,7 @@ deployment.
 
 from __future__ import annotations
 
+import datetime
 import http.client
 import ssl
 import time
@@ -15,6 +16,9 @@ from pathlib import Path
 
 import pytest
 from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 
 from credarr.redact import Secret
 from credarr.targets import build_registry
@@ -23,9 +27,11 @@ from credarr_server.agent_control import (
     CA_CERT,
     CA_KEY,
     SERVER_CERT,
+    SERVER_KEY,
     AgentControlError,
     AgentControlPlane,
     _load_or_create_ca,
+    _server_certificate,
 )
 from credarr_server.store import TopologyStore
 from credarr_server.sync_store import SyncStore
@@ -44,15 +50,53 @@ credentials:
 """
 
 
-def _plane(tmp_path: Path) -> tuple[AgentControlPlane, SyncStore]:
+def _plane(
+    tmp_path: Path,
+    *,
+    hostname: str | None = None,
+    sans: tuple[str, ...] = (),
+) -> tuple[AgentControlPlane, SyncStore]:
     manifest = tmp_path / "credentials.yaml"
     manifest.write_text(MANIFEST, encoding="utf-8")
     store = TopologyStore(tmp_path / "app.db")
     store.import_manifest(manifest, REGISTRY)
     sync = SyncStore(tmp_path / "app.db", tree_configured=True)
-    plane = AgentControlPlane(sync, tmp_path, host="127.0.0.1", port=0)
+    plane = AgentControlPlane(
+        sync,
+        tmp_path,
+        host="127.0.0.1",
+        port=0,
+        hostname=hostname,
+        sans=sans,
+    )
     plane.start()
     return plane, sync
+
+
+def _expired_ca(directory: Path) -> None:
+    directory.mkdir(exist_ok=True)
+    key = ec.generate_private_key(ec.SECP256R1())
+    now = datetime.datetime.now(datetime.UTC)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "expired CA")])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=10))
+        .not_valid_after(now - datetime.timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    (directory / CA_KEY).write_bytes(
+        key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    (directory / CA_CERT).write_bytes(cert.public_bytes(serialization.Encoding.PEM))
 
 
 def _agent(tmp_path: Path, plane: AgentControlPlane, sync: SyncStore, name: str = "edge"):
@@ -82,6 +126,124 @@ def test_first_start_creates_a_ca_and_listener_certificate(tmp_path: Path) -> No
         assert plane.info()["ca"] is True
     finally:
         plane.stop()
+
+
+def test_a_second_start_keeps_the_existing_ca(tmp_path: Path) -> None:
+    plane, _sync = _plane(tmp_path)
+    key_before = (tmp_path / CA_KEY).read_bytes()
+    cert_before = (tmp_path / CA_CERT).read_bytes()
+    plane.stop()
+    plane, _sync = _plane(tmp_path)
+    try:
+        assert (tmp_path / CA_KEY).read_bytes() == key_before
+        assert (tmp_path / CA_CERT).read_bytes() == cert_before
+    finally:
+        plane.stop()
+
+
+@pytest.mark.parametrize("present", [CA_CERT, CA_KEY])
+def test_partial_ca_material_is_a_startup_error(tmp_path: Path, present: str) -> None:
+    (tmp_path / present).write_bytes(b"partial")
+    plane = AgentControlPlane(
+        SyncStore(tmp_path / "app.db", tree_configured=True),
+        tmp_path,
+        host="127.0.0.1",
+        port=0,
+    )
+    with pytest.raises(AgentControlError, match="incomplete"):
+        plane.start()
+
+
+def test_empty_ca_material_is_a_startup_error(tmp_path: Path) -> None:
+    (tmp_path / CA_CERT).write_bytes(b"")
+    (tmp_path / CA_KEY).write_bytes(b"")
+    plane = AgentControlPlane(
+        SyncStore(tmp_path / "app.db", tree_configured=True),
+        tmp_path,
+        host="127.0.0.1",
+        port=0,
+    )
+    with pytest.raises(AgentControlError, match="unreadable or empty"):
+        plane.start()
+
+
+def test_the_listener_certificate_carries_every_agent_name(tmp_path: Path) -> None:
+    plane, _sync = _plane(
+        tmp_path,
+        hostname="credarr.test",
+        sans=("credarr", "credarr.internal"),
+    )
+    try:
+        cert = x509.load_pem_x509_certificate(
+            (tmp_path / SERVER_CERT).read_bytes()
+        )
+        san = cert.extensions.get_extension_for_class(
+            x509.SubjectAlternativeName
+        ).value
+        names = set(san.get_values_for_type(x509.DNSName))
+        assert {"credarr.test", "credarr", "credarr.internal", "localhost"} <= names
+        addresses = {str(item) for item in san.get_values_for_type(x509.IPAddress)}
+        assert {"127.0.0.1", "::1"} <= addresses
+    finally:
+        plane.stop()
+
+
+def test_a_brought_ca_must_match_its_key(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    _load_or_create_ca(first)
+    _load_or_create_ca(second)
+    plane = AgentControlPlane(
+        SyncStore(tmp_path / "app.db", tree_configured=True),
+        tmp_path / "config",
+        host="127.0.0.1",
+        port=0,
+        ca_cert=first / CA_CERT,
+        ca_key=second / CA_KEY,
+    )
+    with pytest.raises(AgentControlError, match="does not match"):
+        plane.start()
+
+
+def test_a_brought_certificate_must_be_a_ca(tmp_path: Path) -> None:
+    external = tmp_path / "external"
+    external.mkdir()
+    key, cert = _load_or_create_ca(external)
+    _server_certificate(
+        tmp_path,
+        key,
+        cert,
+        hostname="credarr.test",
+    )
+    server_key = tmp_path / SERVER_KEY
+    server_cert = tmp_path / SERVER_CERT
+    plane = AgentControlPlane(
+        SyncStore(tmp_path / "app.db", tree_configured=True),
+        tmp_path / "config",
+        host="127.0.0.1",
+        port=0,
+        ca_cert=server_cert,
+        ca_key=server_key,
+    )
+    with pytest.raises(AgentControlError, match="not a CA certificate"):
+        plane.start()
+
+
+def test_an_expired_brought_ca_is_refused(tmp_path: Path) -> None:
+    external = tmp_path / "expired"
+    _expired_ca(external)
+    plane = AgentControlPlane(
+        SyncStore(tmp_path / "app.db", tree_configured=True),
+        tmp_path / "config",
+        host="127.0.0.1",
+        port=0,
+        ca_cert=external / CA_CERT,
+        ca_key=external / CA_KEY,
+    )
+    with pytest.raises(AgentControlError, match="expired"):
+        plane.start()
 
 
 def test_a_brought_ca_issues_the_listener_certificate(tmp_path: Path) -> None:
