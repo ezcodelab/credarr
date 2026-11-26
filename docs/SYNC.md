@@ -227,6 +227,12 @@ the listener failure named.
    configuration is in the environment block:
 
    ```yaml
+   secrets:
+     CREDARR_AGENT_CA:
+       file: ./agent/agent-ca.crt
+     CREDARR_VAULT_TREE_KEY:
+       file: ./agent/vault-tree.key
+
    services:
      credarr-agent:
        image: ghcr.io/ezcodelab/credarr-agent:latest
@@ -238,14 +244,11 @@ the listener failure named.
          - /tmp
        environment:
          CREDARR_AGENT_SERVER: https://credarr.example:8443
-         CREDARR_AGENT_CA: /agent/agent-ca.crt
-         CREDARR_AGENT_VAULT_ROOT: /vault
-         CREDARR_AGENT_VAULT_KEY: /agent/vault-tree.key
          CREDARR_AGENT_ALLOWED_ROOT: /stacks
-         CREDARR_AGENT_STATE: /agent/state
-         CREDARR_AGENT_ROOTFUL: "1"
-         CREDARR_AGENT_ACK_ROOTFUL: "1"
          DOCKER_HOST: tcp://socket-proxy:2375
+       secrets:
+         - CREDARR_AGENT_CA
+         - CREDARR_VAULT_TREE_KEY
        depends_on:
          socket-proxy:
            condition: service_healthy
@@ -253,7 +256,7 @@ the listener failure named.
          - internal_web
          - docker_api
        volumes:
-         - ./agent:/agent
+         - ./agent/state:/var/lib/credarr-agent
          - ./vault:/vault:ro
          - /srv/stacks:/stacks
 
@@ -317,12 +320,12 @@ the listener failure named.
        internal: true
    ```
 
-The image reads `CREDARR_AGENT_SERVER`, `CREDARR_AGENT_CA`,
-`CREDARR_AGENT_VAULT_ROOT`, `CREDARR_AGENT_VAULT_KEY`,
-`CREDARR_AGENT_ALLOWED_ROOT` (comma-separated for more than one),
-`CREDARR_AGENT_STATE`, `CREDARR_AGENT_ROOTFUL`,
-`CREDARR_AGENT_ACK_ROOTFUL` and `CREDARR_AGENT_POLL_SECONDS`. The equivalent
-flags still work for a host install.
+The only required runtime values are `CREDARR_AGENT_SERVER` and
+`CREDARR_AGENT_ALLOWED_ROOT` (comma-separated for more than one). The CA and
+tree key are Docker secrets at fixed paths, the state directory defaults to
+`/var/lib/credarr-agent`, and the vault tree defaults to `/vault`. The
+equivalent flags still work for a host install; `CREDARR_AGENT_POLL_SECONDS`
+is optional.
 
 An older compose file that ran the console image with
 `command: [credarr-agent, ...]` must remove the `command` block: the agent image
@@ -345,11 +348,10 @@ build, secrets, swarm, system, logs and archive access. `ALLOW_START` and
 create and delete.
 
 The proxy still permits container creation and deletion, so a compromised agent
-can control the containers it can reach. Rootless Docker is the default. A
-rootful daemon requires `--rootful --ack-rootful` or
-`CREDARR_AGENT_ROOTFUL=1` and `CREDARR_AGENT_ACK_ROOTFUL=1`, which is stored on
-the agent row and reported in the console, and remains root-equivalent even
-behind the proxy. A job outside the bound workflow or path fails with
+can control the containers it can reach. Rootless Docker is the default. The
+agent detects a rootful daemon from `docker info`, reports it to the console,
+and remains root-equivalent even behind the proxy. A job outside the bound
+workflow or path fails with
 `agent_policy_violation` and no Docker action. The agent does not accept
 arbitrary commands, shell, scripts, or environment from the BFF.
 

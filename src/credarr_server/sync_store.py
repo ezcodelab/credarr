@@ -57,7 +57,6 @@ CREATE TABLE IF NOT EXISTS agents (
     certificate_fingerprint TEXT UNIQUE,
     certificate_expires_at  REAL,
     rootful                 INTEGER NOT NULL DEFAULT 0,
-    rootful_ack             INTEGER NOT NULL DEFAULT 0,
     last_seen_at            REAL,
     disabled_reason         TEXT NOT NULL DEFAULT '',
     created_at              REAL NOT NULL,
@@ -175,7 +174,6 @@ class Agent:
     certificate_fingerprint: str | None
     certificate_expires_at: float | None
     rootful: bool
-    rootful_ack: bool
     last_seen_at: float | None
     disabled_reason: str
     created_at: float
@@ -190,7 +188,6 @@ class Agent:
             "certificate_fingerprint": self.certificate_fingerprint,
             "certificate_expires_at": self.certificate_expires_at,
             "rootful": self.rootful,
-            "rootful_ack": self.rootful_ack,
             "last_seen_at": self.last_seen_at,
             "disabled_reason": self.disabled_reason,
             "created_at": self.created_at,
@@ -291,7 +288,6 @@ def _agent(row: Any) -> Agent:
         certificate_fingerprint=row["certificate_fingerprint"],
         certificate_expires_at=row["certificate_expires_at"],
         rootful=bool(row["rootful"]),
-        rootful_ack=bool(row["rootful_ack"]),
         last_seen_at=row["last_seen_at"],
         disabled_reason=row["disabled_reason"],
         created_at=row["created_at"],
@@ -613,6 +609,21 @@ class SyncStore:
             ).fetchone()
         return _agent(row) if row else None
 
+    def set_rootful(self, identifier: str, rootful: bool) -> None:
+        """Record the mode the agent observed on its own Docker daemon."""
+        with connect(self.path) as connection:
+            connection.execute(
+                "UPDATE agents SET rootful = ?, updated_at = ? "
+                "WHERE (id = ? OR name = ?) AND rootful != ?",
+                (
+                    1 if rootful else 0,
+                    time.time(),
+                    identifier,
+                    identifier,
+                    1 if rootful else 0,
+                ),
+            )
+
     def create_enrollment(
         self, name: str, capabilities: tuple[str, ...], ttl: float = 600.0
     ) -> tuple[str, Agent]:
@@ -651,7 +662,7 @@ class SyncStore:
         return token, agent
 
     def consume_enrollment(
-        self, token: str, *, fingerprint: str, expires_at: float, rootful: bool, ack: bool
+        self, token: str, *, fingerprint: str, expires_at: float
     ) -> Agent:
         digest = hashlib.sha256(token.encode()).hexdigest()
         now = time.time()
@@ -664,21 +675,17 @@ class SyncStore:
                 raise SyncError("that enrollment token is not valid")
             if row["expires_at"] < now:
                 raise SyncError("that enrollment token has expired")
-            if rootful and not ack:
-                raise SyncError("a rootful agent requires an explicit acknowledgment")
             connection.execute(
                 "UPDATE agent_enrollments SET used_at = ? WHERE id = ?",
                 (now, row["id"]),
             )
             connection.execute(
                 "UPDATE agents SET status = 'active', certificate_fingerprint = ?, "
-                "certificate_expires_at = ?, rootful = ?, rootful_ack = ?, "
-                "last_seen_at = ?, updated_at = ? WHERE name = ?",
+                "certificate_expires_at = ?, last_seen_at = ?, updated_at = ? "
+                "WHERE name = ?",
                 (
                     fingerprint,
                     expires_at,
-                    1 if rootful else 0,
-                    1 if ack else 0,
                     now,
                     now,
                     row["agent_name"],

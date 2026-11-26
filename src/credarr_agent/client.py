@@ -57,8 +57,6 @@ class AgentConfig:
     ca_path: Path
     cert_path: Path
     key_path: Path
-    rootful: bool
-    ack_rootful: bool
     poll_seconds: float = 5.0
 
     @property
@@ -171,8 +169,6 @@ def enroll(config: AgentConfig, token: str, *, name: str, capabilities: tuple[st
             "name": name,
             "csr": csr_pem,
             "capabilities": list(capabilities),
-            "rootful": config.rootful,
-            "rootful_ack": config.ack_rootful,
         },
     )
     certificate = answer.get("certificate")
@@ -222,12 +218,9 @@ class Workflow:
             raise AgentError("docker info failed; the agent cannot determine its privilege mode")
         return "rootless" in completed.stdout.lower()
 
-    def preflight(self) -> None:
-        if not self._rootless() and not (self.config.rootful and self.config.ack_rootful):
-            raise AgentError(
-                "the Docker daemon is rootful; start a rootless daemon or pass "
-                "--rootful --ack-rootful after reading the threat model"
-            )
+    def preflight(self) -> bool:
+        """Whether the daemon is rootful. Socket access is the acknowledgment."""
+        return not self._rootless()
 
     def _env_path(self, stack: Path, raw: object) -> Path:
         candidate = str(raw or "")
@@ -363,7 +356,7 @@ def run(config: AgentConfig, *, once: bool = False) -> int:
         raise AgentError("the agent has no certificate; enroll it first")
     tree = VaultTree(config.vault_root, config.vault_key)
     workflow = Workflow(config)
-    workflow.preflight()
+    rootful = workflow.preflight()
     client = AgentClient(config)
     while True:
         try:
@@ -373,7 +366,7 @@ def run(config: AgentConfig, *, once: bool = False) -> int:
                 client = AgentClient(config)
             lease = client.post(
                 "/v1/jobs/lease",
-                {"timestamp": time.time(), "rootful": config.rootful},
+                {"timestamp": time.time(), "rootful": rootful},
             )
             job = lease.get("job")
             if not isinstance(job, dict):

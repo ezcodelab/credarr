@@ -19,9 +19,10 @@ v1 limit, not a roadmap promise.
   `credarr-agent` image. Put the Docker API behind the LinuxServer socket proxy;
   it still permits container create/start/stop/delete, so a compromised agent
   can control the containers it can reach. Mounting the raw socket is the
-  fallback and gives the full Docker API. Rootless is the default; rootful is
-  root-equivalent and needs an explicit acknowledgment. The shared tree key is
-  a file on the agent host: a tree copy plus its key is a value copy. The BFF's
+  fallback and gives the full Docker API. Rootless is the default; the agent
+  detects and reports a rootful daemon, which is root-equivalent. Giving the
+  agent Docker access is the acknowledgment. The shared tree key is a file on
+  the agent host: a tree copy plus its key is a value copy. The BFF's
   own console port is still the operator's TLS-proxy surface; only the agent
   control plane terminates TLS itself. Default compose is HTTP.
   `--secure-cookies` is not TLS.

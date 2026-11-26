@@ -23,8 +23,6 @@ def _env(monkeypatch, **values: str) -> None:
         "CREDARR_AGENT_VAULT_KEY",
         "CREDARR_AGENT_CA",
         "CREDARR_AGENT_ALLOWED_ROOT",
-        "CREDARR_AGENT_ROOTFUL",
-        "CREDARR_AGENT_ACK_ROOTFUL",
         "CREDARR_AGENT_POLL_SECONDS",
         "CREDARR_AGENT_ENROLL_NAME",
         "CREDARR_AGENT_ENROLL_TOKEN_FILE",
@@ -44,8 +42,6 @@ def test_the_container_defaults_to_run_from_environment(monkeypatch, tmp_path: P
         CREDARR_AGENT_VAULT_KEY=str(tmp_path / "vault.key"),
         CREDARR_AGENT_CA=str(tmp_path / "ca.crt"),
         CREDARR_AGENT_ALLOWED_ROOT="/stacks,/srv/stacks",
-        CREDARR_AGENT_ROOTFUL="1",
-        CREDARR_AGENT_ACK_ROOTFUL="true",
         CREDARR_AGENT_POLL_SECONDS="9",
     )
     captured = {}
@@ -60,8 +56,6 @@ def test_the_container_defaults_to_run_from_environment(monkeypatch, tmp_path: P
     config = captured["config"]
     assert config.server == "https://credarr:8443"
     assert config.allowed_roots == (Path("/stacks"), Path("/srv/stacks"))
-    assert config.rootful is True
-    assert config.ack_rootful is True
     assert config.poll_seconds == 9
     assert captured["once"] is False
 
@@ -72,7 +66,7 @@ def test_missing_required_environment_is_a_config_error(monkeypatch, capsys) -> 
     assert cli.main([]) == int(ExitCode.CONFIG)
     err = capsys.readouterr().err
     assert "CREDARR_AGENT_SERVER" in err
-    assert "CREDARR_AGENT_VAULT_ROOT" in err
+    assert "CREDARR_AGENT_ALLOWED_ROOT" in err
 
 
 def test_flags_and_the_run_subcommand_still_work(monkeypatch, tmp_path: Path) -> None:

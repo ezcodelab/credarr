@@ -27,8 +27,6 @@ def _active_agent(server):
         token,
         fingerprint="fp-edge",
         expires_at=10**12,
-        rootful=False,
-        ack=False,
     )
     return agent
 
