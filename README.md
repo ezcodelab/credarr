@@ -120,25 +120,15 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    command:
-      - --server
-      - https://credarr.example.com:8443
-      - --ca
-      - /agent/agent-ca.crt
-      - --vault-root
-      - /vault
-      - --vault-key
-      - /agent/vault-tree.key
-      - --allowed-root
-      - /stacks
-      - --state-dir
-      - /agent/state
-      - enroll
-      - --name
-      - media-host
-      - --token-file
-      - /agent/enroll.token
     environment:
+      CREDARR_AGENT_SERVER: https://credarr.example.com:8443
+      CREDARR_AGENT_CA: /agent/agent-ca.crt
+      CREDARR_AGENT_VAULT_ROOT: /vault
+      CREDARR_AGENT_VAULT_KEY: /agent/vault-tree.key
+      CREDARR_AGENT_ALLOWED_ROOT: /stacks
+      CREDARR_AGENT_STATE: /agent/state
+      CREDARR_AGENT_ROOTFUL: "1"
+      CREDARR_AGENT_ACK_ROOTFUL: "1"
       DOCKER_HOST: tcp://socket-proxy:2375
     depends_on:
       socket-proxy:
@@ -230,7 +220,21 @@ The proxy allows the endpoints `docker compose up --force-recreate` uses: image 
 
 Mounting `/var/run/docker.sock` directly still works and is the fallback when the proxy is unavailable. That gives the agent the full Docker API, so use it only when you accept that.
 
-Write the token to `./agent/enroll.token` before starting the container. After enrollment, replace `enroll ...` with `run`. The image entrypoint is `credarr-agent`, so an older compose command that starts with `credarr-agent` must drop that first item. The agent runs as its own non-root user; set `user:` to an id that can read `/agent`, `/vault` and the stacks. Rootless Docker is the default. A rootful daemon needs `--rootful --ack-rootful` and the stored acknowledgment.
+The image defaults to `run`; the required runtime configuration is the
+environment block above. Write the one-time token to
+`./agent/enroll.token`, then enroll with the same service settings:
+
+```sh
+docker compose run --rm credarr-agent enroll \
+  --name media-host --token-file /agent/enroll.token
+```
+
+After enrollment, start the stack normally. An older compose file that sets a
+`command:` block should remove it: the image already runs `credarr-agent run`.
+The agent runs as its own non-root user; set `user:` to an id that can read
+`/agent`, `/vault` and the stacks. Rootless Docker is the default. A rootful
+daemon sets `CREDARR_AGENT_ROOTFUL=1` and `CREDARR_AGENT_ACK_ROOTFUL=1`; the
+acknowledgment is stored on the agent row.
 
 If the listener is off, the console says so and no agent can connect. Existing audits and rotations keep working; a sync target cannot be created until `CREDARR_VAULT_TREE` is set.
 
