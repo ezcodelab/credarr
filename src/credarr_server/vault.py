@@ -482,6 +482,14 @@ class VaultTree:
     def configured(self) -> bool:
         return self.root.is_dir() or self.root.parent.is_dir()
 
+    def ensure_key(self) -> None:
+        """Create the shared tree key before any value exists.
+
+        The agent mounts this file as a Docker secret, so it has to exist once
+        the delivery tree is configured, not only after the first value write.
+        """
+        self._key()
+
     def _key(self) -> bytes:
         if not self.key_path.is_file():
             if self.root.exists() and any(self.values.glob("*.bin")):

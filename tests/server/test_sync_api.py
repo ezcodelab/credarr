@@ -31,6 +31,17 @@ def _active_agent(server):
     return agent
 
 
+def test_a_configured_tree_has_its_key_before_the_first_value(app, tmp_path) -> None:
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    key = tree / "vault-tree.key"
+    server = make_server(app, tmp_path, vault_tree=tree, vault_tree_key=key)
+    with TestClient(server) as client:
+        setup_admin(client)
+    assert key.is_file()
+    assert len(key.read_bytes()) == 32
+
+
 def test_a_target_needs_a_tree_and_an_agent(app, tmp_path) -> None:
     server = make_server(app, tmp_path)
     with TestClient(server) as client:

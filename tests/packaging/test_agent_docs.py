@@ -198,6 +198,8 @@ def test_the_agent_has_its_own_image_and_the_docs_say_so() -> None:
     assert "CREDARR_AGENT_ACK_ROOTFUL" not in readme
     assert "CREDARR_AGENT_ROOTFUL" not in readme
     assert "CREDARR_VAULT_TREE_KEY" in readme
+    assert "CREDARR_AGENT_CA_CERT" in readme
+    assert "agent-ca.crt" in readme
 
 
 def test_the_ui_audit_is_a_real_check_gate() -> None:

@@ -195,6 +195,37 @@ listener state and the exact `https://<host>:<port>` URL in Settings -> Agents
 container port, and the agent's `--server` value together. The agent initiates
 the connection, so the BFF never needs to discover an agent address.
 
+## CA bootstrap and bring-your-own CA
+
+On the first start with an empty config directory, Credarr creates a dedicated
+EC CA (`agent-ca.crt` and `agent-ca.key`) and signs the listener certificate
+(`agent-server.crt` and `agent-server.key`) with it. The public CA is published
+at `<config>/agent-ca.crt`; the console serves it at `GET /api/v1/agents/ca`.
+No openssl step is required. The CA and the tree key are ordinary files in the
+console's `/config` volume, so the agent can mount them as Docker secrets.
+
+To use an existing CA, mount its certificate and key as Docker secrets and set:
+
+```yaml
+environment:
+  CREDARR_AGENT_CA_CERT: /run/secrets/CREDARR_AGENT_CA
+  CREDARR_AGENT_CA_KEY: /run/secrets/CREDARR_AGENT_CA_KEY
+```
+
+Credarr still publishes the public CA at `<config>/agent-ca.crt` and signs the
+listener and client certificates with the brought key. Set both paths or
+neither; one alone is a configuration error. The escape for advanced installs
+that want to build the CA by hand:
+
+```sh
+openssl ecparam -name prime256v1 -genkey -noout -out agent-ca.key
+openssl req -new -x509 -key agent-ca.key -sha256 -days 3650 \
+  -subj "/CN=credarr agent CA" -out agent-ca.crt
+```
+
+Mount those two files as the secrets above. Do not bake the CA into the image:
+rotation and multi-host use become a rebuild.
+
 ## No agent configured
 
 Audit and rotation do not need an agent. Without `CREDARR_VAULT_TREE` there is
@@ -209,9 +240,10 @@ the listener failure named.
 1. An admin creates a one-time token in Settings -> Agents & sync
    (`POST /api/v1/agents/enrollment`). The token is shown once and stored as a
    SHA-256 hash with a 10-minute default expiry.
-2. Download `agent-ca.crt` from the same panel (`GET /api/v1/agents/ca`) and
-   put it beside the agent state. The file is public; the CA private key stays
-   in the BFF data directory.
+2. The console's `/config` volume already holds `agent-ca.crt`. Use it as the
+   `CREDARR_AGENT_CA` Docker secret, or download it from the same panel
+   (`GET /api/v1/agents/ca`) for a host install. The CA private key stays in the
+   console volume.
 3. On the agent host, generate a key and CSR and consume the token:
 
    ```sh
@@ -229,9 +261,9 @@ the listener failure named.
    ```yaml
    secrets:
      CREDARR_AGENT_CA:
-       file: ./agent/agent-ca.crt
+       file: ./config/agent-ca.crt
      CREDARR_VAULT_TREE_KEY:
-       file: ./agent/vault-tree.key
+       file: ./config/vault-tree.key
 
    services:
      credarr-agent:

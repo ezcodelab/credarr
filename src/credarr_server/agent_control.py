@@ -56,15 +56,57 @@ def _pem_key(key: ec.EllipticCurvePrivateKey) -> bytes:
     )
 
 
-def _load_or_create_ca(config_dir: Path) -> tuple[ec.EllipticCurvePrivateKey, x509.Certificate]:
-    key_path = config_dir / CA_KEY
-    cert_path = config_dir / CA_CERT
+def _publish_ca(public_path: Path, cert: x509.Certificate) -> None:
+    """Write the public CA certificate where the console and agent read it."""
+    raw = cert.public_bytes(serialization.Encoding.PEM)
+    try:
+        if public_path.is_file() and public_path.read_bytes() == raw:
+            return
+        public_path.parent.mkdir(parents=True, exist_ok=True)
+        public_path.write_bytes(raw)
+    except OSError as exc:
+        raise AgentControlError(
+            f"the public agent CA cannot be written at {public_path}: {exc.strerror}"
+        ) from None
+
+
+def _load_or_create_ca(
+    config_dir: Path,
+    *,
+    cert_path: Path | None = None,
+    key_path: Path | None = None,
+) -> tuple[ec.EllipticCurvePrivateKey, x509.Certificate]:
+    """Use the configured CA, or create a dedicated one on first start.
+
+    The public certificate is always published at `<config>/agent-ca.crt` so the
+    console can download it and a Docker secret can mount it into the agent.
+    The private key is never copied out of its configured location.
+    """
+    public_path = config_dir / CA_CERT
+    external = cert_path is not None or key_path is not None
+    if external and (cert_path is None or key_path is None):
+        raise AgentControlError(
+            "set both CREDARR_AGENT_CA_CERT and CREDARR_AGENT_CA_KEY, or neither"
+        )
+    cert_path = cert_path or public_path
+    key_path = key_path or config_dir / CA_KEY
+    if key_path.is_file() != cert_path.is_file():
+        raise AgentControlError(
+            "the agent CA is incomplete: both the certificate and key are required"
+        )
     if key_path.is_file() and cert_path.is_file():
         key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
         cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
         if not isinstance(key, ec.EllipticCurvePrivateKey):  # pragma: no cover - defensive
             raise AgentControlError("the agent CA key is not an EC key")
+        if key.public_key().public_numbers() != cert.public_key().public_numbers():
+            raise AgentControlError("the agent CA key does not match its certificate")
+        _publish_ca(public_path, cert)
         return key, cert
+    if external:
+        raise AgentControlError(
+            f"the agent CA is not readable at {cert_path} and {key_path}"
+        )
     key = ec.generate_private_key(ec.SECP256R1())
     now = datetime.datetime.now(datetime.UTC)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "credarr agent CA")])
@@ -99,6 +141,7 @@ def _load_or_create_ca(config_dir: Path) -> tuple[ec.EllipticCurvePrivateKey, x5
     )
     _write_private(key_path, _pem_key(key))
     cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    _publish_ca(public_path, cert)
     return key, cert
 
 
@@ -293,7 +336,11 @@ class _Handler(BaseHTTPRequestHandler):
             )
 
     def _certificate(self, agent_name: str, csr: str) -> tuple[str, x509.Certificate]:
-        ca_key, ca_cert = _load_or_create_ca(self.authority.config_dir)
+        ca_key, ca_cert = _load_or_create_ca(
+            self.authority.config_dir,
+            cert_path=self.authority.ca_cert,
+            key_path=self.authority.ca_key,
+        )
         return _sign_csr(csr, ca_key=ca_key, ca_cert=ca_cert, common_name=agent_name)
 
     def do_GET(self) -> None:
@@ -430,12 +477,16 @@ class AgentControlPlane:
         host: str = "127.0.0.1",
         port: int = 8443,
         hostname: str | None = None,
+        ca_cert: Path | None = None,
+        ca_key: Path | None = None,
     ) -> None:
         self.sync = sync
         self.config_dir = Path(config_dir)
         self.host = host
         self.port = port
         self.hostname = hostname
+        self.ca_cert = Path(ca_cert) if ca_cert is not None else None
+        self.ca_key = Path(ca_key) if ca_key is not None else None
         self.failure: str | None = None
         self.pq_group: str | None = None
         self.tls_version: str = "TLSv1.3"
@@ -443,7 +494,9 @@ class AgentControlPlane:
         self._thread: threading.Thread | None = None
 
     def _context(self) -> ssl.SSLContext:
-        ca_key, ca_cert = _load_or_create_ca(self.config_dir)
+        ca_key, ca_cert = _load_or_create_ca(
+            self.config_dir, cert_path=self.ca_cert, key_path=self.ca_key
+        )
         key_path, cert_path = _server_certificate(
             self.config_dir, ca_key, ca_cert, hostname=self.hostname
         )

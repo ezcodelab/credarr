@@ -14,11 +14,19 @@ import time
 from pathlib import Path
 
 import pytest
+from cryptography import x509
 
 from credarr.redact import Secret
 from credarr.targets import build_registry
 from credarr_agent.client import AgentClient, AgentConfig, AgentError, enroll
-from credarr_server.agent_control import AgentControlPlane
+from credarr_server.agent_control import (
+    CA_CERT,
+    CA_KEY,
+    SERVER_CERT,
+    AgentControlError,
+    AgentControlPlane,
+    _load_or_create_ca,
+)
 from credarr_server.store import TopologyStore
 from credarr_server.sync_store import SyncStore
 from credarr_server.vault import VaultTree
@@ -63,6 +71,63 @@ def _agent(tmp_path: Path, plane: AgentControlPlane, sync: SyncStore, name: str 
     )
     enroll(config, token, name=name, capabilities=("compose",))
     return config, AgentClient(config)
+
+
+def test_first_start_creates_a_ca_and_listener_certificate(tmp_path: Path) -> None:
+    plane, _sync = _plane(tmp_path)
+    try:
+        assert (tmp_path / CA_CERT).is_file()
+        assert (tmp_path / CA_KEY).is_file()
+        assert (tmp_path / SERVER_CERT).is_file()
+        assert plane.info()["ca"] is True
+    finally:
+        plane.stop()
+
+
+def test_a_brought_ca_issues_the_listener_certificate(tmp_path: Path) -> None:
+    external = tmp_path / "external-ca"
+    external.mkdir()
+    _key, ca_cert = _load_or_create_ca(external)
+    sync = SyncStore(tmp_path / "app.db", tree_configured=True)
+    config = tmp_path / "config"
+    config.mkdir()
+    plane = AgentControlPlane(
+        sync,
+        config,
+        host="127.0.0.1",
+        port=0,
+        hostname="credarr.test",
+        ca_cert=external / CA_CERT,
+        ca_key=external / CA_KEY,
+    )
+    plane.start()
+    try:
+        public = (config / CA_CERT).read_text(encoding="utf-8")
+        listener = x509.load_pem_x509_certificate(
+            (config / SERVER_CERT).read_bytes()
+        )
+        assert "BEGIN CERTIFICATE" in public
+        assert listener.issuer == ca_cert.subject
+        assert plane.info()["ca"] is True
+    finally:
+        plane.stop()
+
+
+def test_a_brought_ca_needs_both_paths(tmp_path: Path) -> None:
+    sync = SyncStore(tmp_path / "app.db", tree_configured=True)
+    config = tmp_path / "config"
+    config.mkdir()
+    cert = tmp_path / "ca.crt"
+    cert.write_text("not a certificate", encoding="utf-8")
+    plane = AgentControlPlane(
+        sync,
+        config,
+        host="127.0.0.1",
+        port=0,
+        ca_cert=cert,
+    )
+    with pytest.raises(AgentControlError, match="both CREDARR_AGENT_CA_CERT"):
+        plane.start()
 
 
 def test_a_failed_listener_keeps_its_failure_sentence(tmp_path: Path) -> None:
