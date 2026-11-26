@@ -18,8 +18,18 @@ rotation-options, auto-rotation, rotate, abandon), `/audit` (+ background jobs,
 scoped checks), `/topology/export|import` (raw-YAML replace requires
 `?confirm=replace`), `/notifications/services` (CRUD + per-service test, plus
 a no-write draft `POST .../services/test`), `/sync/targets`, `/sync/jobs`,
-`/agents` (enrollment and revocation), `/vault/status`, `/events`,
-`/settings/audit`, `/auth/sessions`, `/auth/me`, `/discovery`.
+`/agents` (listener facts, CA download, enrollment and revocation),
+`/vault/status`, `/events`, `/settings/audit`, `/auth/sessions`, `/auth/me`,
+`/discovery`.
+
+`GET /agents` returns the enrolled agents, the sync counts, and a
+`control_plane` object with `enabled`, `host`, `port`, `hostname`, `url`,
+`tls`, `group`, `failure` and `ca`. The `url` is
+`https://<hostname>:<port>` only when the listener is running, the hostname is
+configured and the port is non-zero; the console does not guess it.
+`GET /agents/ca` returns the public
+agent CA certificate as `application/x-pem-file`; the private CA key never
+leaves the data directory.
 
 `POST /credentials/{name}/reveal` is the only read that returns a value. It
 requires a confirmation in the UI, is audited before the value is returned,

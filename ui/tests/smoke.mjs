@@ -275,8 +275,23 @@ async function writeConfig(work, seerrBase, sonarrBase) {
 async function boot(config, work) {
   const server = spawn(
     PYTHON,
-    ["-m", "credarr_server.app", "-c", config, "--config-dir", work, "--host", "127.0.0.1", "--port", String(PORT)],
-    { cwd: REPO, stdio: ["ignore", "pipe", "pipe"] },
+    [
+      "-m", "credarr_server.app",
+      "-c", config,
+      "--config-dir", work,
+      "--host", "127.0.0.1",
+      "--port", String(PORT),
+      "--agent-port", "0",
+    ],
+    {
+      cwd: REPO,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        CREDARR_VAULT_TREE: path.join(work, "vault"),
+        CREDARR_VAULT_TREE_KEY: path.join(work, "vault-tree.key"),
+      },
+    },
   );
   let log = "";
   server.stdout.on("data", (chunk) => (log += chunk));
@@ -1740,6 +1755,25 @@ async function main() {
     );
     check("an API key can be revoked from Settings", true);
     await page.locator("#settings-agents").scrollIntoViewIfNeeded();
+    check(
+      "the agent panel reports a disabled listener",
+      await page.locator("#settings-agents").getByText("Agent listener off").isVisible(),
+    );
+    check(
+      "the no-agent state explains that delivery needs an agent",
+      await page
+        .locator("#settings-agents")
+        .getByText(/No agents are enrolled/)
+        .isVisible(),
+    );
+    await page
+      .locator("#settings-agents summary")
+      .filter({ hasText: "How to run the agent" })
+      .click();
+    check(
+      "the no-agent state carries a runnable compose example",
+      (await page.locator("#settings-agents pre").innerText()).includes("credarr-agent:latest"),
+    );
     await page.locator("#settings-agents").getByRole("button", { name: "New target" }).click();
     check(
       "a target editor starts with the two supported types",

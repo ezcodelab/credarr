@@ -6,6 +6,6 @@ as `credarr` for everything else.
 
 from __future__ import annotations
 
-__version__ = "1.3.9"
+__version__ = "1.4.0"
 
 __all__ = ["__version__"]

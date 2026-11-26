@@ -6,7 +6,7 @@ and `/config` is owned by the configured PUID. No mocks, no fake services, no
 imports from the application - if the wheel is missing a file, the entrypoint is
 wrong, or `/config` is not writable, these fail and the unit suite cannot.
 
-    make image                 # tags credarr:dev
+    make image                 # tags credarr:dev and credarr-agent:dev
     pytest -m integration
 
 Skipped, with a reason, when Docker or the image is absent. CI that wants them
@@ -32,6 +32,7 @@ import pytest
 pytestmark = pytest.mark.integration
 
 IMAGE = os.environ.get("CREDARR_TEST_IMAGE", "credarr:dev")
+AGENT_IMAGE = os.environ.get("CREDARR_AGENT_TEST_IMAGE", "credarr-agent:dev")
 PASSWORD = "integration-password-0123456789"  # gitleaks:allow - a fixture
 # Deliberately not 1000: the host user running the suite often is uid 1000, so a
 # container that never chowned /config would otherwise pass the ownership check.
@@ -229,3 +230,30 @@ def test_a_write_survives_in_the_state_directory(console: Console) -> None:
     assert status == 200
     names = [row["name"] for row in services["definitions"]]
     assert "sonarr" in names, "a write that does not survive a restart is not stored"
+
+
+def test_the_agent_image_carries_docker_and_the_console_image_does_not() -> None:
+    """The privilege split is an image fact, not only a compose convention."""
+    _require_docker()
+    if _docker("image", "inspect", AGENT_IMAGE).returncode != 0:
+        pytest.skip(f"image {AGENT_IMAGE} is not built; run `make image`")
+
+    help_text = _docker(
+        "run", "--rm", "--entrypoint", "credarr-agent", AGENT_IMAGE, "--help"
+    )
+    assert help_text.returncode == 0, help_text.stderr
+    assert "credarr-agent" in help_text.stdout
+
+    compose = _docker(
+        "run", "--rm", "--entrypoint", "docker", AGENT_IMAGE, "compose", "version"
+    )
+    assert compose.returncode == 0, compose.stderr
+    assert "Docker Compose" in compose.stdout + compose.stderr
+
+    server_docker = _docker(
+        "run", "--rm", "--entrypoint", "sh", IMAGE, "-c", "command -v docker || true"
+    )
+    assert server_docker.returncode == 0, server_docker.stderr
+    assert server_docker.stdout.strip() == "", (
+        "the console image carries the Docker CLI; only the agent image should"
+    )

@@ -1,6 +1,7 @@
 <script>
   import { onMount } from "svelte";
   import { api, ApiError, errorText, timestamp } from "./api.js";
+  import { agentServerUrl, deliveryConfigured, listenerCopy } from "./agents.js";
   import Banner from "./Banner.svelte";
   import LoadingRows from "./LoadingRows.svelte";
 
@@ -10,6 +11,7 @@
   let targets = $state([]);
   let jobs = $state([]);
   let sync = $state(null);
+  let plane = $state(null);
   let loading = $state(true);
   let error = $state("");
   let message = $state("");
@@ -19,6 +21,7 @@
   let enrollCompose = $state(true);
   let enrollEnv = $state(false);
   let token = $state("");
+  let enrolledName = $state("");
   let enrollBusy = $state(false);
   let revokeArmed = $state("");
   let agentEditingId = $state("");
@@ -40,6 +43,46 @@
   let targetValues = $state("");
   let targetBusy = $state(false);
 
+  const treeConfigured = $derived(deliveryConfigured(sync));
+  const agentServer = $derived(agentServerUrl(plane));
+  const listener = $derived(listenerCopy(plane));
+  const enrollCommand = $derived(
+    `credarr-agent --server ${agentServer} \\\n` +
+      "  --ca /etc/credarr/agent-ca.crt \\\n" +
+      "  --vault-root /srv/credarr-vault \\\n" +
+      "  --vault-key /etc/credarr/vault-tree.key \\\n" +
+      "  --allowed-root /srv \\\n" +
+      "  --state-dir /var/lib/credarr-agent \\\n" +
+      `  enroll --name ${enrolledName || "<agent-name>"} ` +
+      "--token-file /run/credarr/enroll.token",
+  );
+  const agentExample = $derived(
+    "services:\n" +
+      "  credarr-agent:\n" +
+      "    image: ghcr.io/ezcodelab/credarr-agent:latest\n" +
+      "    restart: unless-stopped\n" +
+      "    group_add: [\"999\"]\n" +
+      "    command:\n" +
+      "      - --server\n" +
+      `      - ${agentServer}\n` +
+      "      - --ca\n" +
+      "      - /agent/agent-ca.crt\n" +
+      "      - --vault-root\n" +
+      "      - /vault\n" +
+      "      - --vault-key\n" +
+      "      - /agent/vault-tree.key\n" +
+      "      - --allowed-root\n" +
+      "      - /stacks\n" +
+      "      - --state-dir\n" +
+      "      - /agent/state\n" +
+      "      - run\n" +
+      "    volumes:\n" +
+      "      - ./agent:/agent\n" +
+      "      - ./vault:/vault:ro\n" +
+      "      - /var/run/docker.sock:/var/run/docker.sock\n" +
+      "      - /path/to/stacks:/stacks",
+  );
+
   async function load() {
     loading = true;
     error = "";
@@ -51,6 +94,7 @@
       ]);
       agents = agentAnswer?.agents ?? [];
       sync = agentAnswer?.sync ?? null;
+      plane = agentAnswer?.control_plane ?? null;
       targets = targetAnswer?.targets ?? [];
       jobs = jobAnswer?.jobs ?? [];
       if (!targetAgent && agents.length) targetAgent = agents[0].id;
@@ -65,6 +109,7 @@
   function openEnroll() {
     enrollOpen = true;
     token = "";
+    enrolledName = "";
   }
 
   function openTarget(target = null) {
@@ -102,6 +147,7 @@
         method: "POST",
         body: { name: enrollName.trim(), capabilities },
       });
+      enrolledName = enrollName.trim();
       token = answer?.token ?? "";
       enrollName = "";
       enrollOpen = false;
@@ -311,6 +357,24 @@
   {#if error}<Banner tone="danger">{error}</Banner>{/if}
   {#if message}<Banner tone="ok">{message}</Banner>{/if}
 
+  {#if plane}
+    <div class="listener" class:off={listener.off}>
+      <div>
+        <strong>{plane.enabled ? "Agent listener on" : "Agent listener off"}</strong>
+        <span class="muted">{listener.text}</span>
+      </div>
+      {#if plane.ca}
+        <a href="/api/v1/agents/ca" download="agent-ca.crt">Download CA</a>
+      {/if}
+    </div>
+  {/if}
+
+  {#if sync && !treeConfigured}
+    <Banner tone="warn" title="Docker delivery is not configured.">
+      Set CREDARR_VAULT_TREE and CREDARR_VAULT_TREE_KEY, then restart the server.
+      Auditing and rotation still work without delivery.
+    </Banner>
+  {/if}
 
   {#if enrollOpen}
     <form class="enroll" onsubmit={enroll}>
@@ -337,6 +401,13 @@
       <input class="secret" readonly value={token} aria-label="Enrollment token" autocomplete="off" spellcheck="false" />
       <button type="button" onclick={() => (token = "")}>Done</button>
     </div>
+    <div class="enroll-followup">
+      <p class="muted">
+        Save this token to <code>/run/credarr/enroll.token</code> on the agent
+        host, download the CA, then run:
+      </p>
+      <pre><code>{enrollCommand}</code></pre>
+    </div>
   {/if}
 
   {#if loading && agents.length === 0 && targets.length === 0 && jobs.length === 0}
@@ -351,7 +422,15 @@
           <h4>Targets</h4>
           <p class="muted">Where values are delivered.</p>
         </div>
-        <button class="primary" type="button" onclick={() => openTarget()}>New target</button>
+        <button
+          class="primary"
+          type="button"
+          onclick={() => openTarget()}
+          disabled={!treeConfigured}
+          title={treeConfigured ? undefined : "Set CREDARR_VAULT_TREE and CREDARR_VAULT_TREE_KEY first"}
+        >
+          New target
+        </button>
       </div>
 
       {#if targetOpen}
@@ -473,7 +552,21 @@
         <button class="primary" type="button" onclick={openEnroll}>Enroll agent</button>
       </div>
       {#if agents.length === 0}
-        <p class="muted">No agents.</p>
+        <div class="agent-empty">
+          <p class="muted">
+            No agents are enrolled. Create a token, then run the
+            credarr-agent image on the Docker host. Auditing and rotation keep
+            working without one; only Docker delivery needs an agent.
+          </p>
+          <details class="agent-setup">
+            <summary>How to run the agent</summary>
+            <p class="muted">
+              The agent pulls jobs over this listener. It needs the CA, the
+              shared tree key, and access to the Docker socket.
+            </p>
+            <pre><code>{agentExample}</code></pre>
+          </details>
+        </div>
       {:else}
         <table class="table agents-table">
           <caption class="sr-only">Delivery agents</caption>
@@ -553,6 +646,65 @@
 </section>
 
 <style>
+  .listener {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+    padding: 0.55rem 0.7rem;
+    margin: 0 0 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel-2);
+    font-size: 0.8rem;
+  }
+  .listener > div {
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+    min-width: 0;
+  }
+  .listener.off {
+    border-color: var(--warn-line);
+    background: var(--warn-soft);
+  }
+  .listener a {
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .enroll-followup {
+    margin: 0 0 1rem;
+    min-width: 0;
+  }
+  .enroll-followup p {
+    margin: 0 0 0.45rem;
+  }
+  .enroll-followup pre,
+  .agent-setup pre {
+    margin: 0;
+    padding: 0.65rem;
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
+    font-size: 0.72rem;
+    line-height: 1.45;
+  }
+  .agent-empty {
+    max-width: 62ch;
+  }
+  .agent-setup {
+    margin-top: 0.55rem;
+  }
+  .agent-setup summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.82rem;
+  }
+  .agent-setup p {
+    margin: 0.45rem 0;
+  }
   .enroll,
   .target-form {
     padding: 0.85rem;

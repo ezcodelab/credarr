@@ -477,14 +477,19 @@ class AgentControlPlane:
         return context
 
     def info(self) -> dict[str, Any]:
+        url = None
+        if self._server is not None and self.hostname and self.port:
+            url = f"https://{self.hostname}:{self.port}"
         return {
             "enabled": self._server is not None,
             "host": self.host,
             "port": self.port,
+            "hostname": self.hostname,
+            "url": url,
             "tls": self.tls_version,
             "group": self.pq_group,
             "failure": self.failure,
-            "ca": str(self.config_dir / CA_CERT),
+            "ca": (self.config_dir / CA_CERT).is_file(),
         }
 
     def start(self) -> None:

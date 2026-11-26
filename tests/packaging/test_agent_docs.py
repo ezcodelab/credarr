@@ -176,6 +176,26 @@ def test_the_default_compose_has_no_docker_socket() -> None:
     assert "docker.sock" not in (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
 
+def test_the_agent_has_its_own_image_and_the_docs_say_so() -> None:
+    """One version, two images: a command override is not a security boundary."""
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "FROM runtime AS agent" in dockerfile
+    assert "FROM runtime AS server" in dockerfile
+    assert 'ENTRYPOINT ["credarr-agent"]' in dockerfile
+    assert (ROOT / "Makefile").read_text(encoding="utf-8").count(
+        "docker build --target"
+    ) == 2
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    sync = (ROOT / "docs/SYNC.md").read_text(encoding="utf-8")
+    for text in (readme, sync):
+        assert "credarr-agent" in text
+        assert "CREDARR_AGENT_PORT" in text
+    assert "ghcr.io/ezcodelab/credarr-agent" in readme
+    assert "Audit and rotation work without an agent" in readme
+    assert "no agent" in sync.lower()
+
+
 def test_the_ui_audit_is_a_real_check_gate() -> None:
     """A gate that is not tracked cannot run on a fresh clone."""
     assert "ui-audit" in make_targets(), "make ui-audit is not defined"

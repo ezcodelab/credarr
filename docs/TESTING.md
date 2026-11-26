@@ -7,11 +7,11 @@ The numbers here are from the 2026-11-25 tree; re-measure when they move.
 
 | Layer | Tool | Size | Runtime |
 | --- | --- | --- | --- |
-| Engine + server unit tests | pytest, fake transport, some real HTTP fixtures | 1100 passed, 12 skipped (Python 3.12) | 30 s locally, 79 s on a CI runner, `-n auto` |
+| Engine + server unit tests | pytest, fake transport, some real HTTP fixtures | 1124 passed, 2 skipped (Python 3.12) | 30 s locally, 79 s on a CI runner, `-n auto` |
 | Property tests | hypothesis (inside the above) | 7 | ~1 s |
-| Console unit tests | `node --test` | 118 | ~3 s |
-| Console end-to-end | Playwright + Chromium + `@axe-core/playwright` against a real server | 232 checks | ~70 s |
-| Container black box | pytest `-m integration`, testcontainers | 4 | ~9 s + image start |
+| Console unit tests | `node --test` | 120 | ~3 s |
+| Console end-to-end | Playwright + Chromium + `@axe-core/playwright` against a real server | 237 checks | ~70 s |
+| Container black box | pytest `-m integration`, testcontainers | 5 | ~12 s + image start |
 
 `make check` runs the first, second (same invocation) and third layers. The UI
 smoke is `make ui-smoke`; the container suite is excluded from the default run
@@ -22,7 +22,7 @@ and has its own command below.
 | Rule | State | Evidence |
 | --- | --- | --- |
 | **Avoid mocks** | Mostly fakes already. | `tests/conftest.py` serves real `ThreadingHTTPServer` handlers; `FakeTransport` answers HTTP-shaped calls and exercises the real call path up to the transport seam. `monkeypatch` is used for terminals (`builtins.input`), env vars and a few module seams. |
-| **Use Testcontainers for integration** | Was missing. | Added: `tests/integration/test_container.py` boots the built image, asserts health/console/favicon and first-run setup over HTTP, that a written service survives a restart, and that `/config` and `app.db` are owned by the configured PUID (1234, not the host's). |
+| **Use Testcontainers for integration** | Was missing. | Added: `tests/integration/test_container.py` boots the built console image, asserts health/console/favicon and first-run setup over HTTP, that a written service survives a restart, and that `/config` and `app.db` are owned by the configured PUID (1234, not the host's). A separate case proves the agent image has the Docker CLI and compose plugin and the console image has neither. |
 | **Don't couple to code structure** | Mixed. | White-box imports exist: `_configured_timezone` (`tests/server/test_app.py`), `_image_system`/`_port` (`tests/server/test_discovery.py`), `facade.read_manifest` patched (`tests/test_exit_contract.py`). New tests go through public entry points. |
 | **Reproduce a bug in a failing test first** | Practised, not enforced. | Process lessons record it; nothing mechanically checks that a fix arrives with a regression test. |
 | **Keep logic out of tests** | Mostly true. | A few tests build plans/statuses inline instead of using a fixture, which duplicates engine logic (`tests/test_exit_contract.py` builds a bare `RotationPlan`). |

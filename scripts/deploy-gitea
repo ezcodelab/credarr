@@ -26,7 +26,9 @@ set -eu
 root=$(git rev-parse --show-toplevel)
 apps=${APPS_REPO:-$(dirname "$root")/homelab-applications}
 registry=git.ezcloud.casa/admin/credarr
+agent_registry=git.ezcloud.casa/admin/credarr-agent
 compose=$apps/compose/credarr/compose.yaml
+agent_compose=$apps/compose/credarr-agent/compose.yaml
 gitea_url=${GITEA_URL:-https://git.ezcloud.casa}
 gitea_url=${gitea_url%/}
 apps_slug=admin/homelab-applications
@@ -66,6 +68,7 @@ if [ -z "$tag" ]; then
     fi
 fi
 image=$registry:$tag
+agent_image=$agent_registry:$tag
 
 if [ "$deploy" = 1 ]; then
     [ -f "$compose" ] || { echo "error: no $compose (set APPS_REPO)" >&2; exit 1; }
@@ -86,28 +89,29 @@ fi
 
 echo "source: $(git rev-parse HEAD)"
 echo "branch: $branch"
-echo "image:  $image$( [ "$push_latest" = 1 ] && echo ' (and :latest)')"
-[ "$deploy" = 1 ] && echo "apps:   $compose"
+echo "image:  $image"
+echo "agent:  $agent_image$( [ "$push_latest" = 1 ] && echo ' (both also :latest)')"
+[ "$deploy" = 1 ] && echo "apps:   $compose and $agent_compose"
 
 if [ "$dry_run" = 1 ]; then
     echo "  would run: make image"
     if [ "$push_latest" = 1 ]; then
-        echo "  would run: docker push $image and $registry:latest"
+        echo "  would run: docker push $image, $agent_image and their :latest tags"
     else
-        echo "  would run: docker push $image (no :latest from a branch)"
+        echo "  would run: docker push $image and $agent_image (no :latest from a branch)"
     fi
     if [ "$deploy" = 1 ]; then
         echo "  would fetch $apps origin main and check whether it already pins $tag"
-        echo "  if origin/main does not already pin it, would set $compose to $image"
-        echo "    and push it as an AGit pull request (refs/for/main, topic"
-        echo "    credarr-deploy-$tag); main is protected"
+        echo "  if origin/main does not already pin it, would set the image lines in"
+        echo "    $compose and $agent_compose, then push one AGit pull request"
+        echo "    (refs/for/main, topic credarr-deploy-$tag); main is protected"
         if [ -n "${GITEA_TOKEN:-}" ]; then
             echo "  would merge that PR through $gitea_url and wait $merge_timeout s for checks"
         else
             echo "  without GITEA_TOKEN it would open the PR and deploy nothing;"
             echo "    a second run after the merge finishes the deploy"
         fi
-        echo "  would run: make -C $apps deploy SERVICES=credarr"
+        echo "  would run: make -C $apps deploy SERVICES=\"credarr credarr-agent\""
     fi
     exit 0
 fi
@@ -116,14 +120,18 @@ fi
 make image
 docker tag credarr:dev "$image"
 docker push "$image"
+docker tag credarr-agent:dev "$agent_image"
+docker push "$agent_image"
 if [ "$push_latest" = 1 ]; then
     docker tag credarr:dev "$registry:latest"
     docker push "$registry:latest"
+    docker tag credarr-agent:dev "$agent_registry:latest"
+    docker push "$agent_registry:latest"
 fi
 
 if [ "$deploy" = 0 ]; then
-    echo "pushed $image"
-    echo "next: scripts/deploy-gitea --deploy, after this image is the one you want live"
+    echo "pushed $image and $agent_image"
+    echo "next: scripts/deploy-gitea --deploy, after these images are the ones you want live"
     exit 0
 fi
 
@@ -145,8 +153,14 @@ git -C "$apps" merge --ff-only --quiet origin/main
 
 pinned=$(git -C "$apps" show origin/main:compose/credarr/compose.yaml \
     | sed -n 's/^[[:space:]]*image:[[:space:]]*//p' | head -1)
+agent_pinned=""
+if git -C "$apps" cat-file -e origin/main:compose/credarr-agent/compose.yaml 2>/dev/null; then
+    agent_pinned=$(git -C "$apps" show origin/main:compose/credarr-agent/compose.yaml \
+        | sed -n 's/^[[:space:]]*image:[[:space:]]*//p' | head -1)
+fi
 
-if [ "$pinned" = "$image" ]; then
+if [ "$pinned" = "$image" ] &&
+    { [ -z "$agent_pinned" ] || [ "$agent_pinned" = "$agent_image" ]; }; then
     echo "origin/main already pins $tag"
 else
     # Commit in a throwaway worktree. The operator's checkout keeps its branch
@@ -158,21 +172,34 @@ else
     trap 'git -C "$apps" worktree remove "$pin" >/dev/null 2>&1 || rmdir "$pin" 2>/dev/null || echo "note: left the pin worktree at $pin" >&2' EXIT
     git -C "$apps" worktree add --quiet --detach "$pin" origin/main
 
-    python3 - "$pin/compose/credarr/compose.yaml" "$image" <<'PY'
+    python3 - \
+        "$pin/compose/credarr/compose.yaml" "$image" \
+        "$pin/compose/credarr-agent/compose.yaml" "$agent_image" <<'PY'
 import re
 import sys
 from pathlib import Path
 
-path, image = Path(sys.argv[1]), sys.argv[2]
-text = path.read_text()
-updated, count = re.subn(r"(?m)^(\s*image:\s*)\S+", r"\g<1>" + image, text, count=1)
-if count != 1:
-    raise SystemExit(f"no image line found in {path}")
-path.write_text(updated)
+pairs = list(zip(sys.argv[1::2], sys.argv[2::2]))
+changed = 0
+for raw, image in pairs:
+    path = Path(raw)
+    if not path.is_file():
+        continue
+    text = path.read_text()
+    updated, count = re.subn(r"(?m)^(\s*image:\s*)\S+", r"\g<1>" + image, text, count=1)
+    if count != 1:
+        raise SystemExit(f"no image line found in {path}")
+    path.write_text(updated)
+    changed += 1
+if not changed:
+    raise SystemExit("no compose image lines found")
 PY
 
     git -C "$pin" add compose/credarr/compose.yaml
-    git -C "$pin" commit -m "credarr: deploy $tag" -- compose/credarr/compose.yaml >/dev/null
+    if [ -e "$pin/compose/credarr-agent/compose.yaml" ]; then
+        git -C "$pin" add compose/credarr-agent/compose.yaml
+    fi
+    git -C "$pin" commit -m "credarr: deploy $tag" >/dev/null
     sha=$(git -C "$pin" rev-parse HEAD)
     topic="credarr-deploy-$tag"
 
@@ -284,4 +311,4 @@ PY
     git -C "$apps" merge --ff-only --quiet origin/main
 fi
 
-make -C "$apps" deploy SERVICES=credarr
+make -C "$apps" deploy SERVICES="credarr credarr-agent"

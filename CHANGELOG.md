@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.4.0 — 2026-11-25
+
+- Split the console and the deploy agent into two images with one version:
+  `ghcr.io/ezcodelab/credarr` (no Docker CLI) and
+  `ghcr.io/ezcodelab/credarr-agent` (Docker CLI, compose plugin, no console).
+  `make image`, `make release`, and both deploy scripts build and publish both.
+- `GET /api/v1/agents` reports the listener bind address, port, configured
+  hostname, exact agent URL, TLS group, failure and CA availability. A listener
+  that fails to bind keeps its failure sentence instead of reading as disabled.
+- `GET /api/v1/agents/ca` downloads the public agent CA for enrollment.
+- Settings -> Agents & sync shows the listener state and URL, explains a
+  disabled listener and the startup variable, offers CA download, and gives the
+  no-agent and no-tree states a setup path. New target is disabled with a
+  reason when `CREDARR_VAULT_TREE` is unset.
+- README and docs cover the optional agent, the separate image, the port and
+  address contract, and the no-agent behavior.
+
 ## 1.3.9 — 2026-11-24
 
 - Remove the listener detail line from Agents & sync.

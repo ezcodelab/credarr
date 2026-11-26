@@ -67,6 +67,21 @@ def _agent(tmp_path: Path, plane: AgentControlPlane, sync: SyncStore, name: str 
     return config, AgentClient(config)
 
 
+def test_a_failed_listener_keeps_its_failure_sentence(tmp_path: Path) -> None:
+    plane = AgentControlPlane(
+        SyncStore(tmp_path / "app.db", tree_configured=True),
+        tmp_path,
+        host="127.0.0.1",
+        port=0,
+        hostname="credarr.test",
+    )
+    plane.failure = "OSError: address already in use"
+    info = plane.info()
+    assert info["enabled"] is False
+    assert info["failure"] == "OSError: address already in use"
+    assert info["url"] is None
+
+
 def test_a_client_certificate_is_required_and_tls_1_3_is_enforced(
     tmp_path: Path,
 ) -> None:

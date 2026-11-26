@@ -1,4 +1,6 @@
-# The console is one process on one port; its state is one directory.
+# The console is one process on one port; its state is one directory. The
+# deploy agent is a separate image (ghcr.io/ezcodelab/credarr-agent) on each
+# Docker host, not another service in this stack.
 # Do not add deploy.replicas or a second service sharing ./config: the server
 # holds /config/app.lock and refuses a second process. A healthcheck is not a
 # substitute for that lock.
