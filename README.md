@@ -67,6 +67,8 @@ covers both.
 | `CREDARR_AGENT_PORT` | `8443` | The mTLS listener port for agents; `0` disables it. Publish and point the agent at the same port. |
 | `CREDARR_AGENT_BIND` | `CREDARR_HOST` | Address for the agent listener. |
 | `CREDARR_AGENT_HOSTNAME` | unset | DNS name or IP the agent puts in `--server`; added to the listener certificate SANs. Set it for every remote agent. |
+| `CREDARR_AGENT_CA_CERT` | unset | Bring-your-own CA certificate. Pair it with `CREDARR_AGENT_CA_KEY`. Without both, Credarr generates a CA on first start. |
+| `CREDARR_AGENT_CA_KEY` | unset | Key for the brought CA. Credarr signs the listener and client certificates with it. |
 | `CREDARR_VAULT_TREE` | unset | The shared delivery tree the agent reads. Required before a sync target can be created. |
 | `CREDARR_VAULT_TREE_KEY` | `<config>/vault-tree.key` | Key file for the shared tree. Keep it outside the tree. |
 | `CREDARR_SECURE_COOKIES` | unset | `1` marks the session cookie `Secure`. Set it behind HTTPS only. |
@@ -108,14 +110,17 @@ services:
 
 Restart the console. In **Settings -> Agents & sync**, the listener line shows the exact URL agents use. Download `agent-ca.crt`, then **Enroll agent** and copy the one-time token.
 
-On the Docker host, keep the CA, the tree key and the agent state in one directory, mount the tree read-only, and mount only the stacks the agent may write. Put the Docker API behind the LinuxServer socket proxy:
+The console's `./config` volume holds the generated CA and tree key. Mount them
+as Docker secrets; only the agent state lives on the agent side. Mount the tree
+read-only and mount only the stacks the agent may write. Put the Docker API
+behind the LinuxServer socket proxy:
 
 ```yaml
 secrets:
   CREDARR_AGENT_CA:
-    file: ./agent/agent-ca.crt
+    file: ./config/agent-ca.crt
   CREDARR_VAULT_TREE_KEY:
-    file: ./agent/vault-tree.key
+    file: ./config/vault-tree.key
 
 services:
   credarr-agent:
@@ -222,6 +227,14 @@ networks:
 The proxy allows the endpoints `docker compose up --force-recreate` uses: image and container inspection, network and volume listing, network creation, container create/start/stop/delete and rename. `ALLOW_START` and `ALLOW_STOP` are the only mutating verbs left enabled; exec, build, secrets, swarm and system access are refused. It still permits container creation and deletion, so a compromised agent can still control the containers it can reach. Rootless Docker remains the default, and a rootful daemon is root-equivalent even behind the proxy.
 
 Mounting `/var/run/docker.sock` directly still works and is the fallback when the proxy is unavailable. That gives the agent the full Docker API, so use it only when you accept that.
+
+On first start the console creates a dedicated CA and its own listener
+certificate under `./config`; no openssl step is needed. The agent reads the
+public CA and the shared tree key from that volume through the two Docker
+secrets. The CA private key stays in the console volume. To bring your own CA,
+mount the CA certificate and key as Docker secrets and set
+`CREDARR_AGENT_CA_CERT` and `CREDARR_AGENT_CA_KEY`; Credarr still issues the
+listener and client certificates from it.
 
 The image defaults to `run`; the only required runtime settings are
 `CREDARR_AGENT_SERVER` and `CREDARR_AGENT_ALLOWED_ROOT`. The CA and tree key are

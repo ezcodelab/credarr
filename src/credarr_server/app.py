@@ -97,6 +97,11 @@ class ServerSettings:
     # the listener certificate's SAN list; without it a remote agent cannot
     # verify the self-signed listener.
     agent_hostname: str | None = None
+    # Optional CA material. Without these, Credarr creates agent-ca.crt/key in
+    # the config directory on first start and signs the listener certificate.
+    # With them, Credarr uses that CA and still signs the listener certificate.
+    agent_ca_cert: Path | None = None
+    agent_ca_key: Path | None = None
     # The zone the console renders timestamps in. It comes from TZ, the same
     # variable the container uses for its clock; an invalid value falls back to
     # UTC rather than letting Intl throw in the browser.
@@ -363,6 +368,10 @@ def create_app(settings: ServerSettings) -> FastAPI:
             settings.vault_tree,
             settings.vault_tree_key or settings.config_dir / "vault-tree.key",
         )
+        try:
+            tree.ensure_key()
+        except VaultError as exc:
+            raise ConfigError(str(exc), hint=exc.hint) from None
     store = TopologyStore(settings.database, vault_tree=tree)
     _seed_services(store, config, store.load_manifest())
     auth = AdminAuth(settings.database)
@@ -554,6 +563,25 @@ def _parser() -> argparse.ArgumentParser:
         "certificate SANs (env CREDARR_AGENT_HOSTNAME)",
     )
     parser.add_argument(
+        "--agent-ca-cert", type=Path,
+        default=(
+            Path(os.environ["CREDARR_AGENT_CA_CERT"])
+            if os.environ.get("CREDARR_AGENT_CA_CERT")
+            else None
+        ),
+        help="bring-your-own CA certificate (env CREDARR_AGENT_CA_CERT)",
+    )
+    parser.add_argument(
+        "--agent-ca-key", type=Path,
+        default=(
+            Path(os.environ["CREDARR_AGENT_CA_KEY"])
+            if os.environ.get("CREDARR_AGENT_CA_KEY")
+            else None
+        ),
+        help="bring-your-own CA key; Credarr signs the listener and client certs "
+        "(env CREDARR_AGENT_CA_KEY)",
+    )
+    parser.add_argument(
         "--secure-cookies", action="store_true",
         help="set the Secure cookie flag: use when serving over HTTPS",
     )
@@ -682,6 +710,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         agent_port=args.agent_port,
         agent_bind=args.agent_bind,
         agent_hostname=args.agent_hostname,
+        agent_ca_cert=args.agent_ca_cert,
+        agent_ca_key=args.agent_ca_key,
         timezone=_configured_timezone(),
     )
     try:
@@ -702,6 +732,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     host=settings.agent_bind or settings.host,
                     port=settings.agent_port,
                     hostname=settings.agent_hostname,
+                    ca_cert=settings.agent_ca_cert,
+                    ca_key=settings.agent_ca_key,
                 )
                 try:
                     plane.start()

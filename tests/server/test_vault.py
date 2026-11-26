@@ -242,6 +242,14 @@ def test_retention_purges_abandoned_versions_but_not_current(tmp_path: Path) -> 
     assert sorted(row["stage"] for row in remaining) == [CURRENT, PREVIOUS]
 
 
+def test_the_shared_tree_key_exists_before_the_first_value(tmp_path: Path) -> None:
+    tree = VaultTree(tmp_path / "tree", tmp_path / "tree.key")
+    assert not tree.key_path.exists()
+    tree.ensure_key()
+    assert tree.key_path.is_file()
+    assert len(tree.key_path.read_bytes()) == 32
+
+
 def test_the_shared_tree_is_written_before_the_transaction_and_marked_after(
     tmp_path: Path,
 ) -> None:

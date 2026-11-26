@@ -63,7 +63,10 @@ agent is the client: its `--server` URL must use the same host and port, and
 the BFF never discovers an agent.
 
 The shared vault tree is mandatory for a target: set `CREDARR_VAULT_TREE` and
-`CREDARR_VAULT_TREE_KEY` before creating one. Audit and rotation still work
+`CREDARR_VAULT_TREE_KEY` before creating one. The BFF creates the tree key at
+startup, so the agent's Docker secret source exists before the first value. It
+also creates a dedicated CA and listener certificate on first start; the public
+CA and tree key live in the BFF `/config` volume. Audit and rotation still work
 without a tree or an agent; the console disables target creation and says what
 is missing. Delivery is advisory: a failed or pending job does not change a
 rotation exit code. `retry_wait` is not success; a partial deploy re-runs the
