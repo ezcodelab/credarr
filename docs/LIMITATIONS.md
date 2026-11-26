@@ -16,12 +16,15 @@ v1 limit, not a roadmap promise.
   equivalence. Losing the KEK is unrecoverable; restore it from a format-2
   backup.
 - **Agent and tree compromise.** Docker lives only in the separate
-  `credarr-agent` image. Rootless is the default; rootful is root-equivalent
-  and needs an explicit acknowledgment. The shared tree key is a file on the
-  agent host: a tree copy plus its key is a value copy. The BFF's own console
-  port is still the operator's TLS-proxy surface; only the agent control plane
-  terminates TLS itself. Default compose is HTTP. `--secure-cookies` is not
-  TLS.
+  `credarr-agent` image. Put the Docker API behind the LinuxServer socket proxy;
+  it still permits container create/start/stop/delete, so a compromised agent
+  can control the containers it can reach. Mounting the raw socket is the
+  fallback and gives the full Docker API. Rootless is the default; rootful is
+  root-equivalent and needs an explicit acknowledgment. The shared tree key is
+  a file on the agent host: a tree copy plus its key is a value copy. The BFF's
+  own console port is still the operator's TLS-proxy surface; only the agent
+  control plane terminates TLS itself. Default compose is HTTP.
+  `--secure-cookies` is not TLS.
 - **The agent port is a startup setting.** `CREDARR_AGENT_PORT` (default 8443)
   must match the published port and the agent's `--server` URL. The console
   shows the value but cannot rebind the listener without a restart. A listener

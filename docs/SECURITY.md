@@ -33,6 +33,14 @@ therefore re-encrypts with a fresh DEK when a stage changes.
   default. Rootful needs `--rootful --ack-rootful`, is stored on the agent row,
   and produces a persistent warning. A policy violation disables the agent and
   emits `agent_policy_violation`.
+- **The Docker API is behind a restricted proxy.** The recommended deployment
+  sets `DOCKER_HOST` to the LinuxServer socket proxy. The proxy allows container
+  create/start/stop/delete/rename, image inspection, network and volume listing
+  and network creation, because `docker compose up --force-recreate` needs them.
+  It refuses exec, build, secrets, swarm, system, logs and archive access. This
+  reduces the API surface but does not make an agent compromise harmless: it can
+  still replace or delete the containers it can reach. Mounting the raw socket
+  is the fallback and gives the agent the full Docker API.
 - **Shared tree compromise exposes the tree values.** The tree key is a file
   the agent host must hold. A clone of the tree without the key cannot read a
   value; a clone with the key is a copy of the delivery material. The tree is

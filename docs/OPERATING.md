@@ -55,10 +55,12 @@ A target is a stack path, project name and service set on one agent. The BFF
 never runs Docker. The agent is the separate `credarr-agent` image on the
 Docker host; it pulls over a TLS 1.3 mTLS listener on `CREDARR_AGENT_PORT`
 (default 8443) and runs only the allowlisted `compose` or `env` workflow under
-its `--allowed-root`. The console shows the listener address and the exact
-agent URL in Settings -> Agents & sync. The agent is the client: its
-`--server` URL must use the same host and port, and the BFF never discovers an
-agent.
+its `--allowed-root`. It reaches the Docker API through a LinuxServer socket
+proxy (`DOCKER_HOST=tcp://socket-proxy:2375`) restricted to the endpoints
+compose uses. The raw socket is a fallback with the full API. The console shows
+the listener address and the exact agent URL in Settings -> Agents & sync. The
+agent is the client: its `--server` URL must use the same host and port, and
+the BFF never discovers an agent.
 
 The shared vault tree is mandatory for a target: set `CREDARR_VAULT_TREE` and
 `CREDARR_VAULT_TREE_KEY` before creating one. Audit and rotation still work

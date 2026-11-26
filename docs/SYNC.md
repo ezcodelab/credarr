@@ -231,7 +231,11 @@ the listener failure named.
      credarr-agent:
        image: ghcr.io/ezcodelab/credarr-agent:latest
        restart: unless-stopped
-       group_add: ["999"]
+       security_opt:
+         - no-new-privileges:true
+       read_only: true
+       tmpfs:
+         - /tmp
        command:
          - --server
          - https://credarr.example:8443
@@ -246,11 +250,77 @@ the listener failure named.
          - --state-dir
          - /agent/state
          - run
+       environment:
+         DOCKER_HOST: tcp://socket-proxy:2375
+       depends_on:
+         socket-proxy:
+           condition: service_healthy
+       networks:
+         - internal_web
+         - docker_api
        volumes:
          - ./agent:/agent
          - ./vault:/vault:ro
-         - /var/run/docker.sock:/var/run/docker.sock
          - /srv/stacks:/stacks
+
+     socket-proxy:
+       image: lscr.io/linuxserver/socket-proxy:latest
+       restart: unless-stopped
+       security_opt:
+         - no-new-privileges:true
+       read_only: true
+       tmpfs:
+         - /run
+       healthcheck:
+         test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:2375/_ping || exit 1"]
+         interval: 10s
+         timeout: 3s
+         retries: 3
+         start_period: 10s
+       networks:
+         - docker_api
+       volumes:
+         - /var/run/docker.sock:/var/run/docker.sock:ro
+       environment:
+         - CONTAINERS=1
+         - IMAGES=1
+         - NETWORKS=1
+         - VOLUMES=1
+         - INFO=1
+         - VERSION=1
+         - PING=1
+         - POST=1
+         - ALLOW_START=1
+         - ALLOW_STOP=1
+         - ALLOW_ARCHIVE=0
+         - ALLOW_CHANGES=0
+         - ALLOW_EXPORT=0
+         - ALLOW_LOGS=0
+         - ALLOW_PAUSE=0
+         - ALLOW_RESTARTS=0
+         - ALLOW_TOP=0
+         - ALLOW_UNPAUSE=0
+         - AUTH=0
+         - BUILD=0
+         - COMMIT=0
+         - CONFIGS=0
+         - DISTRIBUTION=0
+         - EVENTS=0
+         - EXEC=0
+         - NODES=0
+         - PLUGINS=0
+         - SECRETS=0
+         - SERVICES=0
+         - SESSION=0
+         - SWARM=0
+         - SYSTEM=0
+         - TASKS=0
+
+   networks:
+     internal_web:
+       external: true
+     docker_api:
+       internal: true
    ```
 
 An older compose file that ran the console image with
@@ -264,11 +334,26 @@ certificate stop authenticating. Revocation is immediate.
 ## Privilege
 
 The agent runs `docker compose` on its own host. It does not receive the BFF's
-Docker socket; the BFF has none. Rootless Docker is the default. A rootful
-daemon requires `--rootful --ack-rootful`, which is stored on the agent row and
-reported in the console. A job outside the bound workflow or path fails with
+Docker socket; the BFF has none. The recommended deployment puts the Docker API
+behind the LinuxServer socket proxy and sets `DOCKER_HOST` to it. The proxy
+allows the operations `docker compose up --force-recreate` uses: inspect an
+image, list containers, networks and volumes, create a network when the stack
+needs one, create, start, stop, delete and rename containers. It refuses exec,
+build, secrets, swarm, system, logs and archive access. `ALLOW_START` and
+`ALLOW_STOP` are the only mutating verbs enabled; `POST=1` is required for
+create and delete.
+
+The proxy still permits container creation and deletion, so a compromised agent
+can control the containers it can reach. Rootless Docker is the default. A
+rootful daemon requires `--rootful --ack-rootful`, which is stored on the agent
+row and reported in the console, and remains root-equivalent even behind the
+proxy. A job outside the bound workflow or path fails with
 `agent_policy_violation` and no Docker action. The agent does not accept
 arbitrary commands, shell, scripts, or environment from the BFF.
+
+Mounting `/var/run/docker.sock` directly is the fallback when the proxy is not
+available. It gives the agent the full Docker API and should be a deliberate
+exception.
 
 ## Clock and expiry
 

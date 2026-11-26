@@ -26,7 +26,7 @@ Credarr keeps a holder map, audits every readable copy against the canonical val
 - A Docker host (or any Linux host for the CLI) with network access to the services you want to audit.
 - A URL and an API key per service. Credarr calls service APIs; it never reads a service's config file or data volume.
 - Rotating a Servarr key asks the service to restart itself, so that service needs a supervisor that starts it again (for example the LinuxServer s6 images). A bare process without one is not supported.
-- Optional Docker delivery: the `credarr-agent` image on each Docker host, with the shared vault tree and the Docker socket. Audit and rotation work without it.
+- Optional Docker delivery: the `credarr-agent` image on each Docker host, with the shared vault tree and a restricted Docker socket proxy. Audit and rotation work without it.
 - CLI only: Python 3.11+.
 - Building the console from source: Node 24+.
 
@@ -108,14 +108,18 @@ services:
 
 Restart the console. In **Settings -> Agents & sync**, the listener line shows the exact URL agents use. Download `agent-ca.crt`, then **Enroll agent** and copy the one-time token.
 
-On the Docker host, keep the CA, the tree key and the agent state in one directory, mount the tree read-only, and mount only the stacks the agent may write:
+On the Docker host, keep the CA, the tree key and the agent state in one directory, mount the tree read-only, and mount only the stacks the agent may write. Put the Docker API behind the LinuxServer socket proxy:
 
 ```yaml
 services:
   credarr-agent:
     image: ghcr.io/ezcodelab/credarr-agent:latest
     restart: unless-stopped
-    group_add: ["999"]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
     command:
       - --server
       - https://credarr.example.com:8443
@@ -134,14 +138,99 @@ services:
       - media-host
       - --token-file
       - /agent/enroll.token
+    environment:
+      DOCKER_HOST: tcp://socket-proxy:2375
+    depends_on:
+      socket-proxy:
+        condition: service_healthy
+    networks:
+      - internal_web
+      - docker_api
     volumes:
       - ./agent:/agent
       - ./vault:/vault:ro
-      - /var/run/docker.sock:/var/run/docker.sock
       - /srv/stacks:/stacks
+
+  socket-proxy:
+    image: lscr.io/linuxserver/socket-proxy:latest
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /run
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:2375/_ping || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - docker_api
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - CONTAINERS=1
+      - IMAGES=1
+      - NETWORKS=1
+      - VOLUMES=1
+      - INFO=1
+      - VERSION=1
+      - PING=1
+      - POST=1
+      - ALLOW_START=1
+      - ALLOW_STOP=1
+      - ALLOW_ARCHIVE=0
+      - ALLOW_CHANGES=0
+      - ALLOW_EXPORT=0
+      - ALLOW_LOGS=0
+      - ALLOW_PAUSE=0
+      - ALLOW_RESTARTS=0
+      - ALLOW_TOP=0
+      - ALLOW_UNPAUSE=0
+      - AUTH=0
+      - BUILD=0
+      - COMMIT=0
+      - CONFIGS=0
+      - DISTRIBUTION=0
+      - EVENTS=0
+      - EXEC=0
+      - NODES=0
+      - PLUGINS=0
+      - SECRETS=0
+      - SERVICES=0
+      - SESSION=0
+      - SWARM=0
+      - SYSTEM=0
+      - TASKS=0
+      - LIBPOD_CONTAINERS=0
+      - LIBPOD_EVENTS=0
+      - LIBPOD_EXEC=0
+      - LIBPOD_GENERATE=0
+      - LIBPOD_IMAGES=0
+      - LIBPOD_INFO=0
+      - LIBPOD_MANIFESTS=0
+      - LIBPOD_NETWORKS=0
+      - LIBPOD_PING=0
+      - LIBPOD_PLAY=0
+      - LIBPOD_PODS=0
+      - LIBPOD_SECRETS=0
+      - LIBPOD_SYSTEM=0
+      - LIBPOD_VERSION=0
+      - LIBPOD_VOLUMES=0
+
+networks:
+  internal_web:
+    external: true
+  docker_api:
+    internal: true
 ```
 
-Write the token to `./agent/enroll.token` before starting the container. After enrollment, replace `enroll ...` with `run`. The image entrypoint is `credarr-agent`, so an older compose command that starts with `credarr-agent` must drop that first item. The agent runs as its own non-root user; add the host Docker group and set `user:` to an id that can read `/agent`, `/vault` and the stacks. Rootless Docker is the default. A rootful daemon needs `--rootful --ack-rootful` and the stored acknowledgment.
+The proxy allows the endpoints `docker compose up --force-recreate` uses: image and container inspection, network and volume listing, network creation, container create/start/stop/delete and rename. `ALLOW_START` and `ALLOW_STOP` are the only mutating verbs left enabled; exec, build, secrets, swarm and system access are refused. It still permits container creation and deletion, so a compromised agent can still control the containers it can reach. Rootless Docker remains the default, and a rootful daemon is root-equivalent even behind the proxy.
+
+Mounting `/var/run/docker.sock` directly still works and is the fallback when the proxy is unavailable. That gives the agent the full Docker API, so use it only when you accept that.
+
+Write the token to `./agent/enroll.token` before starting the container. After enrollment, replace `enroll ...` with `run`. The image entrypoint is `credarr-agent`, so an older compose command that starts with `credarr-agent` must drop that first item. The agent runs as its own non-root user; set `user:` to an id that can read `/agent`, `/vault` and the stacks. Rootless Docker is the default. A rootful daemon needs `--rootful --ack-rootful` and the stored acknowledgment.
 
 If the listener is off, the console says so and no agent can connect. Existing audits and rotations keep working; a sync target cannot be created until `CREDARR_VAULT_TREE` is set.
 
