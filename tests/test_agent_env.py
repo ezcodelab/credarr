@@ -21,9 +21,31 @@ def _config(tmp_path: Path) -> AgentConfig:
         ca_path=tmp_path / "ca.crt",
         cert_path=state / "agent.crt",
         key_path=state / "agent.key",
-        rootful=False,
-        ack_rootful=False,
     )
+
+
+def test_preflight_observes_rootful_without_a_user_acknowledgment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Completed:
+        returncode = 0
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        return Completed(seen["stdout"])
+
+    monkeypatch.setattr("credarr_agent.client.subprocess.run", fake_run)
+    workflow = Workflow(_config(tmp_path))
+    seen["stdout"] = '["name=seccomp,profile=builtin"]'
+    assert workflow.preflight() is True
+    seen["stdout"] = '["name=rootless"]'
+    assert workflow.preflight() is False
+    assert seen["argv"][:3] == ["docker", "info", "--format"]
 
 
 def test_env_updates_only_declared_keys_and_recreates_services(

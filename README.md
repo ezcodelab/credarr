@@ -111,6 +111,12 @@ Restart the console. In **Settings -> Agents & sync**, the listener line shows t
 On the Docker host, keep the CA, the tree key and the agent state in one directory, mount the tree read-only, and mount only the stacks the agent may write. Put the Docker API behind the LinuxServer socket proxy:
 
 ```yaml
+secrets:
+  CREDARR_AGENT_CA:
+    file: ./agent/agent-ca.crt
+  CREDARR_VAULT_TREE_KEY:
+    file: ./agent/vault-tree.key
+
 services:
   credarr-agent:
     image: ghcr.io/ezcodelab/credarr-agent:latest
@@ -122,14 +128,11 @@ services:
       - /tmp
     environment:
       CREDARR_AGENT_SERVER: https://credarr.example.com:8443
-      CREDARR_AGENT_CA: /agent/agent-ca.crt
-      CREDARR_AGENT_VAULT_ROOT: /vault
-      CREDARR_AGENT_VAULT_KEY: /agent/vault-tree.key
       CREDARR_AGENT_ALLOWED_ROOT: /stacks
-      CREDARR_AGENT_STATE: /agent/state
-      CREDARR_AGENT_ROOTFUL: "1"
-      CREDARR_AGENT_ACK_ROOTFUL: "1"
       DOCKER_HOST: tcp://socket-proxy:2375
+    secrets:
+      - CREDARR_AGENT_CA
+      - CREDARR_VAULT_TREE_KEY
     depends_on:
       socket-proxy:
         condition: service_healthy
@@ -137,7 +140,7 @@ services:
       - internal_web
       - docker_api
     volumes:
-      - ./agent:/agent
+      - ./agent/state:/var/lib/credarr-agent
       - ./vault:/vault:ro
       - /srv/stacks:/stacks
 
@@ -220,21 +223,29 @@ The proxy allows the endpoints `docker compose up --force-recreate` uses: image 
 
 Mounting `/var/run/docker.sock` directly still works and is the fallback when the proxy is unavailable. That gives the agent the full Docker API, so use it only when you accept that.
 
-The image defaults to `run`; the required runtime configuration is the
-environment block above. Write the one-time token to
-`./agent/enroll.token`, then enroll with the same service settings:
+The image defaults to `run`; the only required runtime settings are
+`CREDARR_AGENT_SERVER` and `CREDARR_AGENT_ALLOWED_ROOT`. The CA and tree key are
+Docker secrets at fixed paths (`/run/secrets/CREDARR_AGENT_CA` and
+`/run/secrets/CREDARR_VAULT_TREE_KEY`). The state directory is the
+`/var/lib/credarr-agent` volume. The vault tree defaults to `/vault`.
+
+Write the one-time token to `./agent/enroll.token`, then enroll with a
+temporary secret mount:
 
 ```sh
-docker compose run --rm credarr-agent enroll \
-  --name media-host --token-file /agent/enroll.token
+docker compose run --rm \
+  -e CREDARR_AGENT_ENROLL_NAME=media-host \
+  -e CREDARR_AGENT_ENROLL_TOKEN_FILE=/run/secrets/enroll.token \
+  -v "$PWD/agent/enroll.token:/run/secrets/enroll.token:ro" \
+  credarr-agent enroll
 ```
 
 After enrollment, start the stack normally. An older compose file that sets a
 `command:` block should remove it: the image already runs `credarr-agent run`.
-The agent runs as its own non-root user; set `user:` to an id that can read
-`/agent`, `/vault` and the stacks. Rootless Docker is the default. A rootful
-daemon sets `CREDARR_AGENT_ROOTFUL=1` and `CREDARR_AGENT_ACK_ROOTFUL=1`; the
-acknowledgment is stored on the agent row.
+The agent runs as its own non-root user; set `user:` to an id that can read the
+state directory, `/vault` and the stacks. Rootless Docker is the default. The
+agent detects a rootful daemon from `docker info` and reports it; the compose
+file's Docker access is the acknowledgment.
 
 If the listener is off, the console says so and no agent can connect. Existing audits and rotations keep working; a sync target cannot be created until `CREDARR_VAULT_TREE` is set.
 

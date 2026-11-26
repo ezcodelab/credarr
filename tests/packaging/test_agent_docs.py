@@ -195,6 +195,9 @@ def test_the_agent_has_its_own_image_and_the_docs_say_so() -> None:
     assert "ghcr.io/ezcodelab/credarr-agent" in readme
     assert "Audit and rotation work without an agent" in readme
     assert "no agent" in sync.lower()
+    assert "CREDARR_AGENT_ACK_ROOTFUL" not in readme
+    assert "CREDARR_AGENT_ROOTFUL" not in readme
+    assert "CREDARR_VAULT_TREE_KEY" in readme
 
 
 def test_the_ui_audit_is_a_real_check_gate() -> None:

@@ -60,8 +60,6 @@ def _agent(tmp_path: Path, plane: AgentControlPlane, sync: SyncStore, name: str 
         ca_path=ca,
         cert_path=tmp_path / "state" / "agent.crt",
         key_path=tmp_path / "state" / "agent.key",
-        rootful=False,
-        ack_rootful=False,
     )
     enroll(config, token, name=name, capabilities=("compose",))
     return config, AgentClient(config)

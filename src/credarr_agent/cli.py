@@ -25,10 +25,6 @@ def _env_roots(name: str) -> list[str]:
     return [item.strip() for item in os.environ.get(name, "").split(",") if item.strip()]
 
 
-def _env_bool(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _config(args: argparse.Namespace) -> AgentConfig:
     state = Path(args.state_dir)
     roots = tuple(Path(item) for item in (args.allowed_root or ()))
@@ -41,8 +37,6 @@ def _config(args: argparse.Namespace) -> AgentConfig:
         ca_path=Path(args.ca),
         cert_path=state / "agent.crt",
         key_path=state / "agent.key",
-        rootful=bool(args.rootful),
-        ack_rootful=bool(args.ack_rootful),
         poll_seconds=float(args.poll_seconds),
     )
 
@@ -61,22 +55,22 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--state-dir",
         default=_env("CREDARR_AGENT_STATE") or DEFAULT_STATE,
-        help="certificate and key directory (env CREDARR_AGENT_STATE)",
+        help="certificate and key directory (default /var/lib/credarr-agent)",
     )
     parser.add_argument(
         "--vault-root",
-        default=_env("CREDARR_AGENT_VAULT_ROOT"),
-        help="mounted shared vault tree (env CREDARR_AGENT_VAULT_ROOT)",
+        default=_env("CREDARR_AGENT_VAULT_ROOT") or "/vault",
+        help="mounted shared vault tree (default /vault)",
     )
     parser.add_argument(
         "--vault-key",
-        default=_env("CREDARR_AGENT_VAULT_KEY"),
-        help="key file beside the tree (env CREDARR_AGENT_VAULT_KEY)",
+        default=_env("CREDARR_AGENT_VAULT_KEY") or "/run/secrets/CREDARR_VAULT_TREE_KEY",
+        help="key file beside the tree (default the CREDARR_VAULT_TREE_KEY secret)",
     )
     parser.add_argument(
         "--ca",
-        default=_env("CREDARR_AGENT_CA"),
-        help="the BFF agent CA certificate (env CREDARR_AGENT_CA)",
+        default=_env("CREDARR_AGENT_CA") or "/run/secrets/CREDARR_AGENT_CA",
+        help="the BFF agent CA certificate (default the CREDARR_AGENT_CA secret)",
     )
     parser.add_argument(
         "--allowed-root",
@@ -84,18 +78,6 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="a directory a stack path must be under; repeatable "
         "(env CREDARR_AGENT_ALLOWED_ROOT, comma separated)",
-    )
-    parser.add_argument(
-        "--rootful",
-        action="store_true",
-        default=_env_bool("CREDARR_AGENT_ROOTFUL"),
-        help="run against a rootful Docker daemon (env CREDARR_AGENT_ROOTFUL)",
-    )
-    parser.add_argument(
-        "--ack-rootful",
-        action="store_true",
-        default=_env_bool("CREDARR_AGENT_ACK_ROOTFUL"),
-        help="acknowledge the rootful risk (env CREDARR_AGENT_ACK_ROOTFUL)",
     )
     parser.add_argument(
         "--poll-seconds",

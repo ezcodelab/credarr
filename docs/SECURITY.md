@@ -30,10 +30,10 @@ therefore re-encrypts with a fresh DEK when a stage changes.
   Root on the BFF host can read `kek.json`. A managed KMS would move that
   boundary; this build does not claim equivalence to one.
 - **Agent compromise in rootful Docker is root-equivalent.** Rootless is the
-  default. Rootful needs `--rootful --ack-rootful` or
-  `CREDARR_AGENT_ROOTFUL=1` and `CREDARR_AGENT_ACK_ROOTFUL=1`, is stored on the
-  agent row, and produces a persistent warning. A policy violation disables the
-  agent and emits `agent_policy_violation`.
+  default. The agent detects a rootful daemon from `docker info`, stores that
+  fact on its row, and the console shows it. Giving the agent the Docker socket,
+  directly or through the proxy, is the explicit acceptance of that risk. A
+  policy violation disables the agent and emits `agent_policy_violation`.
 - **The Docker API is behind a restricted proxy.** The recommended deployment
   sets `DOCKER_HOST` to the LinuxServer socket proxy. The proxy allows container
   create/start/stop/delete/rename, image inspection, network and volume listing

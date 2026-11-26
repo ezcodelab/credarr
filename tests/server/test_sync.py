@@ -51,8 +51,6 @@ def _agent(sync: SyncStore, name: str = "edge", capabilities: tuple[str, ...] | 
         token,
         fingerprint=f"fp-{name}",
         expires_at=10**12,
-        rootful=False,
-        ack=False,
     )
 
 

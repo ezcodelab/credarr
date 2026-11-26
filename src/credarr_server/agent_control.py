@@ -342,8 +342,6 @@ class _Handler(BaseHTTPRequestHandler):
             token,
             fingerprint=_fingerprint(parsed),
             expires_at=parsed.not_valid_after_utc.timestamp(),
-            rootful=bool(body.get("rootful")),
-            ack=bool(body.get("rootful_ack")),
         )
         self._send(
             200,
@@ -355,26 +353,15 @@ class _Handler(BaseHTTPRequestHandler):
             },
         )
 
-    def _rootful_guard(self, agent: Agent, body: dict[str, Any]) -> None:
-        if bool(body.get("rootful")) and not agent.rootful_ack:
-            self.authority.sync.disable(
-                agent.id,
-                "the agent reported rootful mode without an acknowledgment",
-            )
-            raise PolicyViolation(
-                "rootful mode needs an explicit acknowledgment before use"
-            )
-
     def _heartbeat(self, body: dict[str, Any]) -> None:
         agent = self._agent()
         self._clock(body)
-        self._rootful_guard(agent, body)
         self._send(200, {"status": agent.status, "now": time.time()})
 
     def _lease(self, body: dict[str, Any]) -> None:
         agent = self._agent()
         self._clock(body)
-        self._rootful_guard(agent, body)
+        self.authority.sync.set_rootful(agent.id, bool(body.get("rootful")))
         leased = self.authority.sync.lease(agent)
         if leased is None:
             self._send(200, {"job": None})
