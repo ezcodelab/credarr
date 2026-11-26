@@ -1,8 +1,9 @@
 # Architecture
 
-Monorepo, one version, one Docker image: engine library + CLI, Python HTTP
-server (BFF + scheduler), and a Svelte SPA served from the same origin by the
-same process.
+Monorepo, one version, two Docker images: the engine library + CLI, the Python
+HTTP server (BFF + scheduler), and a Svelte SPA served from the same origin by
+the same process in the console image; the outbound `credarr-agent` image
+carries the same wheel plus the Docker CLI and compose plugin.
 
 ## Repository layout
 
@@ -28,9 +29,11 @@ The consequences that decide the layout:
    as `package-data`. Moving `ui/` under `src/` would not remove that step. It
    would only hide a Node build inside a Python source directory, where
    `setuptools` package discovery and `ruff` would both need exclusions.
-2. **The image builds them in separate stages.** `Dockerfile` builds the SPA in
-   a `node` stage and the wheel in a `python` stage; the runtime carries neither
-   Node nor a source tree. One directory for both would still need two stages.
+2. **The images build them in separate stages.** `Dockerfile` builds the SPA in
+   a `node` stage and the wheel in a `python` stage; the shared runtime carries
+   neither Node nor a source tree. The `server` and `agent` targets add only
+   what each role needs: the console entrypoint, or the Docker CLI and compose
+   plugin. One directory for both would still need those stages.
 3. **Development loops differ.** `make serve` runs Python with no Node
    installed; `make ui-dev` runs Vite against the BFF. Neither path needs the
    other's toolchain.
@@ -42,6 +45,18 @@ The consequences that decide the layout:
 single-runtime convention from projects that have a single runtime, and would
 add packaging and lint configuration to buy a directory name. If the two halves
 ever share a language, revisit; until then the split is the honest shape.
+
+## Images
+
+`make image` builds two targets from one Dockerfile and one wheel:
+
+- `server` is `ghcr.io/ezcodelab/credarr`. It serves the console, owns
+  `/config`, and has no Docker CLI.
+- `agent` is `ghcr.io/ezcodelab/credarr-agent`. It carries the Docker CLI and
+  compose plugin, runs as `credarr-agent`, and has no console entrypoint.
+
+Both use the same version tag. The release scripts tag and push both, and a
+deployment that uses delivery pins both.
 
 ## Modules
 

@@ -175,12 +175,43 @@ before it starts Docker. A missing marker, a marker for another credential, an
 unreadable file, or a mismatched version is `VaultError`; the agent reports all
 services false with a short sentence and performs no Docker action.
 
+## Images and listening address
+
+The console and the agent are separate images with one version:
+
+| Image | Role |
+| --- | --- |
+| `ghcr.io/ezcodelab/credarr` | Console and BFF. No Docker CLI, no Docker socket. |
+| `ghcr.io/ezcodelab/credarr-agent` | Outbound agent. Docker CLI, compose plugin, no console. |
+
+The BFF listens on `CREDARR_AGENT_PORT` (default `8443`) and
+`CREDARR_AGENT_BIND` (default `CREDARR_HOST`). `CREDARR_AGENT_PORT=0` disables
+the listener. `CREDARR_AGENT_HOSTNAME` is the DNS name or IP an agent puts in
+its `--server` URL, and the listener certificate adds it to its SANs.
+
+The port is boot configuration, not a database setting. The console shows the
+listener state and the exact `https://<host>:<port>` URL in Settings -> Agents
+& sync; changing the port means changing `CREDARR_AGENT_PORT`, the published
+container port, and the agent's `--server` value together. The agent initiates
+the connection, so the BFF never needs to discover an agent address.
+
+## No agent configured
+
+Audit and rotation do not need an agent. Without `CREDARR_VAULT_TREE` there is
+no value source, so a sync target cannot be created; the console says that and
+disables **New target**. With the tree but no enrolled agent, the console shows
+how to run `credarr-agent` and keeps the rest of the app usable. A disabled or
+failed listener is reported in the same panel, with the startup variable or
+the listener failure named.
+
 ## Agent identity and enrollment
 
 1. An admin creates a one-time token in Settings -> Agents & sync
    (`POST /api/v1/agents/enrollment`). The token is shown once and stored as a
    SHA-256 hash with a 10-minute default expiry.
-2. Copy `agent-ca.crt` from the BFF data directory to the agent host.
+2. Download `agent-ca.crt` from the same panel (`GET /api/v1/agents/ca`) and
+   put it beside the agent state. The file is public; the CA private key stays
+   in the BFF data directory.
 3. On the agent host, generate a key and CSR and consume the token:
 
    ```sh
@@ -191,15 +222,40 @@ services false with a short sentence and performs no Docker action.
      enroll --name media-host --token-file /run/credarr/enroll.token
    ```
 
-4. Run the agent under the Docker host's own service manager:
+4. Run the agent under the Docker host's own service manager, or with the
+   `credarr-agent` image. The image's entrypoint is `credarr-agent`, so the
+   container command starts with its arguments:
 
-   ```sh
-   credarr-agent --server https://credarr.example:8443 \
-     --ca /etc/credarr/agent-ca.crt \
-     --vault-root /srv/credarr-vault --vault-key /etc/credarr/vault-tree.key \
-     --allowed-root /srv --state-dir /var/lib/credarr-agent \
-     run
+   ```yaml
+   services:
+     credarr-agent:
+       image: ghcr.io/ezcodelab/credarr-agent:latest
+       restart: unless-stopped
+       group_add: ["999"]
+       command:
+         - --server
+         - https://credarr.example:8443
+         - --ca
+         - /agent/agent-ca.crt
+         - --vault-root
+         - /vault
+         - --vault-key
+         - /agent/vault-tree.key
+         - --allowed-root
+         - /stacks
+         - --state-dir
+         - /agent/state
+         - run
+       volumes:
+         - ./agent:/agent
+         - ./vault:/vault:ro
+         - /var/run/docker.sock:/var/run/docker.sock
+         - /srv/stacks:/stacks
    ```
+
+An older compose file that ran the console image with
+`command: [credarr-agent, ...]` must drop the leading `credarr-agent`: the
+agent image's entrypoint already names the command.
 
 The client certificate is one day. Renewal is available at
 `POST /v1/certificate/renew`; replacing the fingerprint makes the previous

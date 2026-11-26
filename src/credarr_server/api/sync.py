@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from credarr_server.api.context import ApiContext
 from credarr_server.api.http import _actor, new_routers
@@ -28,6 +28,30 @@ def _sync(ctx: ApiContext) -> SyncStore:
     if ctx.sync is None:
         raise HTTPException(status_code=503, detail="the sync store is not running")
     return ctx.sync
+
+
+def _control_plane(ctx: ApiContext) -> dict[str, Any]:
+    """The listener facts an operator needs to point an agent at this BFF.
+
+    A disabled listener and a listener that failed to start are different
+    states. The second keeps its process object and failure sentence, so the
+    console can show why instead of reporting a configuration choice.
+    """
+    if ctx.agent_plane is not None:
+        return ctx.agent_plane.info()
+    settings = ctx.settings
+    host = settings.agent_bind or settings.host
+    return {
+        "enabled": False,
+        "host": host,
+        "port": settings.agent_port,
+        "hostname": settings.agent_hostname,
+        "url": None,
+        "tls": "TLSv1.3",
+        "group": None,
+        "failure": None,
+        "ca": (settings.config_dir / "agent-ca.crt").is_file(),
+    }
 
 
 def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
@@ -131,14 +155,25 @@ def routes(ctx: ApiContext) -> tuple[APIRouter, APIRouter]:
 
     @authed.get("/agents")
     def agents() -> dict[str, Any]:
-        plane = ctx.agent_plane
         return {
             "agents": [agent.as_json() for agent in _sync(ctx).agents()],
             "sync": _sync(ctx).status(),
-            "control_plane": (
-                plane.info() if plane is not None else {"enabled": False}
-            ),
+            "control_plane": _control_plane(ctx),
         }
+
+    @authed.get("/agents/ca")
+    def agent_ca() -> Response:
+        path = ctx.settings.config_dir / "agent-ca.crt"
+        if not path.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail="the agent CA does not exist yet; start the agent listener once",
+            )
+        return Response(
+            path.read_text(encoding="utf-8"),
+            media_type="application/x-pem-file",
+            headers={"Content-Disposition": 'attachment; filename="agent-ca.crt"'},
+        )
 
     @authed.post("/agents/enrollment")
     def enrollment(body: EnrollmentBody, actor: str = Depends(_actor)) -> dict[str, Any]:

@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from conftest import make_server, setup_admin
+from credarr_server.agent_control import AgentControlPlane
 
 
 def _server(app, tmp_path, **overrides):
@@ -115,6 +116,49 @@ def test_an_env_target_is_created_with_its_declared_mapping(app, tmp_path) -> No
     assert target["env_file"] == ".env"
     assert target["values"] == {"HOMEPAGE_VAR_SONARR_API_KEY": "sonarr_api_key"}
     assert listed[0]["values"] == target["values"]
+
+
+def test_the_console_reports_the_listener_and_serves_the_agent_ca(app, tmp_path) -> None:
+    server = _server(app, tmp_path, agent_port=9443, agent_hostname="credarr.test")
+    plane = AgentControlPlane(
+        server.state.sync,
+        tmp_path,
+        host="127.0.0.1",
+        port=0,
+        hostname="credarr.test",
+    )
+    plane.start()
+    server.state.agent_plane = plane
+    server.state.api_context.agent_plane = plane
+    try:
+        with TestClient(server) as client:
+            setup_admin(client)
+            answer = client.get("/api/v1/agents").json()
+            listed = answer["control_plane"]
+            assert listed["enabled"] is True
+            assert listed["port"] == plane.port
+            assert listed["hostname"] == "credarr.test"
+            assert listed["url"] == f"https://credarr.test:{plane.port}"
+            assert listed["ca"] is True
+            ca = client.get("/api/v1/agents/ca")
+            assert ca.status_code == 200
+            assert ca.headers["content-type"].startswith("application/x-pem-file")
+            assert "BEGIN CERTIFICATE" in ca.text
+    finally:
+        plane.stop()
+
+
+def test_a_disabled_listener_still_reports_its_startup_configuration(app, tmp_path) -> None:
+    server = _server(app, tmp_path, agent_port=0, agent_hostname="credarr.test")
+    with TestClient(server) as client:
+        setup_admin(client)
+        listed = client.get("/api/v1/agents").json()["control_plane"]
+        missing = client.get("/api/v1/agents/ca")
+    assert listed["enabled"] is False
+    assert listed["port"] == 0
+    assert listed["hostname"] == "credarr.test"
+    assert listed["url"] is None
+    assert missing.status_code == 404
 
 
 def test_an_enrollment_token_is_returned_once_and_never_listed(app, tmp_path) -> None:

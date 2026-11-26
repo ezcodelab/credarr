@@ -711,7 +711,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         f"{settings.agent_bind or settings.host}:{settings.agent_port}: {exc}",
                         file=sys.stderr,
                     )
-                    plane = None
+                    plane.failure = f"{type(exc).__name__}: {exc}"
                 app.state.agent_plane = plane
                 app.state.api_context.agent_plane = plane
             try:

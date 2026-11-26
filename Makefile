@@ -15,6 +15,9 @@ UI_INSTALL ?= npm ci
 .PHONY: help install test ui-test ui-check lint check ci worktree-setup serve ui-dev web ui-smoke ui-audit wheel image ship publish release clean
 
 GHCR := ghcr.io/ezcodelab/credarr
+GHCR_AGENT := ghcr.io/ezcodelab/credarr-agent
+IMAGE ?= credarr:dev
+AGENT_IMAGE ?= credarr-agent:dev
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -87,8 +90,9 @@ wheel: web  ## Build the wheel with the console inside (the image's input)
 	rm -rf build
 	$(BIN)/pip wheel . -w dist --no-deps
 
-image:  ## Build the one image (needs Docker; the console is built inside it)
-	docker build -t credarr:dev .
+image:  ## Build both images (needs Docker; the console is built inside it)
+	docker build --target server -t $(IMAGE) .
+	docker build --target agent -t $(AGENT_IMAGE) .
 
 ship:  ## Build, push, pin via PR and deploy (TAG= optional; a branch tags <branch>-<sha>)
 	scripts/deploy-gitea --deploy $(if $(TAG),--tag $(TAG),)
@@ -96,13 +100,17 @@ ship:  ## Build, push, pin via PR and deploy (TAG= optional; a branch tags <bran
 publish:  ## Push main to GitHub (Gitea pulls it read-only)
 	git push origin main
 
-release:  ## Build and push the image, then publish (VERSION=x.y.z)
+release:  ## Build and push both images, then publish (VERSION=x.y.z)
 	@if [ -z "$(VERSION)" ]; then echo "usage: make release VERSION=1.2.3"; exit 2; fi
 	$(MAKE) image
-	docker tag credarr:dev $(GHCR):$(VERSION)
-	docker tag credarr:dev $(GHCR):latest
+	docker tag $(IMAGE) $(GHCR):$(VERSION)
+	docker tag $(IMAGE) $(GHCR):latest
 	docker push $(GHCR):$(VERSION)
 	docker push $(GHCR):latest
+	docker tag $(AGENT_IMAGE) $(GHCR_AGENT):$(VERSION)
+	docker tag $(AGENT_IMAGE) $(GHCR_AGENT):latest
+	docker push $(GHCR_AGENT):$(VERSION)
+	docker push $(GHCR_AGENT):latest
 	git tag -a v$(VERSION) -m "credarr $(VERSION)"
 	$(MAKE) publish
 	git push origin refs/tags/v$(VERSION)

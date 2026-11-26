@@ -52,13 +52,21 @@ after 30 seconds. Soft-deleted credentials are not revealable.
 ## Sync and agents
 
 A target is a stack path, project name and service set on one agent. The BFF
-never runs Docker; the agent pulls over a TLS 1.3 mTLS listener on
-`--agent-port` (default 8443) and runs only the allowlisted `compose` workflow
-under its `--allowed-root`. The shared vault tree is mandatory: set
-`CREDARR_VAULT_TREE` and `CREDARR_VAULT_TREE_KEY` before creating a target.
-Delivery is advisory: a failed or pending job does not change a rotation exit
-code. `retry_wait` is not success; a partial deploy re-runs the whole service
-set. See `docs/SYNC.md` for the enrollment runbook and the state machine.
+never runs Docker. The agent is the separate `credarr-agent` image on the
+Docker host; it pulls over a TLS 1.3 mTLS listener on `CREDARR_AGENT_PORT`
+(default 8443) and runs only the allowlisted `compose` or `env` workflow under
+its `--allowed-root`. The console shows the listener address and the exact
+agent URL in Settings -> Agents & sync. The agent is the client: its
+`--server` URL must use the same host and port, and the BFF never discovers an
+agent.
+
+The shared vault tree is mandatory for a target: set `CREDARR_VAULT_TREE` and
+`CREDARR_VAULT_TREE_KEY` before creating one. Audit and rotation still work
+without a tree or an agent; the console disables target creation and says what
+is missing. Delivery is advisory: a failed or pending job does not change a
+rotation exit code. `retry_wait` is not success; a partial deploy re-runs the
+whole service set. See `docs/SYNC.md` for the enrollment runbook and the state
+machine.
 
 ## Backup and restore
 

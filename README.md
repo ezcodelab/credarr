@@ -26,6 +26,7 @@ Credarr keeps a holder map, audits every readable copy against the canonical val
 - A Docker host (or any Linux host for the CLI) with network access to the services you want to audit.
 - A URL and an API key per service. Credarr calls service APIs; it never reads a service's config file or data volume.
 - Rotating a Servarr key asks the service to restart itself, so that service needs a supervisor that starts it again (for example the LinuxServer s6 images). A bare process without one is not supported.
+- Optional Docker delivery: the `credarr-agent` image on each Docker host, with the shared vault tree and the Docker socket. Audit and rotation work without it.
 - CLI only: Python 3.11+.
 - Building the console from source: Node 24+.
 
@@ -49,6 +50,10 @@ services:
       - ./config:/config
 ```
 
+That stack is enough for audit and rotation. Add the agent listener port and
+the shared tree only when you want Docker delivery; the agent section below
+covers both.
+
 ### Docker settings
 
 | Variable | Default | Meaning |
@@ -59,10 +64,86 @@ services:
 | `CREDARR_AUDIT_INTERVAL` | `3600` | Initial seconds between audits; a value saved in Settings wins. |
 | `CREDARR_ALLOW_NETWORK_CONFIG` | unset | `1` accepts a network `/config`. This weakens SQLite locking and is not HA support. |
 | `CREDARR_DOCKER_URL` | unset | Optional read-only Docker API for discovery, e.g. `http://socket-proxy:2375`. Never mount the raw socket. |
+| `CREDARR_AGENT_PORT` | `8443` | The mTLS listener port for agents; `0` disables it. Publish and point the agent at the same port. |
+| `CREDARR_AGENT_BIND` | `CREDARR_HOST` | Address for the agent listener. |
+| `CREDARR_AGENT_HOSTNAME` | unset | DNS name or IP the agent puts in `--server`; added to the listener certificate SANs. Set it for every remote agent. |
+| `CREDARR_VAULT_TREE` | unset | The shared delivery tree the agent reads. Required before a sync target can be created. |
+| `CREDARR_VAULT_TREE_KEY` | `<config>/vault-tree.key` | Key file for the shared tree. Keep it outside the tree. |
 | `CREDARR_SECURE_COOKIES` | unset | `1` marks the session cookie `Secure`. Set it behind HTTPS only. |
 | `CREDARR_EXTERNAL_URL` | unset | The URL people reach the console on. `https` turns secure cookies on; a contradiction with the variable above refuses to start. |
 
 Behind a TLS proxy set `CREDARR_EXTERNAL_URL=https://...`. Leave both unset for plain HTTP: a `Secure` cookie is dropped by the browser and sign-in fails. The server warns at startup when secure cookies are off and it binds a non-loopback address.
+
+### Docker delivery agent (optional)
+
+Audit and rotation work without an agent. The agent is only for delivery: update a stack's `.env` file or restart declared services after a rotation.
+
+The agent is its own image, `ghcr.io/ezcodelab/credarr-agent`. It carries the Docker CLI, the compose plugin and the `credarr-agent` command, and no console process. The console image carries no Docker CLI and never receives the socket.
+
+The console listens for agents on port `8443` by default. That port is startup configuration, not a console setting:
+
+- `CREDARR_AGENT_PORT` changes it; `0` disables the listener.
+- Publish the same port from the console container.
+- Set `CREDARR_AGENT_HOSTNAME` to the DNS name or IP the agent uses. It is added to the listener certificate SANs.
+- The agent is the client. It connects out to `--server https://<host>:<port>`. Credarr does not discover an agent, so the `--server` port must match `CREDARR_AGENT_PORT`.
+
+Add the listener and shared tree to the console stack:
+
+```yaml
+services:
+  credarr:
+    image: ghcr.io/ezcodelab/credarr:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    environment:
+      CREDARR_AGENT_HOSTNAME: credarr.example.com
+      CREDARR_VAULT_TREE: /vault
+      CREDARR_VAULT_TREE_KEY: /config/vault-tree.key
+    volumes:
+      - ./config:/config
+      - ./vault:/vault
+```
+
+Restart the console. In **Settings -> Agents & sync**, the listener line shows the exact URL agents use. Download `agent-ca.crt`, then **Enroll agent** and copy the one-time token.
+
+On the Docker host, keep the CA, the tree key and the agent state in one directory, mount the tree read-only, and mount only the stacks the agent may write:
+
+```yaml
+services:
+  credarr-agent:
+    image: ghcr.io/ezcodelab/credarr-agent:latest
+    restart: unless-stopped
+    group_add: ["999"]
+    command:
+      - --server
+      - https://credarr.example.com:8443
+      - --ca
+      - /agent/agent-ca.crt
+      - --vault-root
+      - /vault
+      - --vault-key
+      - /agent/vault-tree.key
+      - --allowed-root
+      - /stacks
+      - --state-dir
+      - /agent/state
+      - enroll
+      - --name
+      - media-host
+      - --token-file
+      - /agent/enroll.token
+    volumes:
+      - ./agent:/agent
+      - ./vault:/vault:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /srv/stacks:/stacks
+```
+
+Write the token to `./agent/enroll.token` before starting the container. After enrollment, replace `enroll ...` with `run`. The image entrypoint is `credarr-agent`, so an older compose command that starts with `credarr-agent` must drop that first item. The agent runs as its own non-root user; add the host Docker group and set `user:` to an id that can read `/agent`, `/vault` and the stacks. Rootless Docker is the default. A rootful daemon needs `--rootful --ack-rootful` and the stored acknowledgment.
+
+If the listener is off, the console says so and no agent can connect. Existing audits and rotations keep working; a sync target cannot be created until `CREDARR_VAULT_TREE` is set.
 
 ### Run-once (cron)
 

@@ -1000,6 +1000,7 @@ def test_the_openapi_contract_is_pinned(server) -> None:
         "/api/v1/sync/jobs/{job_id}/retry",
         "/api/v1/sync/jobs/{job_id}/cancel",
         "/api/v1/agents",
+        "/api/v1/agents/ca",
         "/api/v1/agents/enrollment",
         "/api/v1/agents/{agent_id}",
         "/api/v1/agents/{agent_id}/disable",
@@ -1060,6 +1061,7 @@ def test_the_openapi_contract_is_pinned(server) -> None:
         "/api/v1/sync/jobs/{job_id}/retry",
         "/api/v1/sync/jobs/{job_id}/cancel",
         "/api/v1/agents",
+        "/api/v1/agents/ca",
         "/api/v1/agents/enrollment",
         "/api/v1/agents/{agent_id}",
         "/api/v1/agents/{agent_id}/disable",
@@ -1077,7 +1079,7 @@ def test_the_openapi_operations_are_pinned(server) -> None:
 
     `_mount` is split into per-domain routers; a moved route that changed its
     method, its path, or silently disappeared must fail here. The count is the
-    audit's 47 operations, so a new endpoint is a deliberate addition to this
+    audit's 48 operations, so a new endpoint is a deliberate addition to this
     list, never a side effect of the move.
     """
     document = TestClient(server).get("/openapi.json").json()
@@ -1132,6 +1134,7 @@ def test_the_openapi_operations_are_pinned(server) -> None:
         ("POST", "/api/v1/sync/jobs/{job_id}/retry"),
         ("POST", "/api/v1/sync/jobs/{job_id}/cancel"),
         ("GET", "/api/v1/agents"),
+        ("GET", "/api/v1/agents/ca"),
         ("POST", "/api/v1/agents/enrollment"),
         ("DELETE", "/api/v1/agents/{agent_id}"),
         ("PATCH", "/api/v1/agents/{agent_id}"),
