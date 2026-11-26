@@ -188,6 +188,10 @@ The BFF listens on `CREDARR_AGENT_PORT` (default `8443`) and
 `CREDARR_AGENT_BIND` (default `CREDARR_HOST`). `CREDARR_AGENT_PORT=0` disables
 the listener. `CREDARR_AGENT_HOSTNAME` is the DNS name or IP an agent puts in
 its `--server` URL, and the listener certificate adds it to its SANs.
+`CREDARR_AGENT_SANS` (comma-separated) adds any other names agents use, such as
+a compose service DNS name that differs from the hostname. The certificate also
+always carries `localhost`, `127.0.0.1` and `::1`; a name is never trusted from
+the CN alone.
 
 The port is boot configuration, not a database setting. The console shows the
 listener state and the exact `https://<host>:<port>` URL in Settings -> Agents
@@ -225,6 +229,20 @@ openssl req -new -x509 -key agent-ca.key -sha256 -days 3650 \
 
 Mount those two files as the secrets above. Do not bake the CA into the image:
 rotation and multi-host use become a rebuild.
+
+`GET /api/v1/agents/ca` requires the admin session or an API key. It is a
+download convenience for host installs, not the agent's first trust: the agent
+trusts the CA file in its Docker secret mount. An unauthenticated caller learns
+nothing about the CA.
+
+The console `/config` volume holds `agent-ca.key`, `agent-server.key` and
+`vault-tree.key`. Back up that volume with the database. Read access to it is
+equivalent to the ability to issue a trusted agent certificate and to read the
+delivery tree, so protect it like the database and KEK. Rotating the CA
+invalidates the current listener trust and every issued agent client
+certificate: replace the CA material, refresh the agent's CA secret, restart the
+agent, and re-enroll or renew each client certificate. There is no in-place
+rotate command; deletion is not the workflow.
 
 ## No agent configured
 

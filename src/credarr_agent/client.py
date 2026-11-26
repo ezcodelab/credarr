@@ -64,6 +64,15 @@ class AgentConfig:
         return self.cert_path.is_file() and self.key_path.is_file()
 
 
+def _require_nonempty(path: Path, label: str) -> None:
+    try:
+        stat = path.stat()
+    except OSError:
+        raise AgentError(f"{label} is missing at {path}") from None
+    if not path.is_file() or stat.st_size == 0:
+        raise AgentError(f"{label} is missing or empty at {path}")
+
+
 class AgentClient:
     """One HTTPS client: TLS 1.3 only, CA-pinned, client certificate when enrolled."""
 
@@ -71,6 +80,7 @@ class AgentClient:
         parsed = urllib.parse.urlsplit(config.server)
         if parsed.scheme != "https" or not parsed.netloc:
             raise AgentError("the agent server must be an https URL")
+        _require_nonempty(config.ca_path, "the agent CA")
         self.base = f"{parsed.scheme}://{parsed.netloc}"
         self.config = config
         self.context = ssl.create_default_context(cafile=str(config.ca_path))
@@ -354,6 +364,9 @@ def run(config: AgentConfig, *, once: bool = False) -> int:
 
     if not config.certificate:
         raise AgentError("the agent has no certificate; enroll it first")
+    _require_nonempty(config.cert_path, "the agent certificate")
+    _require_nonempty(config.key_path, "the agent key")
+    _require_nonempty(config.vault_key, "the vault tree key")
     tree = VaultTree(config.vault_root, config.vault_key)
     workflow = Workflow(config)
     rootful = workflow.preflight()

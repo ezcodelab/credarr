@@ -67,6 +67,7 @@ covers both.
 | `CREDARR_AGENT_PORT` | `8443` | The mTLS listener port for agents; `0` disables it. Publish and point the agent at the same port. |
 | `CREDARR_AGENT_BIND` | `CREDARR_HOST` | Address for the agent listener. |
 | `CREDARR_AGENT_HOSTNAME` | unset | DNS name or IP the agent puts in `--server`; added to the listener certificate SANs. Set it for every remote agent. |
+| `CREDARR_AGENT_SANS` | unset | Extra DNS names or IPs for the listener certificate, comma-separated. Use it for compose service names beyond `CREDARR_AGENT_HOSTNAME`. |
 | `CREDARR_AGENT_CA_CERT` | unset | Bring-your-own CA certificate. Pair it with `CREDARR_AGENT_CA_KEY`. Without both, Credarr generates a CA on first start. |
 | `CREDARR_AGENT_CA_KEY` | unset | Key for the brought CA. Credarr signs the listener and client certificates with it. |
 | `CREDARR_VAULT_TREE` | unset | The shared delivery tree the agent reads. Required before a sync target can be created. |

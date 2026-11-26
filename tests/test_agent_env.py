@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from credarr_agent.client import AgentConfig, AgentError, Workflow
+from credarr_agent.client import AgentClient, AgentConfig, AgentError, Workflow, run
 
 
 def _config(tmp_path: Path) -> AgentConfig:
@@ -22,6 +22,22 @@ def _config(tmp_path: Path) -> AgentConfig:
         cert_path=state / "agent.crt",
         key_path=state / "agent.key",
     )
+
+
+def test_the_agent_refuses_an_empty_ca(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    config.ca_path.write_bytes(b"")
+    with pytest.raises(AgentError, match="missing or empty"):
+        AgentClient(config)
+
+
+def test_the_agent_refuses_an_empty_vault_key(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    config.cert_path.write_bytes(b"certificate")
+    config.key_path.write_bytes(b"key")
+    config.vault_key.write_bytes(b"")
+    with pytest.raises(AgentError, match="vault tree key"):
+        run(config)
 
 
 def test_preflight_observes_rootful_without_a_user_acknowledgment(

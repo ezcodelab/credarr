@@ -31,6 +31,14 @@ def _active_agent(server):
     return agent
 
 
+def test_the_ca_download_requires_an_admin_session(app, tmp_path) -> None:
+    server = _server(app, tmp_path)
+    with TestClient(server) as client:
+        assert client.get("/api/v1/agents/ca").status_code == 401
+        setup_admin(client)
+        assert client.get("/api/v1/agents/ca").status_code in (200, 404)
+
+
 def test_a_configured_tree_has_its_key_before_the_first_value(app, tmp_path) -> None:
     tree = tmp_path / "tree"
     tree.mkdir()
