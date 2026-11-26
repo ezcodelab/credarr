@@ -48,7 +48,6 @@ COPY --from=wheel /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
 
 FROM runtime AS agent
-ENV CREDARR_AGENT_STATE=/var/lib/credarr-agent
 # The fixed workflow needs the Docker CLI and the compose plugin. The socket is
 # mounted only into the agent stack, never the BFF.
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
