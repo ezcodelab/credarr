@@ -223,8 +223,8 @@ the listener failure named.
    ```
 
 4. Run the agent under the Docker host's own service manager, or with the
-   `credarr-agent` image. The image's entrypoint is `credarr-agent`, so the
-   container command starts with its arguments:
+   `credarr-agent` image. The image defaults to `run`; required runtime
+   configuration is in the environment block:
 
    ```yaml
    services:
@@ -236,21 +236,15 @@ the listener failure named.
        read_only: true
        tmpfs:
          - /tmp
-       command:
-         - --server
-         - https://credarr.example:8443
-         - --ca
-         - /agent/agent-ca.crt
-         - --vault-root
-         - /vault
-         - --vault-key
-         - /agent/vault-tree.key
-         - --allowed-root
-         - /stacks
-         - --state-dir
-         - /agent/state
-         - run
        environment:
+         CREDARR_AGENT_SERVER: https://credarr.example:8443
+         CREDARR_AGENT_CA: /agent/agent-ca.crt
+         CREDARR_AGENT_VAULT_ROOT: /vault
+         CREDARR_AGENT_VAULT_KEY: /agent/vault-tree.key
+         CREDARR_AGENT_ALLOWED_ROOT: /stacks
+         CREDARR_AGENT_STATE: /agent/state
+         CREDARR_AGENT_ROOTFUL: "1"
+         CREDARR_AGENT_ACK_ROOTFUL: "1"
          DOCKER_HOST: tcp://socket-proxy:2375
        depends_on:
          socket-proxy:
@@ -323,9 +317,16 @@ the listener failure named.
        internal: true
    ```
 
+The image reads `CREDARR_AGENT_SERVER`, `CREDARR_AGENT_CA`,
+`CREDARR_AGENT_VAULT_ROOT`, `CREDARR_AGENT_VAULT_KEY`,
+`CREDARR_AGENT_ALLOWED_ROOT` (comma-separated for more than one),
+`CREDARR_AGENT_STATE`, `CREDARR_AGENT_ROOTFUL`,
+`CREDARR_AGENT_ACK_ROOTFUL` and `CREDARR_AGENT_POLL_SECONDS`. The equivalent
+flags still work for a host install.
+
 An older compose file that ran the console image with
-`command: [credarr-agent, ...]` must drop the leading `credarr-agent`: the
-agent image's entrypoint already names the command.
+`command: [credarr-agent, ...]` must remove the `command` block: the agent image
+defaults to `run` and reads its required paths from the environment.
 
 The client certificate is one day. Renewal is available at
 `POST /v1/certificate/renew`; replacing the fingerprint makes the previous
@@ -345,9 +346,10 @@ create and delete.
 
 The proxy still permits container creation and deletion, so a compromised agent
 can control the containers it can reach. Rootless Docker is the default. A
-rootful daemon requires `--rootful --ack-rootful`, which is stored on the agent
-row and reported in the console, and remains root-equivalent even behind the
-proxy. A job outside the bound workflow or path fails with
+rootful daemon requires `--rootful --ack-rootful` or
+`CREDARR_AGENT_ROOTFUL=1` and `CREDARR_AGENT_ACK_ROOTFUL=1`, which is stored on
+the agent row and reported in the console, and remains root-equivalent even
+behind the proxy. A job outside the bound workflow or path fails with
 `agent_policy_violation` and no Docker action. The agent does not accept
 arbitrary commands, shell, scripts, or environment from the BFF.
 

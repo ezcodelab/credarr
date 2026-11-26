@@ -182,6 +182,7 @@ def test_the_agent_has_its_own_image_and_the_docs_say_so() -> None:
     assert "FROM runtime AS agent" in dockerfile
     assert "FROM runtime AS server" in dockerfile
     assert 'ENTRYPOINT ["credarr-agent"]' in dockerfile
+    assert 'CMD ["run"]' in dockerfile
     assert (ROOT / "Makefile").read_text(encoding="utf-8").count(
         "docker build --target"
     ) == 2

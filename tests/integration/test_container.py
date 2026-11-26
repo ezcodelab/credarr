@@ -244,6 +244,10 @@ def test_the_agent_image_carries_docker_and_the_console_image_does_not() -> None
     assert help_text.returncode == 0, help_text.stderr
     assert "credarr-agent" in help_text.stdout
 
+    default = _docker("run", "--rm", AGENT_IMAGE)
+    assert default.returncode == 3, default.stderr
+    assert "CREDARR_AGENT_SERVER" in default.stderr
+
     compose = _docker(
         "run", "--rm", "--entrypoint", "docker", AGENT_IMAGE, "compose", "version"
     )

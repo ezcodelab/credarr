@@ -57,7 +57,7 @@ COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-compose \
     /usr/local/libexec/docker/cli-plugins/docker-compose
 USER credarr
 ENTRYPOINT ["credarr-agent"]
-CMD ["--help"]
+CMD ["run"]
 
 FROM runtime AS server
 ENV CREDARR_CONFIG_DIR=/config
