@@ -366,19 +366,19 @@ aside {
 aside nav {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  gap: 0.15rem;
   flex: 1;
 }
 aside nav > button {
   justify-content: flex-start;
   width: 100%;
-  min-height: 36px;
-  padding: 0.42rem 0.6rem;
+  min-height: 40px;
+  padding: 0.5rem 0.65rem;
   background: none;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   color: var(--dim);
-  font-size: var(--text-sm);
+  font-size: 0.9375rem;
   font-weight: 550;
   text-align: left;
 }
@@ -394,7 +394,7 @@ aside nav > button.active {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 .nav-icon {
-  width: 1.3rem;
+  width: 1.45rem;
   display: inline-flex;
   justify-content: center;
   color: var(--dim-2);
@@ -433,13 +433,13 @@ aside nav > button:hover .nav-icon { color: var(--accent); }
 .nav-sub button {
   justify-content: flex-start;
   width: 100%;
-  min-height: 30px;
-  padding: 0.3rem 0.55rem;
+  min-height: 34px;
+  padding: 0.38rem 0.6rem;
   background: none;
   border: none;
   border-radius: 6px;
   color: var(--dim);
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   font-weight: 500;
   text-align: left;
   white-space: nowrap;
