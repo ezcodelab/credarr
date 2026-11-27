@@ -1124,6 +1124,26 @@ async function main() {
       (await page.getByRole("button", { name: "Apps", exact: true }).isVisible()) &&
         (await page.getByRole("button", { name: "Sign out", exact: true }).isVisible()),
     );
+    const railSquares = await page.evaluate(() => {
+      const box = (selector) => {
+        const element = document.querySelector(selector);
+        if (!element) return null;
+        const rect = element.getBoundingClientRect();
+        return { width: Math.round(rect.width), height: Math.round(rect.height) };
+      };
+      return {
+        mark: box(".shell.collapsed aside .brand-mark"),
+        toggle: box(".shell.collapsed .sidebar-toggle"),
+        active: box(".shell.collapsed aside nav > button.active"),
+        signOut: box(".shell.collapsed aside footer button"),
+      };
+    });
+    const square = (size) => size !== null && size.width === 40 && size.height === 40;
+    check(
+      "the rail mark, toggle, selected icon and sign-out draw one 40px square",
+      Object.values(railSquares).every(square),
+      JSON.stringify(railSquares),
+    );
     await page.screenshot({ path: path.join(ARTIFACTS, "sidebar-collapsed.png") });
     await page.getByRole("button", { name: "Expand sidebar" }).click();
     check(
