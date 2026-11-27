@@ -338,18 +338,18 @@ aside {
 .brand {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  padding: 0.2rem 0.35rem 1rem;
-  font-size: 1rem;
+  gap: 0.7rem;
+  padding: 0.25rem 0.35rem 1.15rem;
+  font-size: 1.5rem;
   font-weight: 600;
   letter-spacing: -0.03em;
   color: var(--text-strong);
 }
 .brand-mark {
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   flex: 0 0 auto;
-  border-radius: 9px;
+  border-radius: 11px;
   display: grid;
   place-items: center;
   background: var(--panel-2);
@@ -464,8 +464,8 @@ aside footer {
   padding: 0.8rem 0.35rem 0.2rem;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  font-size: 0.8rem;
+  gap: 0.5rem;
+  font-size: 0.875rem;
 }
 aside footer .app-name {
   display: flex;
@@ -474,14 +474,18 @@ aside footer .app-name {
   font-weight: 600;
   color: var(--text);
 }
-aside footer .app-name .muted { font-size: 0.72rem; font-weight: 500; }
+aside footer .app-name .muted { font-size: 0.75rem; font-weight: 500; }
 aside footer .footer-actor {
   display: flex;
   align-items: center;
   gap: 0.4rem;
   color: var(--dim);
 }
-aside footer button { align-self: flex-start; }
+aside footer button {
+  align-self: flex-start;
+  min-height: 36px;
+  font-size: 0.875rem;
+}
 
 .sidebar-state {
   display: flex;
@@ -493,11 +497,11 @@ aside footer button { align-self: flex-start; }
   border-radius: var(--radius-sm);
   background: var(--panel);
 }
-.sidebar-state .pill { font-size: 0.72rem; }
+.sidebar-state .pill { font-size: 0.78rem; }
 .sidebar-state-time {
   color: var(--dim-2);
   font-family: var(--font-mono);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
 
