@@ -1131,6 +1131,36 @@ async function main() {
       (await page.locator(".shell.collapsed").count()) === 0,
     );
 
+    // The page fills the main column instead of sitting in a capped, centred
+    // box, so collapsing the rail actually widens the working surface.
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    const wide = await page.evaluate(() => {
+      const main = document.querySelector("main.main");
+      const pageEl = document.querySelector(".page");
+      if (!main || !pageEl) return null;
+      const mainBox = main.getBoundingClientRect();
+      const pageBox = pageEl.getBoundingClientRect();
+      const style = getComputedStyle(main);
+      return {
+        leftGap: Math.round(pageBox.left - mainBox.left - parseFloat(style.paddingLeft)),
+        rightGap: Math.round(mainBox.right - pageBox.right - parseFloat(style.paddingRight)),
+        scrollWidth: document.documentElement.scrollWidth,
+        viewport: window.innerWidth,
+      };
+    });
+    check(
+      "the page fills the main column at wide widths",
+      wide !== null && Math.abs(wide.leftGap) <= 1 && Math.abs(wide.rightGap) <= 1,
+      JSON.stringify(wide),
+    );
+    check(
+      "the wide page has no horizontal scroll",
+      wide !== null && wide.scrollWidth <= wide.viewport,
+      JSON.stringify(wide),
+    );
+    await page.screenshot({ path: path.join(ARTIFACTS, "wide-1920.png") });
+    await page.setViewportSize({ width: 1280, height: 720 });
+
     // --- the Used in table names services, not target strings -----------------
     // A reminder saved while a Homepage copy existed must not survive after
     // that holder is removed; the current declaration is Seerr-only.

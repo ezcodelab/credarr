@@ -94,8 +94,9 @@ Motion:
 
 ## Responsive
 
-The shell is a 244px sidebar and a fluid main column, capped at 1440px.
-Below 960px the sidebar becomes an off-canvas drawer with a sticky mobile bar.
+The shell is a 244px sidebar and a fluid main column that fills the window; the
+page content is not capped or centred. Below 960px the sidebar becomes an
+off-canvas drawer with a sticky mobile bar.
 
 - One `h1` per page, in `PageHeader`.
 - One primary action per section. Secondary actions are quiet; destructive
