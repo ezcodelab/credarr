@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "credarr"
 dynamic = ["version"]
-description = "Find out who holds your credentials, whether they still match, and what can be rotated."
+description = "Audit and rotate API keys across your self-hosted stack."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"

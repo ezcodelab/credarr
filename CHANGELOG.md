@@ -1,6 +1,35 @@
 # Changelog
 
-## 1.4.0 — 2026-11-25
+## 2.0.0 - 2026-11-27
+
+Credarr 2.0 makes the two-image shape the supported deployment. The console and
+the delivery agent share one version and one tag. This release also removes the
+single-image agent path and rewrites the first-read documentation.
+
+### Breaking changes
+
+- The `credarr` image no longer carries the Docker CLI. A deployment that ran the
+  agent through a compose `command:` override must use
+  `ghcr.io/ezcodelab/credarr-agent`. The console never receives a Docker socket.
+- The agent detects a rootful Docker daemon from `docker info` and reports it.
+  `CREDARR_AGENT_ROOTFUL` and `CREDARR_AGENT_ACK_ROOTFUL` are removed.
+- The partial `docs/API.md` page is removed. `/openapi.json` is the API contract.
+
+### Changed
+
+- The console page fills the window instead of sitting in a 1440px centred
+  column. Collapsing the rail widens the working surface.
+- The collapsed rail uses one 40px square for the mark, expand control, selected
+  icon and sign-out.
+- The README and the docs index are rewritten for a shorter first read.
+- New screenshots come from the shipped console.
+
+### Images
+
+- `ghcr.io/ezcodelab/credarr:2.0.0` and `ghcr.io/ezcodelab/credarr-agent:2.0.0`.
+- `:latest` moves to 2.0.0.
+
+## 1.4.0 - 2026-11-25
 
 - Split the console and the deploy agent into two images with one version:
   `ghcr.io/ezcodelab/credarr` (no Docker CLI) and
@@ -17,7 +46,7 @@
 - README and docs cover the optional agent, the separate image, the port and
   address contract, and the no-agent behavior.
 
-## 1.3.9 — 2026-11-24
+## 1.3.9 - 2026-11-24
 
 - Remove the listener detail line from Agents & sync.
 - Stack Targets and Agents full-width so their table lines and headers align;
@@ -26,7 +55,7 @@
 - Remove the long status explanation under each app's State pill; the status,
   manual/no-key markers and copies carry the state.
 
-## 1.3.8 — 2026-11-24
+## 1.3.8 - 2026-11-24
 
 - Target and agent lifecycle controls: edit target, real agent-side target
   probe, enable/disable target, delete target; edit agent name/capabilities,
@@ -35,7 +64,7 @@
   --quiet` and checks the env file/mapping without writing a value or
   recreating a service.
 
-## 1.3.7 — 2026-11-24
+## 1.3.7 - 2026-11-24
 
 - Put **Enroll agent** in the Agents pane header, matching **New target** in
   the Targets pane; the section header keeps only Refresh.
@@ -43,7 +72,7 @@
   `HOMEPAGE_VAR_*` label value, the app container is recreated, and Homepage
   revalidates its cached dashboard data without a Homepage restart.
 
-## 1.3.6 — 2026-11-24
+## 1.3.6 - 2026-11-24
 
 - Redesign Agents & sync: compact listener status, agents and targets side by
   side, one New target action, a two-choice target editor (Restart services /
@@ -52,13 +81,13 @@
 - API keys become a proper table with one Create key action; origin moves into
   the create step instead of competing with the section title.
 
-## 1.3.5 — 2026-11-24
+## 1.3.5 - 2026-11-24
 
 - An `env` target creates jobs only for credentials named in its key mapping.
   A value for an unrelated credential no longer queues a job that would fail
   with "no key for this credential".
 
-## 1.3.4 — 2026-11-24
+## 1.3.4 - 2026-11-24
 
 - Ship the Docker CLI and compose plugin in the image so the separate agent
   stack can run its fixed `compose`/`env` workflows. The BFF still has no
@@ -66,7 +95,7 @@
 - The agent runs as the infra user with only the Docker group added; no root
   process in the container.
 
-## 1.3.3 — 2026-11-24
+## 1.3.3 - 2026-11-24
 
 - The agent gains a generic `env` workflow: allowlisted stack root, relative
   env file, declared `ENV_KEY -> credential` mapping, atomic `0600` rewrite,
@@ -78,7 +107,7 @@
   GitOps/Lambda trigger: credential, version and generation, never a value.
 - Console target authoring accepts the `env` workflow and mapping.
 
-## 1.3.2 — 2026-11-24
+## 1.3.2 - 2026-11-24
 
 - Reveal is one press and an inline value beside the button; no dialog, stage
   picker or audit checkbox. The audit and the 30-second auto-clear remain.
@@ -86,7 +115,7 @@
   removes the Credarr record and stored copy only; the live service secret is
   untouched. The lifecycle API remains available for callers that need it.
 
-## 1.3.1 — 2026-11-24
+## 1.3.1 - 2026-11-24
 
 Fix the first-boot migration and tighten the two new console surfaces.
 
@@ -100,12 +129,12 @@ Fix the first-boot migration and tighten the two new console surfaces.
 - The lifecycle section is now "Delete or recover" with the same card, muted
   copy, field and toolbar pattern as the rest of the app detail.
 
-## 1.3.0 — 2026-11-23
+## 1.3.0 - 2026-11-23
 
 The next-generation value lifecycle: an encrypted version store, audited Reveal,
 soft delete, adoption, durable sync jobs and an mTLS deploy agent.
 
-### 🔐 Values
+### Values
 
 - `secret_versions` stores every value with AES-256-GCM under a unique DEK
   wrapped by a file KEK; AAD binds credential, version, stage and attempt id.
@@ -118,7 +147,7 @@ soft delete, adoption, durable sync jobs and an mTLS deploy agent.
 - `POST /credentials/{name}/reveal`: audited, rate-limited, no-store, 30-second
   UI TTL, CURRENT and PREVIOUS only.
 
-### 🔁 Lifecycle
+### Lifecycle
 
 - Soft delete, restore and explicit purge; tombstoned credentials refuse
   reveal, rotate, adopt, paste and sync.
@@ -127,7 +156,7 @@ soft delete, adoption, durable sync jobs and an mTLS deploy agent.
 - One CURRENT per credential, one PENDING, bounded retention for abandoned
   versions, one `secret.current_changed` per committed change.
 
-### 📦 Sync and agent
+### Sync and agent
 
 - Commit-barrier outbox, per-target jobs, coalescing to the newest version,
   partial deploys as `retry_wait`, expiry/replay/clock-skew refusals.
@@ -139,12 +168,12 @@ soft delete, adoption, durable sync jobs and an mTLS deploy agent.
   no post-quantum claim is made until the real images exercise it.
 - The console gains Reveal, Lifecycle and Agents & sync panels.
 
-## 1.2.0 — 2026-11-07
+## 1.2.0 - 2026-11-07
 
 A state-machine audit of the rotation engine, with the confirmed defects fixed,
 an explicit way out of an interrupted run, and one recovery banner per page.
 
-### 🔎 State audit
+### State audit
 
 - `docs/STATE_MACHINES.md` inventories twelve explicit and implicit machines
   (lease, attempt, step, pending secret, holder outcome, executor recovery,
@@ -155,7 +184,7 @@ an explicit way out of an interrupted run, and one recovery banner per page.
   that returns a secret once) and SM-9 (no fencing token at the service) are
   recorded as service-contract limits, not unhandled states.
 
-### 🧩 Rotation
+### Rotation
 
 - A closed attempt is immutable: no new step or holder row, and a takeover or
   reclaim wins over a zombie's late finish.
@@ -167,7 +196,7 @@ an explicit way out of an interrupted run, and one recovery banner per page.
 - Stored values, service URLs, holders, class, vault and mint mechanism are
   frozen while a run is unfinished; description and notes stay editable.
 
-### 🚪 Recovery
+### Recovery
 
 - **Abandon** closes an unfinished rotation without minting or revoking:
   `POST /api/v1/credentials/{name}/rotation/abandon`,
@@ -178,7 +207,7 @@ an explicit way out of an interrupted run, and one recovery banner per page.
   and the stack-wide shell banner only on the other views. The no-step variant
   (every step finished, attempt open) is named too.
 
-### 🐛 Fixes
+### Fixes
 
 - Every attempted holder has a row after retry exhaustion, including the one
   that failed.
@@ -188,25 +217,25 @@ an explicit way out of an interrupted run, and one recovery banner per page.
 - Import warns when a surviving name changes issuer but keeps the old stored
   value; the warning title no longer calls every warning audit-only.
 
-### 📦 Ship
+### Ship
 
 - Verified with 1004 Python tests, 220 console smoke checks, 4 container
   integration tests and `ruff`.
 - Published as `ghcr.io/ezcodelab/credarr:1.2.0` and `:latest`; the test
   deployment pins `git.ezcloud.casa/admin/credarr:1.2.0`.
 
-### 📖 Documentation
+### Documentation
 
 - `docs/STATE_MACHINES.md` added and linked from `docs/README.md`;
   `DECISIONS.md` 53, `LIMITATIONS.md`, `OPERATING.md`, `API.md` and
   `process-lessons.md` record the recovery contract.
 
-## 1.1.0 — 2026-11-01
+## 1.1.0 - 2026-11-01
 
 Graphite ledger console, and unattended rotation for every credential in the
 setup wizard.
 
-### 🚀 Features
+### Features
 
 - Console redesigned as a graphite ledger: quieter surfaces, one accent, dot
   status words, key tiles as the app identity.
@@ -217,7 +246,7 @@ setup wizard.
 - Development-only design gallery at `/?design` (`npm run dev`), with axe-core
   WCAG scans in the browser smoke.
 
-### 🧩 Rotation
+### Rotation
 
 - SABnzbd own key rotates via `set_apikey` and `mode=restart`; Sonarr's
   download-client test exercises it.
@@ -228,30 +257,30 @@ setup wizard.
 - The audit exercises qui's connection test, so a qui-held qBittorrent key
   reports `live` instead of `unverifiable`.
 
-### 🐛 Fixes
+### Fixes
 
 - `make ship` pushes the apps pin even when the compose pin already matches.
 - The deploy report names the running image and detects same-name recreations.
 
-### 📦 Ship
+### Ship
 
 - `make ship` builds, pushes to the Gitea registry, pins
   `homelab-applications` and deploys through Arcane; a branch build tags
   `<branch>-<sha>` and leaves `:latest` on main.
 - Published as `ghcr.io/ezcodelab/credarr:1.1.0` and `:latest`.
 
-### 📖 Documentation
+### Documentation
 
 - `docs/ROTATION.md` adds the auto-e2e matrix; `SERVICES.md` and `TESTING.md`
   carry the measured versions and live harnesses.
 - README rewritten; screenshots and logo regenerated from the shipped console.
 
-## 1.0.0 — 2026-10-29
+## 1.0.0 - 2026-10-29
 
 First public release: find out who holds each API key, whether the copies still
 match, and what can be rotated.
 
-### 🚀 Features
+### Features
 
 - Holder map and audit over each service's own API, reporting every copy as
   `match`, `live`, `drift`, `missing`, `unverifiable`, `absent` or `manual`.
@@ -268,7 +297,7 @@ match, and what can be rotated.
   Grafana, Arcane and Gitea; Homepage and Profilarr are manual, Plex and Jackett
   monitor-only.
 
-### 🛡️ Security
+### Security
 
 - Values are write-only end to end: no response, event, log or validation error
   echoes one.
@@ -280,7 +309,7 @@ match, and what can be rotated.
 - Topology replace requires `?confirm=replace`, because it prunes working
   copies and policy.
 
-### 🐛 Fixes
+### Fixes
 
 - A rotation whose only remaining work is manual reports success plus `manual`,
   not failure.
@@ -289,26 +318,26 @@ match, and what can be rotated.
   held it.
 - qBittorrent copies are confirmed with `downloadclient/test`.
 
-### 🧭 Behaviour
+### Behaviour
 
 - `LIVE` is acceptance by the service, never equality.
 - Manual copies are neutral and do not change a credential verdict.
-- Exit codes 0–5 are a public interface; 5 (refused) is not 3 (misconfigured).
+- Exit codes 0 to 5 are a public interface; 5 (refused) is not 3 (misconfigured).
 - No Abandon action or snapshot undo; resume is the convergence path and the
   encrypted backup is the recovery story.
 - One-sink-per-kind notification routes were removed before release, without
   aliases.
 
-### ⚙️ CI
+### CI
 
 - GitHub Actions runs `check`, `container` and `smoke` on push and pull request;
   `smoke` drives the built console in Chromium.
 
-### 📦 Release
+### Release
 
 - Published as `ghcr.io/ezcodelab/credarr:1.0.0` and `:latest`.
 
-### ⚠️ Limits
+### Limits
 
 - Basic UI login, Arcane beyond its pinned digest and the Lidarr, Readarr and
   Whisparr indexer rows were unproven at 1.0.0. See `docs/LIMITATIONS.md`.
