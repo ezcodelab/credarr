@@ -531,8 +531,9 @@ aside footer button {
 
 @media (min-width: 961px) {
   .shell.collapsed .brand {
+    position: relative;
     justify-content: center;
-    gap: 0.25rem;
+    gap: 0;
     padding-inline: 0;
   }
   .shell.collapsed .brand-title { display: none; }
@@ -541,7 +542,16 @@ aside footer button {
     height: 32px;
     border-radius: 10px;
   }
-  .shell.collapsed .sidebar-toggle { margin-left: 0; }
+  .shell.collapsed .sidebar-toggle {
+    position: absolute;
+    top: 0.25rem;
+    right: -0.8rem;
+    margin-left: 0;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    min-height: 24px;
+  }
   .shell.collapsed aside nav > button {
     justify-content: center;
     padding-inline: 0;
