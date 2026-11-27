@@ -319,6 +319,9 @@ button.icon:hover:not(:disabled) {
   grid-template-columns: 244px minmax(0, 1fr);
   min-height: 100vh;
 }
+.shell.collapsed {
+  grid-template-columns: 88px minmax(0, 1fr);
+}
 
 .mobile-bar { display: none; }
 
@@ -362,6 +365,27 @@ aside {
   font-weight: 500;
   letter-spacing: 0;
 }
+.sidebar-toggle {
+  margin-left: auto;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  background: none;
+  border-color: transparent;
+  color: var(--dim);
+}
+.sidebar-toggle:hover:not(:disabled) {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--text);
+}
+.sidebar-toggle svg {
+  transition: transform 0.15s ease;
+  transform: rotate(180deg);
+}
+.sidebar-toggle.collapsed svg { transform: rotate(0deg); }
 
 aside nav {
   display: flex;
@@ -503,6 +527,44 @@ aside footer button {
   font-family: var(--font-mono);
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 961px) {
+  .shell.collapsed .brand {
+    justify-content: center;
+    gap: 0.25rem;
+    padding-inline: 0;
+  }
+  .shell.collapsed .brand-title { display: none; }
+  .shell.collapsed .brand-mark {
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+  }
+  .shell.collapsed .sidebar-toggle { margin-left: 0; }
+  .shell.collapsed aside nav > button {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  .shell.collapsed .nav-icon { width: auto; }
+  .shell.collapsed .nav-label,
+  .shell.collapsed .nav-caret,
+  .shell.collapsed .nav-badge,
+  .shell.collapsed .nav-sub,
+  .shell.collapsed .sidebar-state,
+  .shell.collapsed .app-name,
+  .shell.collapsed .footer-actor,
+  .shell.collapsed .footer-label { display: none; }
+  .shell.collapsed aside footer {
+    align-items: center;
+    padding-inline: 0;
+  }
+  .shell.collapsed aside footer button {
+    align-self: center;
+    width: 36px;
+    min-width: 36px;
+    padding: 0;
+  }
 }
 
 
@@ -1594,6 +1656,7 @@ the button lines up with its bottom edge. */
     font-size: 0.95rem;
   }
   .mobile-bar .brand-mark { width: 26px; height: 26px; }
+  .sidebar-toggle { display: none; }
 
   aside {
     position: fixed;
