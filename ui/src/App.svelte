@@ -50,6 +50,23 @@
   const DROPDOWNS = ["apps", "settings"];
 
   const SETUP_SKIP_KEY = "credarr.setup.skipped";
+  const SIDEBAR_KEY = "credarr.sidebar.collapsed";
+
+  function readSidebarCollapsed() {
+    try {
+      return globalThis.localStorage?.getItem(SIDEBAR_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function writeSidebarCollapsed(value) {
+    try {
+      globalThis.localStorage?.setItem(SIDEBAR_KEY, value ? "1" : "0");
+    } catch {
+      // A browser that refuses local storage has no preference to remember.
+    }
+  }
 
   function readSetupSkip() {
     try {
@@ -101,12 +118,15 @@
   // scrolls to and focuses the rotation form.
   let rotationFocus = $state(0);
   // The sidebar's dropdowns. One state per section, because a name picked in
-  // Apps must not collapse the menu the operator is browsing.
-  let open = $state({ apps: false, settings: false });
+  // Apps must not collapse the menu the operator is browsing. Both start open,
+  // as Profilarr's groups do.
+  let open = $state({ apps: true, settings: true });
   // Picked from the Settings menu: which section the view scrolls to.
   let settingsSection = $state("");
   // The sidebar is an off-canvas drawer below tablet width.
   let navOpen = $state(false);
+  // Desktop only: the rail collapses to icons. The preference is per browser.
+  let sidebarCollapsed = $state(readSidebarCollapsed());
 
   // The sidebar's children, from the payloads the shell already holds. Apps
   // come from the store's rows; services not yet joined to a key appear in
@@ -197,7 +217,7 @@
     rotationFocus = 0;
     settingsSection = "";
     navOpen = false;
-    open = { apps: false, settings: false };
+    open = { apps: true, settings: true };
     setupActive = false;
     setupSkipped = false;
     clearSetupSkip();
@@ -206,6 +226,11 @@
 
   function closeNav() {
     navOpen = false;
+  }
+
+  function toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed;
+    writeSidebarCollapsed(sidebarCollapsed);
   }
 
   // A route change is a new page: land at its top. A section jump or a
@@ -234,7 +259,9 @@
   // something inside it.
   function navigateParent(item) {
     rotationFocus = 0;
-    if (DROPDOWNS.includes(item.id)) open[item.id] = !open[item.id];
+    if (DROPDOWNS.includes(item.id) && !sidebarCollapsed) {
+      open[item.id] = !open[item.id];
+    }
     if (item.id === "apps" && view === "app") {
       // The detail page belongs to Apps: the parent goes home.
       settingsSection = "";
@@ -535,7 +562,7 @@
     onsignout={signOut}
   />
 {:else}
-  <div class="shell">
+  <div class="shell" class:collapsed={sidebarCollapsed}>
     <div class="mobile-bar">
       <button
         class="icon"
@@ -559,7 +586,19 @@
     <aside id="sidebar" class:open={navOpen}>
       <div class="brand">
         <span class="brand-mark"><Icon name="shield" size={24} /></span>
-        <span>credarr</span>
+        <span class="brand-title">credarr</span>
+        <button
+          class="sidebar-toggle"
+          class:collapsed={sidebarCollapsed}
+          type="button"
+          aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-controls="sidebar"
+          aria-expanded={!sidebarCollapsed}
+          title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          onclick={toggleSidebar}
+        >
+          <Icon name="chevron" size={16} />
+        </button>
       </div>
       <nav aria-label="Primary">
         {#each NAV as item (item.id)}
@@ -568,10 +607,12 @@
             class:active={view === item.id || (item.id === "apps" && view === "app")}
             aria-current={view === item.id || (item.id === "apps" && view === "app") ? "page" : undefined}
             aria-expanded={children.length ? open[item.id] : undefined}
+            aria-label={sidebarCollapsed ? item.label : undefined}
+            title={sidebarCollapsed ? item.label : undefined}
             onclick={() => navigateParent(item)}
           >
             <span class="nav-icon" aria-hidden="true"><Icon name={item.icon} size={17} /></span>
-            {item.label}
+            <span class="nav-label">{item.label}</span>
             {#if item.id === "apps" && rotationPending.length > 0}
               <span class="nav-badge" aria-hidden="true">{rotationPending.length}</span>
             {/if}
@@ -612,7 +653,10 @@
           <Icon name="shield" size={16} />
           <span class="muted">{actor}</span>
         </div>
-        <button onclick={signOut}>Sign out</button>
+        <button onclick={signOut} title="Sign out" aria-label="Sign out">
+          <Icon name="logout" size={15} />
+          <span class="footer-label">Sign out</span>
+        </button>
       </footer>
     </aside>
 

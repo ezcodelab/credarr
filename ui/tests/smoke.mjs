@@ -596,6 +596,11 @@ async function main() {
     check("the wizard hands the console to Apps", true);
     await page.locator(".app-card").getByText("Sonarr API Key").waitFor();
     check(
+      "both sidebar menus load expanded",
+      (await page.locator("aside nav > button").filter({ hasText: "Apps" }).getAttribute("aria-expanded")) === "true" &&
+        (await page.locator("aside nav > button").filter({ hasText: "Settings" }).getAttribute("aria-expanded")) === "true",
+    );
+    check(
       "the new app names where its key is used",
       await page.getByText("Used in: Prowlarr").isVisible(),
     );
@@ -1105,6 +1110,26 @@ async function main() {
     await page.getByRole("heading", { name: "Prowlarr API Key" }).waitFor();
     check("a name in the menu opens that app", true);
     await page.getByRole("button", { name: "Apps", exact: true }).click();
+
+    // The desktop rail collapses to icons and keeps every action named.
+    await openMenu("Settings");
+    await page.getByRole("button", { name: "Collapse sidebar" }).click();
+    check(
+      "the sidebar collapses to icons",
+      (await page.locator(".shell.collapsed").count()) === 1 &&
+        (await page.locator("aside .nav-sub").first().isHidden()),
+    );
+    check(
+      "the collapsed rail keeps its actions named",
+      (await page.getByRole("button", { name: "Apps", exact: true }).isVisible()) &&
+        (await page.getByRole("button", { name: "Sign out", exact: true }).isVisible()),
+    );
+    await page.screenshot({ path: path.join(ARTIFACTS, "sidebar-collapsed.png") });
+    await page.getByRole("button", { name: "Expand sidebar" }).click();
+    check(
+      "the sidebar expands back to labels",
+      (await page.locator(".shell.collapsed").count()) === 0,
+    );
 
     // --- the Used in table names services, not target strings -----------------
     // A reminder saved while a Homepage copy existed must not survive after
