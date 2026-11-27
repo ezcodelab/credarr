@@ -558,7 +558,7 @@
 
     <aside id="sidebar" class:open={navOpen}>
       <div class="brand">
-        <span class="brand-mark"><Icon name="shield" size={18} /></span>
+        <span class="brand-mark"><Icon name="shield" size={24} /></span>
         <span>credarr</span>
       </div>
       <nav aria-label="Primary">
@@ -609,7 +609,7 @@
           credarr <span class="muted">v{status?.version ?? "—"}</span>
         </div>
         <div class="footer-actor">
-          <Icon name="shield" size={13} />
+          <Icon name="shield" size={16} />
           <span class="muted">{actor}</span>
         </div>
         <button onclick={signOut}>Sign out</button>
