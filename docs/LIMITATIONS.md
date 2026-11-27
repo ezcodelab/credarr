@@ -1,7 +1,7 @@
 # Limitations & troubleshooting
 
 Read before exposing the console or trusting a rotation. Each item is a known
-v1 limit, not a roadmap promise.
+limit, not a roadmap promise.
 
 - **Session cookies follow the scheme you declare.** Behind TLS set `CREDARR_EXTERNAL_URL=https://...` or
   `CREDARR_SECURE_COOKIES=1`. The scheme is not inferred from `X-Forwarded-Proto`: that header is client-supplied,

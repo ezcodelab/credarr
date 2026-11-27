@@ -44,6 +44,15 @@ the history is one commit is that those months cannot be published.
 
 ## Merge gate
 
+GitHub is canonical. The gate runs from `main` through `pull_request_target`, so
+the workflow comes from the trusted base. The verify job is read-only and checks
+the base plus the pull request merge ref. The merge job waits for CI on the
+verified head, then merges that exact head. Branch protection requires
+`auto-merge / verify` and the PR CI checks. Fork pull requests are supported.
+
+Gitea pulls `main` and tags read-only. It does not accept pull requests and never
+pushes back.
+
 A ready pull request with green required checks and an independent review
 auto-merges through the GitHub Actions gate. No path is protected; workflow,
 Makefile, policy, and deploy-script changes auto-merge after review and
