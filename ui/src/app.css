@@ -378,8 +378,9 @@ aside nav > button {
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   color: var(--dim);
-  font-size: 0.9375rem;
+  font-size: 1.125rem;
   font-weight: 550;
+  line-height: 1.35;
   text-align: left;
 }
 aside nav > button:hover:not(:disabled) {
@@ -439,8 +440,9 @@ aside nav > button:hover .nav-icon { color: var(--accent); }
   border: none;
   border-radius: 6px;
   color: var(--dim);
-  font-size: var(--text-sm);
+  font-size: 0.875rem;
   font-weight: 500;
+  line-height: 1.35;
   text-align: left;
   white-space: nowrap;
   overflow: hidden;
