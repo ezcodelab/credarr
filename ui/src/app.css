@@ -532,22 +532,26 @@ aside footer button {
 @media (min-width: 961px) {
   .shell.collapsed .brand {
     flex-direction: column;
-    gap: 0.4rem;
+    gap: 0.55rem;
     padding-inline: 0;
+    padding-bottom: 0;
   }
   .shell.collapsed .brand-title { display: none; }
   .shell.collapsed .brand-mark {
-    width: 32px;
-    height: 32px;
-    border-radius: 10px;
+    order: 2;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
   }
   .shell.collapsed .sidebar-toggle {
+    order: 1;
     margin-left: 0;
-    width: 24px;
-    min-width: 24px;
-    height: 24px;
-    min-height: 24px;
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
   }
+  .shell.collapsed aside nav { gap: 0.55rem; }
   .shell.collapsed aside nav > button {
     justify-content: center;
     padding-inline: 0;
@@ -567,8 +571,10 @@ aside footer button {
   }
   .shell.collapsed aside footer button {
     align-self: center;
-    width: 36px;
-    min-width: 36px;
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
     padding: 0;
   }
 }
