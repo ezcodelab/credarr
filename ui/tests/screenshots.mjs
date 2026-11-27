@@ -1,13 +1,13 @@
-// Regenerate the README screenshots from the real console.
+// Regenerate the README screenshot from the real console.
 //
 //   node ui/tests/screenshots.mjs
 //
 // Boots a real server over a disposable directory, a fake Seerr settings API
 // and a fake Sonarr whose indexer test accepts the stored key, seeds a small
-// synthetic topology through the public API, runs one audit, then captures
-// Apps, App detail, Activity and Settings into .github/assets/.
+// synthetic topology through the public API, runs one audit, then captures the
+// Apps ledger into .github/assets/apps.png.
 //
-// Everything in the images is fixture data: no production hostname, no real
+// Everything in the image is fixture data: no production hostname, no real
 // credential. The topology is deliberately honest - one readable match, one
 // acceptance-only `live` copy, one manual Homepage copy, one key with no
 // holders - because that is what the console actually says.
@@ -28,9 +28,6 @@ const PASSWORD = "screenshots-only-0123456789"; // gitleaks:allow - a fixture
 const SONARR_KEY = "95bcc02c859006271d31f6ba3a15cbdb"; // gitleaks:allow
 const PROWLARR_KEY = "b32b53cb7fd1c3e7a1c9f0b2d4e6a8c1"; // gitleaks:allow
 const SEERR_KEY = "e4a91c7d2b6f8053a1c9e7d5b3f10284"; // gitleaks:allow
-// The key the Activity image rotates in: Sonarr accepts both so the holder test
-// still answers, and the drift is the one Seerr's copy shows.
-const DRIFT_KEY = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"; // gitleaks:allow
 
 const MANIFEST = `version: 1
 credentials:
@@ -130,8 +127,7 @@ async function startSonarr() {
       response.end('{"title":"Not Found"}');
       return;
     }
-    if (request.headers["x-api-key"] !== SONARR_KEY
-        && request.headers["x-api-key"] !== DRIFT_KEY) {
+    if (request.headers["x-api-key"] !== SONARR_KEY) {
       response.writeHead(401, { "content-type": "application/json" });
       response.end('{"message":"unauthorized"}');
       return;
@@ -205,14 +201,8 @@ async function boot(config, work) {
   throw new Error(`the server never answered on ${BASE}:\n${log}`);
 }
 
-// The console keeps its CSRF token in memory, so a direct write from the
-// harness has to fetch the token the session cookie belongs to.
-async function csrf(page) {
-  const me = await page.request.get(`${BASE}/api/v1/auth/me`);
-  return (await me.json()).csrf;
-}
-
-async function seed(context) {  const api = context.request;
+async function seed(context) {
+  const api = context.request;
   const setup = await api.post(`${BASE}/api/v1/auth/setup`, { data: { password: PASSWORD } });
   if (!setup.ok()) throw new Error(`setup: ${setup.status()} ${await setup.text()}`);
   const me = await api.get(`${BASE}/api/v1/auth/me`);
@@ -245,11 +235,12 @@ async function seed(context) {  const api = context.request;
   await audit.json();
 }
 
-async function shot(page, name, { height, fullPage = false } = {}) {  const file = path.join(OUT, `${name}.png`);
+async function shot(page, name, { height } = {}) {
+  const file = path.join(OUT, `${name}.png`);
   const clip = height
     ? { x: 0, y: 0, width: 1440, height: Math.ceil(height) }
     : undefined;
-  await page.screenshot({ path: file, fullPage, clip });
+  await page.screenshot({ path: file, clip });
   console.log(`wrote ${path.relative(REPO, file)}`);
 }
 
@@ -283,42 +274,6 @@ async function main() {
     await page.waitForTimeout(600);
     const grid = await page.locator(".apps-ledger").boundingBox();
     await shot(page, "apps", { height: grid ? grid.y + grid.height + 40 : 640 });
-
-    // App detail: connection, copies, check history and the rotation panel.
-    await page.getByRole("link", { name: /Open Sonarr API Key/ }).click();
-    await page.getByText("Used in", { exact: false }).first().waitFor();
-    await page.waitForTimeout(800);
-    // Tall enough for the copies table and the delete block; a clip past the
-    // viewport is ignored, so this page is captured full-height instead.
-    await shot(page, "app-detail", { fullPage: true });
-    await page.getByRole("button", { name: "Apps", exact: true }).click();
-
-    // A real drift, so Activity shows the ledger instead of the empty baseline:
-    // the stored Sonarr key is replaced, and Seerr still holds the old one.
-    const drifted = await page.request.put(`${BASE}/api/v1/credentials/sonarr_api_key/value`, {
-      data: { value: DRIFT_KEY },
-      headers: { "X-CSRF-Token": await csrf(page) },
-    });
-    if (!drifted.ok()) throw new Error(`drift seed: ${drifted.status()} ${await drifted.text()}`);
-    const again = await page.request.post(`${BASE}/api/v1/audit`, {
-      data: {},
-      headers: { "X-CSRF-Token": await csrf(page) },
-    });
-    if (!again.ok()) throw new Error(`second audit: ${again.status()} ${await again.text()}`);
-    await again.json();
-
-    // Activity: the audit result plus the event ledger.
-    await page.getByRole("button", { name: "Activity", exact: true }).click();
-    await page.getByText("drift", { exact: false }).first().waitFor();
-    await page.waitForTimeout(600);
-    await shot(page, "activity", { height: 500 });
-
-    // Settings: security and the audit schedule; the import/export blocks are
-    // reference material, not the point of the image.
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
-    await page.getByText("Audit schedule", { exact: false }).first().waitFor();
-    await page.waitForTimeout(600);
-    await shot(page, "settings", { height: 640 });
   } finally {
     await browser.close();
     kill();

@@ -1,30 +1,20 @@
 # Credarr docs
 
-Single maintained reference for operators and contributors. Anything here
-that the code contradicts is a bug in this file. The engine
-(`src/credarr/`) and the server (`src/credarr_server/`) are authoritative.
+Start with the [README](../README.md) for installation. These pages go deeper.
 
-Start with `../README.md` (install, first boot, connect an app), then:
-
-| Page | What it is |
+| Page | What it covers |
 | --- | --- |
-| `CONCEPTS.md` | Holder map, audit statuses and reason codes, classes, exit codes |
-| `ARCHITECTURE.md` | Engine / server / console layout, stores, load-bearing invariants |
-| `STATE_MACHINES.md` | Explicit and implicit lifecycle states, invariants, transition tables, and the confirmed invalid transitions |
-| `OPERATING.md` | Audit, rotation, Servarr routes, auto-rotation, notifications, values, sync, backups, discovery, console map |
-| `SECURITY.md` | Threat model, crypto inventory, KEK lifecycle and drills, reveal, TLS/PQ posture |
-| `SYNC.md` | Sync state machine, targets, shared vault tree, enrollment runbook, agent privilege |
-| `UI_SYSTEM.md` | Console design system: tokens, components, states, accessibility, gallery, how to extend |
-| `SERVICES.md` | Mint shapes and per-service coverage with measured versions |
-| `API.md` | `/api/v1` reference seed (full contract: the live `/openapi.json`) |
-| `LIMITATIONS.md` | Known v1 limits and troubleshooting. Read before exposing or trusting a rotation |
-| `TESTING.md` | Test layers, measured coverage, gaps and the rules for new tests |
-| `auto-merge.md` | GitHub canonical, the `pull_request_target` gate, fork PRs, and the Gitea read-only mirror |
-| `CONTRIBUTING.md` | Toolchain, checks, conventions |
-| `ADDING_A_SERVICE.md` | Lifecycle checklist for adding/measuring service support |
-
-The layout follows the two reference projects: Seerr's audience-split
-Docusaurus site (`getting-started/`, `using-seerr/`, `troubleshooting`),
-and Profilarr's in-repo `docs/` (`ARCHITECTURE.md`, `CONTRIBUTING.md`,
-`api/`, per-area deep dives). When a standalone site is built, these pages
-map onto its sections without a rewrite; until then this folder is the site.
+| `CONCEPTS.md` | Holder map, audit statuses, reason codes, classes and exit codes. |
+| `ARCHITECTURE.md` | Engine, server and console layout, stores and invariants. |
+| `STATE_MACHINES.md` | Lifecycle states, transitions and invalid states. |
+| `OPERATING.md` | Audit, rotation, Servarr routes, auto-rotation, values, sync and backups. |
+| `SECURITY.md` | Threat model, crypto, key lifecycle and reveal. |
+| `SYNC.md` | Delivery targets, shared tree, agent enrollment and privilege. |
+| `SERVICES.md` | Mint shapes and measured per-service coverage. |
+| `ROTATION.md` | Product scope, coverage priorities and the live matrix. |
+| `LIMITATIONS.md` | Known limits and troubleshooting. Read before exposing the console. |
+| `TESTING.md` | Test layers, measured coverage and rules for new tests. |
+| `CONTRIBUTING.md` | Toolchain, checks, conventions and the merge gate. |
+| `ADDING_A_SERVICE.md` | Checklist for adding or measuring service support. |
+| `UI_SYSTEM.md` | Console tokens, components, states and accessibility. |
+| `UI_CONTRACT.md` | Product, audience, direction and required states. |
